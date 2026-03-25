@@ -144,6 +144,29 @@ func (p *ptyIO) WaitFor(t *testing.T, needle string, timeout time.Duration) stri
 	}
 }
 
+// WaitForRaw is like WaitFor but searches the raw (non-stripped) output.
+func (p *ptyIO) WaitForRaw(t *testing.T, needle string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		raw := p.buf.String()
+		if strings.Contains(raw, needle) {
+			return raw
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout (%v) waiting for raw %q in output (len=%d)", timeout, needle, len(raw))
+			return ""
+		case data, ok := <-p.ch:
+			if !ok {
+				t.Fatalf("PTY closed while waiting for raw %q", needle)
+				return ""
+			}
+			p.buf.Write(data)
+		}
+	}
+}
+
 // Write sends raw bytes to the PTY (simulating keyboard input).
 func (p *ptyIO) Write(data []byte) {
 	p.ptmx.Write(data)

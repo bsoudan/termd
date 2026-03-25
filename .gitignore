@@ -2,3 +2,7 @@
 .local
 .zig-cache
 zig-out
+frontend/termd-frontend
+nano.*.save
+x
+x.save

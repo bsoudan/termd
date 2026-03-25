@@ -63,9 +63,11 @@ type RegionCreated struct {
 }
 
 type ScreenUpdate struct {
-	Type     string   `json:"type"`
-	RegionID string   `json:"region_id"`
-	Lines    []string `json:"lines"`
+	Type      string   `json:"type"`
+	RegionID  string   `json:"region_id"`
+	CursorRow uint16   `json:"cursor_row"`
+	CursorCol uint16   `json:"cursor_col"`
+	Lines     []string `json:"lines"`
 }
 
 type RegionDestroyed struct {

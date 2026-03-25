@@ -132,14 +132,16 @@ pub const Client = struct {
         self.subscribed_region_id = region.id;
 
         // Send initial screen_update before subscribe_response (per protocol spec)
-        if (region.snapshotLines(self.alloc)) |lines| {
+        if (region.snapshot(self.alloc)) |snap| {
             defer {
-                for (lines) |l| self.alloc.free(l);
-                self.alloc.free(lines);
+                for (snap.lines) |l| self.alloc.free(l);
+                self.alloc.free(snap.lines);
             }
             self.sendMessage(.{ .screen_update = .{
                 .region_id = &region.id,
-                .lines = lines,
+                .cursor_row = snap.cursor_row,
+                .cursor_col = snap.cursor_col,
+                .lines = snap.lines,
             } });
         } else |_| {}
 

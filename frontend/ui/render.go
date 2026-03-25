@@ -38,15 +38,23 @@ func renderView(m Model) string {
 		if i < len(m.lines) {
 			line = m.lines[i]
 		}
-		// Pad or truncate to exactly width
 		runes := []rune(line)
 		if len(runes) > width {
 			runes = runes[:width]
 		}
-		sb.WriteString(string(runes))
-		// Pad with spaces to fill the row (prevents rendering artifacts)
-		for j := len(runes); j < width; j++ {
-			sb.WriteByte(' ')
+		// Render each column, applying reverse video at cursor position
+		for col := 0; col < width; col++ {
+			ch := ' '
+			if col < len(runes) {
+				ch = runes[col]
+			}
+			if i == m.cursorRow && col == m.cursorCol {
+				sb.WriteString("\x1b[7m")
+				sb.WriteRune(ch)
+				sb.WriteString("\x1b[27m")
+			} else {
+				sb.WriteRune(ch)
+			}
 		}
 		if i < contentHeight-1 {
 			sb.WriteByte('\n')

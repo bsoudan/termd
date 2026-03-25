@@ -188,10 +188,10 @@ pub const Server = struct {
     }
 
     fn sendScreenUpdate(self: *Server, region: *Region) void {
-        const lines = region.snapshotLines(self.alloc) catch return;
+        const snap = region.snapshot(self.alloc) catch return;
         defer {
-            for (lines) |l| self.alloc.free(l);
-            self.alloc.free(lines);
+            for (snap.lines) |l| self.alloc.free(l);
+            self.alloc.free(snap.lines);
         }
 
         for (self.clients.items) |client| {
@@ -199,7 +199,9 @@ pub const Server = struct {
                 if (std.mem.eql(u8, &sub_id, &region.id)) {
                     client.sendMessage(.{ .screen_update = .{
                         .region_id = &region.id,
-                        .lines = lines,
+                        .cursor_row = snap.cursor_row,
+                        .cursor_col = snap.cursor_col,
+                        .lines = snap.lines,
                     } });
                 }
             }

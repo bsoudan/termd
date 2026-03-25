@@ -18,6 +18,8 @@ type Model struct {
 	regionID   string
 	regionName string
 	lines      []string
+	cursorRow  int
+	cursorCol  int
 	termWidth  int
 	termHeight int
 	status     string
@@ -110,6 +112,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ScreenUpdateMsg:
 		m.lines = msg.Lines
+		m.cursorRow = int(msg.CursorRow)
+		m.cursorCol = int(msg.CursorCol)
 		return m, waitForUpdate(m.client)
 
 	case RegionCreatedMsg:

@@ -9,8 +9,10 @@ import (
 // ── Tea messages (bridge between client channel and bubbletea) ──────────────
 
 type ScreenUpdateMsg struct {
-	RegionID string
-	Lines    []string
+	RegionID  string
+	CursorRow uint16
+	CursorCol uint16
+	Lines     []string
 }
 
 type RegionCreatedMsg struct {
@@ -57,7 +59,7 @@ func waitForUpdate(c *client.Client) tea.Cmd {
 			}
 			switch m := msg.(type) {
 			case protocol.ScreenUpdate:
-				return ScreenUpdateMsg{RegionID: m.RegionID, Lines: m.Lines}
+				return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines}
 			case protocol.RegionCreated:
 				return RegionCreatedMsg{RegionID: m.RegionID, Name: m.Name}
 			case protocol.RegionDestroyed:

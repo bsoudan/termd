@@ -29,6 +29,8 @@ pub const RegionCreated = struct {
 
 pub const ScreenUpdate = struct {
     region_id: []const u8,
+    cursor_row: u16,
+    cursor_col: u16,
     lines: []const []const u8,
 };
 
@@ -133,6 +135,8 @@ pub fn writeOutbound(writer: *std.io.Writer, msg: OutboundMessage) !void {
         .screen_update => |r| try writer.print("{f}", .{std.json.fmt(.{
             .@"type" = "screen_update",
             .region_id = r.region_id,
+            .cursor_row = r.cursor_row,
+            .cursor_col = r.cursor_col,
             .lines = r.lines,
         }, .{})}),
         .region_destroyed => |r| try writer.print("{f}", .{std.json.fmt(.{
@@ -141,5 +145,8 @@ pub fn writeOutbound(writer: *std.io.Writer, msg: OutboundMessage) !void {
         }, .{})}),
     }
     try writer.writeByte('\n');
-    log.debug("send type={s}", .{@tagName(msg)});
+    switch (msg) {
+        .screen_update => |r| log.debug("send type=screen_update cursor=({d},{d})", .{ r.cursor_row, r.cursor_col }),
+        else => log.debug("send type={s}", .{@tagName(msg)}),
+    }
 }

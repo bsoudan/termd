@@ -163,13 +163,22 @@ pub const Region = struct {
         log.debug("region {s} resized to {d}x{d}", .{ &self.id, width, height });
     }
 
-    /// Snapshot the terminal screen as plain-text lines.
-    /// Caller owns the returned slices.
-    pub fn snapshotLines(self: *Region, alloc: std.mem.Allocator) ![][]const u8 {
+    pub const Snapshot = struct {
+        lines: [][]const u8,
+        cursor_row: u16,
+        cursor_col: u16,
+    };
+
+    /// Snapshot the terminal screen as plain-text lines plus cursor position.
+    /// Caller owns the returned line slices.
+    pub fn snapshot(self: *Region, alloc: std.mem.Allocator) !Snapshot {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         const screen = self.terminal.screens.active;
+        const cursor_row: u16 = @intCast(screen.cursor.y);
+        const cursor_col: u16 = @intCast(screen.cursor.x);
+
         var lines = try alloc.alloc([]const u8, self.height);
         var lines_written: usize = 0;
         errdefer {
@@ -207,7 +216,7 @@ pub const Region = struct {
             lines_written += 1;
         }
 
-        return lines;
+        return .{ .lines = lines, .cursor_row = cursor_row, .cursor_col = cursor_col };
     }
 
     // ── Internal ─────────────────────────────────────────────────────────

@@ -153,19 +153,23 @@ into its internal screen buffer; the server extracts only the visible characters
 {
   "type": "screen_update",
   "region_id": "abc123",
+  "cursor_row": 2,
+  "cursor_col": 2,
   "lines": [
     "$ echo hello                ",
     "hello                       ",
-    "                            "
+    "$ _                         "
   ]
 }
 ```
 
-| Field     | Type     | Description                                                     |
-|-----------|----------|-----------------------------------------------------------------|
-| type      | string   | `"screen_update"`                                               |
-| region_id | string   | Source region                                                   |
-| lines     | []string | One string per row, space-padded to width, no escape sequences  |
+| Field      | Type     | Description                                                     |
+|------------|----------|-----------------------------------------------------------------|
+| type       | string   | `"screen_update"`                                               |
+| region_id  | string   | Source region                                                   |
+| cursor_row | uint16   | 0-indexed row of the cursor (0 = top of visible screen)         |
+| cursor_col | uint16   | 0-indexed column of the cursor                                  |
+| lines      | []string | One string per row, space-padded to width, no escape sequences  |
 
 `len(lines)` equals the current height of the region. Each string is exactly `width` codepoints.
 
