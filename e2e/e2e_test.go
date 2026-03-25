@@ -178,6 +178,56 @@ func TestRawInputPassthrough(t *testing.T) {
 	pio.WaitFor(t, "raw_input_works", 10*time.Second)
 }
 
+func TestPrefixKeyDetach(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "bash", 10*time.Second)
+
+	// Send ctrl+b then d — should detach (frontend exits cleanly).
+	pio.Write([]byte{0x02}) // ctrl+b
+	pio.Write([]byte("d"))
+
+	// Wait for PTY to close (frontend exited).
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for frontend to exit after ctrl+b d")
+		case _, ok := <-pio.ch:
+			if !ok {
+				return // success
+			}
+		}
+	}
+}
+
+func TestPrefixKeyLiteralCtrlB(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, ">", 10*time.Second)
+
+	// Use cat to echo input. Send ctrl+b ctrl+b — the double prefix should
+	// send a literal ctrl+b (0x02) to the program. cat -v shows it as ^B.
+	pio.Write([]byte("cat -v\r"))
+	pio.WaitFor(t, "cat -v", 10*time.Second)
+
+	pio.buf.Reset()
+	pio.Write([]byte{0x02, 0x02}) // ctrl+b ctrl+b = send literal ctrl+b
+	pio.WaitFor(t, "^B", 10*time.Second)
+
+	// Send ctrl+c to exit cat (raw passthrough, not intercepted)
+	pio.Write([]byte("\x03"))
+	pio.WaitFor(t, ">", 10*time.Second)
+}
+
 func TestExit(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()

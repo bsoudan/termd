@@ -64,15 +64,28 @@ func main() {
 	pipeR, pipeW := io.Pipe()
 
 	model := ui.NewModel(c, shell, []string{})
-
-	// Start the raw input goroutine. It waits for regionReady, then
-	// forwards raw stdin bytes to the server. Closes pipeW on exit
-	// so bubbletea's input reader unblocks.
-	go ui.RawInputLoop(os.Stdin, c, model.RegionReady, pipeW)
-
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithInput(pipeR))
+
+	// Start the raw input goroutine. On detach, it tells bubbletea to quit.
+	exitReason := make(chan ui.ExitReason, 1)
+	go func() {
+		reason := ui.RawInputLoop(os.Stdin, c, model.RegionReady, pipeW)
+		exitReason <- reason
+		p.Quit()
+	}()
+
 	if _, err := p.Run(); err != nil {
 		slog.Error("program error", "error", err)
 		os.Exit(1)
+	}
+
+	select {
+	case reason := <-exitReason:
+		if reason == ui.ExitDetach {
+			restore()
+			restore = func() {}
+			os.Stdout.WriteString("detached\n")
+		}
+	default:
 	}
 }
