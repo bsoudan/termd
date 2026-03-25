@@ -89,9 +89,9 @@ pub const Server = struct {
                 };
             }
 
-            // 2. Read from clients (iterate in reverse so swapRemove is safe)
+            // 2. Read from clients polled this cycle (iterate in reverse so swapRemove is safe)
             {
-                var i: usize = self.clients.items.len;
+                var i: usize = client_count;
                 while (i > 0) {
                     i -= 1;
                     const pfd = pollfds.items[1 + i];
