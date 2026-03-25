@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 )
 
 func main() {
-	debug := flag.Bool("debug", false, "enable debug logging to /tmp/termd-frontend.log")
+	debug := flag.Bool("debug", false, "enable debug logging to stderr")
 	flag.Parse()
 
 	if !*debug && os.Getenv("TERMD_DEBUG") == "1" {
@@ -32,7 +33,6 @@ func main() {
 		socketPath = flag.Arg(0)
 	}
 
-	// Resolve shell via SHELL env or PATH lookup (NixOS has no /bin)
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		var err error
@@ -50,8 +50,27 @@ func main() {
 	}
 	defer c.Close()
 
+	// Put stdin in raw mode so we can read raw bytes.
+	restore, err := ui.SetupRawTerminal()
+	if err != nil {
+		slog.Error("raw mode failed", "error", err)
+		os.Exit(1)
+	}
+	defer restore()
+
+	// Create a pipe for bubbletea's input. Bubbletea reads from pipeR
+	// (which blocks forever — no parsed key messages). We read raw stdin
+	// ourselves in a separate goroutine.
+	pipeR, pipeW := io.Pipe()
+
 	model := ui.NewModel(c, shell, []string{})
-	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Start the raw input goroutine. It waits for regionReady, then
+	// forwards raw stdin bytes to the server. Closes pipeW on exit
+	// so bubbletea's input reader unblocks.
+	go ui.RawInputLoop(os.Stdin, c, model.RegionReady, pipeW)
+
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithInput(pipeR))
 	if _, err := p.Run(); err != nil {
 		slog.Error("program error", "error", err)
 		os.Exit(1)

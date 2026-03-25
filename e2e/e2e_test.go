@@ -155,6 +155,29 @@ func findCursorInFrame(t *testing.T, frame string) (row, col int) {
 	return 0, 0
 }
 
+func TestRawInputPassthrough(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "bash", 10*time.Second)
+
+	// Start a long-running command
+	pio.Write([]byte("sleep 999\r"))
+
+	// Send ctrl+c (raw \x03). With raw input passthrough, this goes
+	// directly to the PTY and kills sleep. With the old keyToBytes
+	// approach, ctrl+c would have quit the frontend instead.
+	pio.Write([]byte("\x03"))
+
+	// Bash should show a new prompt after SIGINT kills sleep.
+	// Type a command to verify the frontend is still alive.
+	pio.Write([]byte("echo raw_input_works\r"))
+	pio.WaitFor(t, "raw_input_works", 10*time.Second)
+}
+
 func TestExit(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
