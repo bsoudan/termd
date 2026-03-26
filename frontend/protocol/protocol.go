@@ -174,6 +174,21 @@ type KillClientResponse struct {
 	Message  string `json:"message"`
 }
 
+type TerminalEvent struct {
+	Op      string `json:"op"`
+	Data    string `json:"data,omitempty"`
+	Params  []int  `json:"params,omitempty"`
+	How     int    `json:"how,omitempty"`
+	Attrs   []int  `json:"attrs,omitempty"`
+	Private bool   `json:"private,omitempty"`
+}
+
+type TerminalEvents struct {
+	Type     string          `json:"type"`
+	RegionID string          `json:"region_id"`
+	Events   []TerminalEvent `json:"events"`
+}
+
 // ── Parsing ─────────────────────────────────────────────────────────────────
 
 type envelope struct {
@@ -222,6 +237,9 @@ func ParseInbound(line []byte) (any, error) {
 		return msg, json.Unmarshal(line, &msg)
 	case "kill_client_response":
 		var msg KillClientResponse
+		return msg, json.Unmarshal(line, &msg)
+	case "terminal_events":
+		var msg TerminalEvents
 		return msg, json.Unmarshal(line, &msg)
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", env.Type)

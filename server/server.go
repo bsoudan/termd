@@ -118,11 +118,11 @@ func (s *Server) SpawnRegion(cmd string, args []string) (*Region, error) {
 
 func (s *Server) watchRegion(region *Region) {
 	for range region.notify {
-		s.sendScreenUpdate(region)
+		s.sendTerminalEvents(region)
 	}
 	// Channel closed means region's process exited.
-	// Send a final screen update to capture any remaining output.
-	s.sendScreenUpdate(region)
+	// Send a final update to capture any remaining output.
+	s.sendTerminalEvents(region)
 	s.destroyRegion(region.id)
 }
 
@@ -201,6 +201,36 @@ func (s *Server) removeClient(id uint32) {
 	delete(s.clients, id)
 	s.mu.Unlock()
 	slog.Debug("client disconnected", "id", id)
+}
+
+func (s *Server) sendTerminalEvents(region *Region) {
+	events := region.FlushEvents()
+	if len(events) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	var subscribers []*Client
+	for _, c := range s.clients {
+		if c.GetSubscribedRegionID() == region.id {
+			subscribers = append(subscribers, c)
+		}
+	}
+	s.mu.Unlock()
+
+	if len(subscribers) == 0 {
+		return
+	}
+
+	msg := protocol.TerminalEvents{
+		Type:     "terminal_events",
+		RegionID: region.id,
+		Events:   events,
+	}
+
+	for _, c := range subscribers {
+		c.SendMessage(msg)
+	}
 }
 
 func (s *Server) sendScreenUpdate(region *Region) {

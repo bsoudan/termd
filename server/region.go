@@ -15,6 +15,7 @@ import (
 
 	"github.com/creack/pty"
 	te "github.com/rcarmo/go-te/pkg/te"
+	"termd/frontend/protocol"
 )
 
 type Snapshot struct {
@@ -35,6 +36,7 @@ type Region struct {
 	ptmx   *os.File
 	cmdObj *exec.Cmd
 	screen *te.Screen
+	proxy  *EventProxy
 	stream *te.Stream
 	mu     sync.Mutex
 
@@ -58,7 +60,8 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 	}
 
 	screen := te.NewScreen(width, height)
-	stream := te.NewStream(screen, false)
+	proxy := NewEventProxy(screen)
+	stream := te.NewStream(proxy, false)
 
 	r := &Region{
 		id:     id,
@@ -70,6 +73,7 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 		ptmx:   ptmx,
 		cmdObj: cmdObj,
 		screen: screen,
+		proxy:  proxy,
 		stream: stream,
 		notify: make(chan struct{}, 1),
 		done:   make(chan struct{}),
@@ -152,6 +156,12 @@ func (r *Region) Snapshot() Snapshot {
 		CursorRow: uint16(r.screen.Cursor.Row),
 		CursorCol: uint16(r.screen.Cursor.Col),
 	}
+}
+
+func (r *Region) FlushEvents() []protocol.TerminalEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.proxy.Flush()
 }
 
 func (r *Region) Kill() {

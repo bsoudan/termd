@@ -58,6 +58,8 @@ func LogProtocolMsg(direction string, msg any) {
 		slog.Debug(direction, "type", "kill_client_request", "client_id", m.ClientID)
 	case protocol.KillClientResponse:
 		slog.Debug(direction, "type", "kill_client_response", "client_id", m.ClientID, "error", m.Error)
+	case protocol.TerminalEvents:
+		slog.Debug(direction, "type", "terminal_events", "region_id", m.RegionID, "events", len(m.Events))
 	default:
 		slog.Debug(direction, "type", fmt.Sprintf("%T", msg))
 	}
