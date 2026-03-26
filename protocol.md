@@ -83,9 +83,10 @@ Subscribe to screen updates for a region.
 { "type": "subscribe_response", "region_id": "abc123", "error": false, "message": "" }
 ```
 
-On success, the server writes a `screen_update` with the current screen state to the wire first,
-then writes this `subscribe_response`. The frontend will therefore always receive a `screen_update`
-before the `subscribe_response` for a given subscription.
+On success, the server writes a `screen_update` with the current screen state (including per-cell
+color data) to the wire first, then writes this `subscribe_response`. The frontend will therefore
+always receive a `screen_update` before the `subscribe_response` for a given subscription. After
+the initial `screen_update`, all subsequent changes are sent as `terminal_events` messages.
 
 | Field     | Type   | Description                      |
 |-----------|--------|----------------------------------|
@@ -228,18 +229,19 @@ Fetch the current screen contents of a region without subscribing.
 ### get_screen_response
 
 ```json
-{ "type": "get_screen_response", "region_id": "abc123", "cursor_row": 0, "cursor_col": 2, "lines": ["$ "], "error": false, "message": "" }
+{ "type": "get_screen_response", "region_id": "abc123", "cursor_row": 0, "cursor_col": 2, "lines": ["$ "], "cells": [[...]], "error": false, "message": "" }
 ```
 
-| Field      | Type     | Description                                                     |
-|------------|----------|-----------------------------------------------------------------|
-| type       | string   | `"get_screen_response"`                                         |
-| region_id  | string   | Echoed region ID                                                |
-| cursor_row | uint16   | 0-indexed cursor row                                            |
-| cursor_col | uint16   | 0-indexed cursor column                                         |
-| lines      | []string | One string per row, space-padded to width, no escape sequences  |
-| error      | bool     | True if the region does not exist                               |
-| message    | string   | Error description, or `""`                                      |
+| Field      | Type           | Description                                                     |
+|------------|----------------|-----------------------------------------------------------------|
+| type       | string         | `"get_screen_response"`                                         |
+| region_id  | string         | Echoed region ID                                                |
+| cursor_row | uint16         | 0-indexed cursor row                                            |
+| cursor_col | uint16         | 0-indexed cursor column                                         |
+| lines      | []string       | One string per row, space-padded to width, no escape sequences  |
+| cells      | [][]ScreenCell | Optional. Per-cell color/attribute data (see ScreenCell above)  |
+| error      | bool           | True if the region does not exist                               |
+| message    | string         | Error description, or `""`                                      |
 
 ---
 
@@ -357,9 +359,10 @@ Broadcast to all connected clients when a new region is spawned. Sent after `spa
 
 ### screen_update
 
-Sent to subscribed clients when the screen state changes. Contains the full screen as plain text —
-no escape sequences, no color, no attributes. libghostty-vt renders all terminal escape sequences
-into its internal screen buffer; the server extracts only the visible characters.
+Sent on subscribe as the initial screen snapshot. Contains the full screen as plain text plus
+optional per-cell color and attribute data. The server's VT parser (go-te) renders all terminal
+escape sequences into an internal screen buffer; the server extracts the visible characters and
+their attributes.
 
 ```json
 {
@@ -367,23 +370,129 @@ into its internal screen buffer; the server extracts only the visible characters
   "region_id": "abc123",
   "cursor_row": 2,
   "cursor_col": 2,
-  "lines": [
-    "$ echo hello                ",
-    "hello                       ",
-    "$ _                         "
+  "lines": ["$ echo hello", "hello", "$ _"],
+  "cells": [
+    [{"c": "$"}, {"c": " "}, {"c": "e"}, ...],
+    [{"c": "h", "fg": "green"}, {"c": "e", "fg": "green"}, ...],
+    [{"c": "$"}, {"c": " "}, {"c": "_", "a": 1}]
   ]
 }
 ```
 
-| Field      | Type     | Description                                                     |
-|------------|----------|-----------------------------------------------------------------|
-| type       | string   | `"screen_update"`                                               |
-| region_id  | string   | Source region                                                   |
-| cursor_row | uint16   | 0-indexed row of the cursor (0 = top of visible screen)         |
-| cursor_col | uint16   | 0-indexed column of the cursor                                  |
-| lines      | []string | One string per row, space-padded to width, no escape sequences  |
+| Field      | Type             | Description                                                        |
+|------------|------------------|--------------------------------------------------------------------|
+| type       | string           | `"screen_update"`                                                  |
+| region_id  | string           | Source region                                                      |
+| cursor_row | uint16           | 0-indexed cursor row                                               |
+| cursor_col | uint16           | 0-indexed cursor column                                            |
+| lines      | []string         | One string per row, space-padded to width, no escape sequences     |
+| cells      | [][]ScreenCell   | Optional. Per-cell color/attribute data, same dimensions as lines  |
 
-`len(lines)` equals the current height of the region. Each string is exactly `width` codepoints.
+`lines` is always present for backward compatibility with plain-text consumers. `cells` is present
+when the server supports color and provides the full rendering state needed to reconstruct a
+colored display.
+
+#### ScreenCell
+
+| Field | Type   | Description                                                                    |
+|-------|--------|--------------------------------------------------------------------------------|
+| c     | string | Character (omitted if empty/space)                                             |
+| fg    | string | Foreground color spec (omitted if default). See Color Spec below.              |
+| bg    | string | Background color spec (omitted if default). See Color Spec below.              |
+| a     | uint8  | Attribute bitfield (omitted if 0): 1=bold, 2=italic, 4=underline, 8=strikethrough, 16=reverse, 32=blink, 64=conceal |
+
+#### Color Spec
+
+Color specs encode terminal colors as compact strings:
+
+| Format             | Example           | Description                      |
+|--------------------|-------------------|----------------------------------|
+| ANSI 16 name       | `"red"`, `"brightgreen"` | Standard 16-color palette |
+| `5;N`              | `"5;208"`         | 256-color palette (index 0-255)  |
+| `2;RRGGBB`         | `"2;ff8700"`      | 24-bit true color (hex RGB)      |
+
+An empty string or absent field means default terminal color.
+
+---
+
+### terminal_events
+
+Sent to subscribed clients when the screen state changes. Contains a batch of terminal operations
+captured from the VT parser. The frontend replays these on its local screen to maintain a
+synchronized copy.
+
+After the initial `screen_update` on subscribe, all subsequent updates are sent as
+`terminal_events` — not as full screen snapshots. This is more efficient since only the changed
+operations are transmitted.
+
+```json
+{
+  "type": "terminal_events",
+  "region_id": "abc123",
+  "events": [
+    {"op": "sgr", "attrs": [1, 31]},
+    {"op": "draw", "data": "hello"},
+    {"op": "cup", "params": [5, 10]},
+    {"op": "el"}
+  ]
+}
+```
+
+| Field     | Type              | Description                            |
+|-----------|-------------------|----------------------------------------|
+| type      | string            | `"terminal_events"`                    |
+| region_id | string            | Source region                          |
+| events    | []TerminalEvent   | Ordered batch of terminal operations   |
+
+#### TerminalEvent
+
+Each event describes one terminal operation. Only the fields relevant to the operation are present;
+the rest are omitted.
+
+| Field   | Type   | Description                                                                |
+|---------|--------|----------------------------------------------------------------------------|
+| op      | string | Operation code (see table below)                                           |
+| data    | string | Text data (for `draw`, `title`, `icon`, `charset`)                        |
+| params  | []int  | Numeric parameters (for cursor moves, modes, margins, etc.)               |
+| how     | int    | Erase mode for `ed`/`el` (0=to-end, 1=to-start, 2=all)                   |
+| attrs   | []int  | SGR attribute parameters for `sgr`                                        |
+| private | bool   | CSI private flag (`?` prefix) for `ed`, `el`, `sgr`, `sm`, `rm`          |
+
+#### Operation codes
+
+| Op       | Description              | Key fields           |
+|----------|--------------------------|----------------------|
+| draw     | Write text at cursor     | data                 |
+| cup      | Cursor position          | params (row, col)    |
+| cuu      | Cursor up                | params (count)       |
+| cud      | Cursor down              | params (count)       |
+| cuf      | Cursor forward           | params (count)       |
+| cub      | Cursor back              | params (count)       |
+| ed       | Erase in display         | how, private         |
+| el       | Erase in line            | how, private         |
+| sgr      | Select graphic rendition | attrs, private       |
+| sm       | Set mode                 | params, private      |
+| rm       | Reset mode               | params, private      |
+| lf       | Line feed                |                      |
+| cr       | Carriage return          |                      |
+| su       | Scroll up                | params (count)       |
+| sd       | Scroll down              | params (count)       |
+| il       | Insert lines             | params (count)       |
+| dl       | Delete lines             | params (count)       |
+| ich      | Insert characters        | params (count)       |
+| dch      | Delete characters        | params (count)       |
+| ech      | Erase characters         | params (count)       |
+| decstbm  | Set scroll margins       | params (top, bottom) |
+| sc       | Save cursor              |                      |
+| rc       | Restore cursor           |                      |
+| decsc    | Save cursor (DEC)        |                      |
+| decrc    | Restore cursor (DEC)     |                      |
+| title    | Set window title         | data                 |
+| reset    | Full reset               |                      |
+| bell     | Bell                     |                      |
+
+Additional ops exist for less common operations (charset, window ops, rectangle ops, etc.) —
+see `frontend/ui/model.go` `replayEvents()` for the complete mapping.
 
 ---
 

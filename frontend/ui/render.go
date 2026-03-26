@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	te "github.com/rcarmo/go-te/pkg/te"
+	"termd/frontend/protocol"
 )
 
 var (
@@ -183,10 +184,10 @@ func sgrTransition(from, to te.Attr) string {
 	}
 
 	if to.Fg != from.Fg {
-		params = append(params, colorSGR(to.Fg, false))
+		params = append(params, teColorSGR(to.Fg, false))
 	}
 	if to.Bg != from.Bg {
-		params = append(params, colorSGR(to.Bg, true))
+		params = append(params, teColorSGR(to.Bg, true))
 	}
 
 	if len(params) == 0 {
@@ -195,65 +196,26 @@ func sgrTransition(from, to te.Attr) string {
 	return "\x1b[" + strings.Join(params, ";") + "m"
 }
 
-// ANSI16 color name → SGR code mappings
-var fgColorCode = map[string]string{
-	"black": "30", "red": "31", "green": "32", "brown": "33",
-	"blue": "34", "magenta": "35", "cyan": "36", "white": "37",
-	"default": "39",
-	"brightblack": "90", "brightred": "91", "brightgreen": "92", "brightbrown": "93",
-	"brightblue": "94", "brightmagenta": "95", "brightcyan": "96", "brightwhite": "97",
+// teColorSGR converts a go-te Color to its SGR parameter string via the
+// shared color spec format.
+func teColorSGR(c te.Color, isBg bool) string {
+	spec := teColorToSpec(c)
+	return protocol.ColorSpecToSGR(spec, isBg)
 }
 
-var bgColorCode = map[string]string{
-	"black": "40", "red": "41", "green": "42", "brown": "43",
-	"blue": "44", "magenta": "45", "cyan": "46", "white": "47",
-	"default": "49",
-	"brightblack": "100", "brightred": "101", "brightgreen": "102", "brightbrown": "103",
-	"brightblue": "104", "brightmagenta": "105", "brightcyan": "106", "brightwhite": "107",
-}
-
-// colorSGR returns the SGR parameter string for a go-te Color.
-func colorSGR(c te.Color, isBg bool) string {
+// teColorToSpec converts a go-te Color to its color spec string.
+func teColorToSpec(c te.Color) string {
 	switch c.Mode {
 	case te.ColorDefault:
-		if isBg {
-			return "49"
-		}
-		return "39"
+		return ""
 	case te.ColorANSI16:
-		if isBg {
-			if code, ok := bgColorCode[c.Name]; ok {
-				return code
-			}
-			return "49"
-		}
-		if code, ok := fgColorCode[c.Name]; ok {
-			return code
-		}
-		return "39"
+		return c.Name
 	case te.ColorANSI256:
-		if isBg {
-			return fmt.Sprintf("48;5;%d", c.Index)
-		}
-		return fmt.Sprintf("38;5;%d", c.Index)
+		return fmt.Sprintf("5;%d", c.Index)
 	case te.ColorTrueColor:
-		r, g, b := parseHexColor(c.Name)
-		if isBg {
-			return fmt.Sprintf("48;2;%d;%d;%d", r, g, b)
-		}
-		return fmt.Sprintf("38;2;%d;%d;%d", r, g, b)
+		return "2;" + c.Name
 	}
-	if isBg {
-		return "49"
-	}
-	return "39"
-}
-
-func parseHexColor(hex string) (r, g, b uint8) {
-	if len(hex) >= 6 {
-		fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
-	}
-	return
+	return ""
 }
 
 func renderLogOverlay(m Model, base string, width, height int) string {

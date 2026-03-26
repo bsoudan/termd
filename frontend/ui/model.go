@@ -604,21 +604,8 @@ func specToColor(spec string) te.Color {
 		return te.Color{Mode: te.ColorTrueColor, Name: spec[2:]}
 	}
 	// ANSI16: color name like "red", "brightgreen"
-	return te.Color{Mode: te.ColorANSI16, Name: spec, Index: ansi16Index(spec)}
-}
-
-var ansi16NameToIndex = map[string]uint8{
-	"black": 0, "red": 1, "green": 2, "brown": 3,
-	"blue": 4, "magenta": 5, "cyan": 6, "white": 7,
-	"brightblack": 8, "brightred": 9, "brightgreen": 10, "brightbrown": 11,
-	"brightblue": 12, "brightmagenta": 13, "brightcyan": 14, "brightwhite": 15,
-}
-
-func ansi16Index(name string) uint8 {
-	if idx, ok := ansi16NameToIndex[name]; ok {
-		return idx
-	}
-	return 0
+	idx, _ := protocol.ANSI16NameToIndex[spec]
+	return te.Color{Mode: te.ColorANSI16, Name: spec, Index: idx}
 }
 
 func splitCharset(s string) []string {

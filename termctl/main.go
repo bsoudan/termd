@@ -54,7 +54,13 @@ func main() {
 				Subcommands: []*cli.Command{
 					{Name: "list", Usage: "list regions", Action: cmdRegionList},
 					{Name: "spawn", Usage: "spawn a new region", ArgsUsage: "<cmd> [args...]", Action: cmdRegionSpawn},
-					{Name: "view", Usage: "view region screen", ArgsUsage: "<region_id>", Action: cmdRegionView},
+					{
+					Name: "view", Usage: "view region screen", ArgsUsage: "<region_id>",
+					Flags: []cli.Flag{
+						&cli.BoolFlag{Name: "plain", Aliases: []string{"p"}, Usage: "plain text (no colors)"},
+					},
+					Action: cmdRegionView,
+				},
 					{Name: "kill", Usage: "kill a region", ArgsUsage: "<region_id>", Action: cmdRegionKill},
 					{
 						Name: "send", Usage: "send input to a region", ArgsUsage: "<region_id> <input>",
@@ -196,10 +202,41 @@ func cmdRegionView(c *cli.Context) error {
 		return fmt.Errorf("%s", resp.Message)
 	}
 
-	for _, line := range resp.Lines {
-		fmt.Println(strings.TrimRight(line, " "))
+	if c.Bool("plain") || len(resp.Cells) == 0 {
+		for _, line := range resp.Lines {
+			fmt.Println(strings.TrimRight(line, " "))
+		}
+		return nil
+	}
+
+	// Render with ANSI color sequences
+	for _, row := range resp.Cells {
+		fmt.Println(renderColoredLine(row))
 	}
 	return nil
+}
+
+func renderColoredLine(row []protocol.ScreenCell) string {
+	var sb strings.Builder
+	var curFg, curBg string
+	var curA uint8
+
+	for _, cell := range row {
+		if cell.Fg != curFg || cell.Bg != curBg || cell.A != curA {
+			sb.WriteString(protocol.CellSGR(cell.Fg, cell.Bg, cell.A))
+			curFg, curBg, curA = cell.Fg, cell.Bg, cell.A
+		}
+		ch := cell.Char
+		if ch == "" || ch == "\x00" {
+			ch = " "
+		}
+		sb.WriteString(ch)
+	}
+	if curFg != "" || curBg != "" || curA != 0 {
+		sb.WriteString("\x1b[m")
+	}
+
+	return strings.TrimRight(sb.String(), " ")
 }
 
 func cmdRegionKill(c *cli.Context) error {
