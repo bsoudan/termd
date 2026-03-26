@@ -3,26 +3,29 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	tlog "termd/frontend/log"
+	"termd/transport"
 )
 
 func printUsage() {
 	fmt.Fprint(os.Stderr, `Usage: termd [options]
 
 Options:
-  -s, --socket <path>  Socket path (env: TERMD_SOCKET, default: /tmp/termd.sock)
+  -l, --listen <spec>  Listen address (repeatable; default: unix:/tmp/termd.sock)
+                       Schemes: unix:<path>, tcp:<host:port>
+  -s, --socket <path>  Shorthand for --listen unix:<path>
   -d, --debug          Enable debug logging (env: TERMD_DEBUG=1)
   -h, --help           Show this help
 `)
 }
 
 func main() {
-	socketPath := "/tmp/termd.sock"
-	socketFlagSet := false
+	var listenSpecs []string
 	debug := false
 
 	args := os.Args[1:]
@@ -37,11 +40,16 @@ func main() {
 			i++
 			if i >= len(args) {
 				fmt.Fprintln(os.Stderr, "error: --socket requires a path argument")
-				printUsage()
 				os.Exit(1)
 			}
-			socketPath = args[i]
-			socketFlagSet = true
+			listenSpecs = append(listenSpecs, "unix:"+args[i])
+		case "-l", "--listen":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --listen requires an address argument")
+				os.Exit(1)
+			}
+			listenSpecs = append(listenSpecs, args[i])
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown option: %s\n", args[i])
 			printUsage()
@@ -49,14 +57,14 @@ func main() {
 		}
 	}
 
-	if !debug {
-		if os.Getenv("TERMD_DEBUG") == "1" {
-			debug = true
-		}
+	if !debug && os.Getenv("TERMD_DEBUG") == "1" {
+		debug = true
 	}
-	if !socketFlagSet {
+	if len(listenSpecs) == 0 {
 		if v := os.Getenv("TERMD_SOCKET"); v != "" {
-			socketPath = v
+			listenSpecs = append(listenSpecs, "unix:"+v)
+		} else {
+			listenSpecs = append(listenSpecs, "unix:/tmp/termd.sock")
 		}
 	}
 
@@ -67,11 +75,17 @@ func main() {
 	handler := tlog.NewHandler(os.Stderr, level, nil)
 	slog.SetDefault(slog.New(handler))
 
-	srv, err := NewServer(socketPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+	listeners := make([]net.Listener, 0, len(listenSpecs))
+	for _, spec := range listenSpecs {
+		ln, err := transport.Listen(spec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: listen %s: %v\n", spec, err)
+			os.Exit(1)
+		}
+		listeners = append(listeners, ln)
 	}
+
+	srv := NewServer(listeners)
 	defer srv.Shutdown()
 
 	sigCh := make(chan os.Signal, 1)

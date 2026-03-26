@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,8 +13,7 @@ import (
 )
 
 type Server struct {
-	socketPath   string
-	listener     net.Listener
+	listeners    []net.Listener
 	startTime    time.Time
 	nextClientID atomic.Uint32
 
@@ -25,31 +25,37 @@ type Server struct {
 	shutdown atomic.Bool
 }
 
-func NewServer(socketPath string) (*Server, error) {
-	os.Remove(socketPath)
-
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
+func NewServer(listeners []net.Listener) *Server {
+	for _, ln := range listeners {
+		slog.Info("listening", "addr", ln.Addr().String())
 	}
-
-	slog.Info("listening", "socket", socketPath)
 
 	s := &Server{
-		socketPath: socketPath,
-		listener:   listener,
-		startTime:  time.Now(),
-		regions:    make(map[string]*Region),
-		clients:    make(map[uint32]*Client),
-		done:       make(chan struct{}),
+		listeners: listeners,
+		startTime: time.Now(),
+		regions:   make(map[string]*Region),
+		clients:   make(map[uint32]*Client),
+		done:      make(chan struct{}),
 	}
 	s.nextClientID.Store(1)
-	return s, nil
+	return s
 }
 
 func (s *Server) Run() {
+	var wg sync.WaitGroup
+	for _, ln := range s.listeners {
+		wg.Add(1)
+		go func(ln net.Listener) {
+			defer wg.Done()
+			s.acceptLoop(ln)
+		}(ln)
+	}
+	wg.Wait()
+}
+
+func (s *Server) acceptLoop(ln net.Listener) {
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			if s.shutdown.Load() {
 				return
@@ -65,7 +71,9 @@ func (s *Server) Shutdown() {
 	if !s.shutdown.CompareAndSwap(false, true) {
 		return
 	}
-	s.listener.Close()
+	for _, ln := range s.listeners {
+		ln.Close()
+	}
 
 	s.mu.Lock()
 	clients := make([]*Client, 0, len(s.clients))
@@ -84,8 +92,6 @@ func (s *Server) Shutdown() {
 	for _, r := range regions {
 		r.Close()
 	}
-
-	os.Remove(s.socketPath)
 }
 
 func (s *Server) acceptClient(conn net.Conn) {
@@ -244,12 +250,20 @@ func (s *Server) getStatus() protocol.StatusResponse {
 		Type:          "status_response",
 		Pid:           os.Getpid(),
 		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
-		SocketPath:    s.socketPath,
+		SocketPath:    s.listenerAddrs(),
 		NumClients:    numClients,
 		NumRegions:    numRegions,
 		Error:         false,
 		Message:       "",
 	}
+}
+
+func (s *Server) listenerAddrs() string {
+	addrs := make([]string, len(s.listeners))
+	for i, ln := range s.listeners {
+		addrs[i] = ln.Addr().String()
+	}
+	return strings.Join(addrs, ", ")
 }
 
 func (s *Server) getRegionInfos() []protocol.RegionInfo {

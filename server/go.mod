@@ -6,9 +6,12 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/rcarmo/go-te v0.1.0
 	termd/frontend v0.0.0
+	termd/transport v0.0.0
 )
 
 replace termd/frontend => ../frontend
+
+replace termd/transport => ../transport
 
 require (
 	charm.land/bubbles/v2 v2.0.0 // indirect

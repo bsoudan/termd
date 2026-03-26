@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,63 @@ func startServer(t *testing.T) (string, func()) {
 	}
 
 	return socketPath, func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}
+}
+
+// startServerWithTCP starts a server listening on both a Unix socket and TCP.
+// Returns the socket path, the TCP address (e.g., "127.0.0.1:12345"), and a cleanup func.
+func startServerWithTCP(t *testing.T) (socketPath, tcpAddr string, cleanup func()) {
+	t.Helper()
+
+	socketPath = filepath.Join(t.TempDir(), "termd.sock")
+	cmd := exec.Command("termd", "--socket", socketPath, "--listen", "tcp:127.0.0.1:0")
+
+	// Capture stderr to extract the TCP listen address
+	stderrR, stderrW, _ := os.Pipe()
+	cmd.Stderr = stderrW
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	stderrW.Close()
+
+	// Read stderr lines until we find the TCP address
+	scanner := bufio.NewScanner(stderrR)
+	deadline := time.Now().Add(5 * time.Second)
+	for scanner.Scan() && time.Now().Before(deadline) {
+		line := scanner.Text()
+		// Look for "listening addr=127.0.0.1:NNNNN"
+		if idx := strings.Index(line, "addr=127.0.0.1:"); idx >= 0 {
+			tcpAddr = line[idx+len("addr="):]
+			// Trim any trailing fields (slog format: key=value pairs)
+			if sp := strings.IndexByte(tcpAddr, ' '); sp >= 0 {
+				tcpAddr = tcpAddr[:sp]
+			}
+			break
+		}
+	}
+	// Continue draining stderr in background
+	go func() {
+		for scanner.Scan() {
+		}
+		stderrR.Close()
+	}()
+
+	if tcpAddr == "" {
+		cmd.Process.Kill()
+		t.Fatal("could not find TCP listen address in server stderr")
+	}
+
+	// Wait for Unix socket too
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		runtime.Gosched()
+	}
+
+	return socketPath, tcpAddr, func() {
 		cmd.Process.Kill()
 		cmd.Wait()
 	}

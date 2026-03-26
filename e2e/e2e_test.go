@@ -779,6 +779,39 @@ func TestResizeMidSession(t *testing.T) {
 	}, "'38' at col 0 on a content row", 10*time.Second)
 }
 
+func TestTCPTransport(t *testing.T) {
+	socketPath, tcpAddr, serverCleanup := startServerWithTCP(t)
+	defer serverCleanup()
+
+	// Spawn a region via the Unix socket (termctl)
+	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
+
+	// Connect frontend via TCP
+	cmd := exec.Command("termd-frontend", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd.Env = append(os.Environ(), "TERM=dumb")
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatalf("start frontend via TCP: %v", err)
+	}
+	pio := newPtyIO(ptmx, 80, 24)
+	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+
+	pio.WaitFor(t, "bash", 10*time.Second)
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Verify the status bar shows the TCP endpoint
+	lines := pio.ScreenLines()
+	lastLine := lines[len(lines)-1]
+	if !strings.Contains(lastLine, tcpAddr) {
+		t.Errorf("status bar should show TCP addr %q, got: %q", tcpAddr, lastLine)
+	}
+
+	// Type a command and verify round-trip works
+	pio.Write([]byte("echo tcp_works\r"))
+	pio.WaitFor(t, "tcp_works", 10*time.Second)
+}
+
 func TestRegionKilledExternally(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()

@@ -1,6 +1,6 @@
 module termd/frontend
 
-go 1.25.6
+go 1.25.7
 
 require (
 	charm.land/bubbles/v2 v2.0.0
@@ -10,7 +10,10 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/rcarmo/go-te v0.1.0
 	golang.org/x/sys v0.42.0
+	termd/transport v0.0.0
 )
+
+replace termd/transport => ../transport
 
 require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect

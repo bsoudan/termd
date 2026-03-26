@@ -13,6 +13,7 @@ import (
 	"termd/frontend/client"
 	termlog "termd/frontend/log"
 	"termd/frontend/protocol"
+	"termd/transport"
 )
 
 func main() {
@@ -89,7 +90,15 @@ func main() {
 }
 
 func connect(c *cli.Context) (*client.Client, error) {
-	return client.New(c.String("socket"), "termctl")
+	spec := c.String("socket")
+	if !strings.Contains(spec, ":") {
+		spec = "unix:" + spec
+	}
+	conn, err := transport.Dial(spec)
+	if err != nil {
+		return nil, err
+	}
+	return client.New(conn, "termctl"), nil
 }
 
 func recvType[T any](cl *client.Client) (T, error) {

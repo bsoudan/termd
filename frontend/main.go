@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"termd/frontend/client"
 	termlog "termd/frontend/log"
+	"termd/transport"
 	"termd/frontend/ui"
 )
 
@@ -68,11 +69,16 @@ func main() {
 		}
 	}
 
-	c, err := client.New(*socketPath, "termd-frontend")
+	endpoint := *socketPath
+	if !strings.Contains(endpoint, ":") {
+		endpoint = "unix:" + endpoint
+	}
+	conn, err := transport.Dial(endpoint)
 	if err != nil {
 		slog.Error("connect failed", "error", err)
 		os.Exit(1)
 	}
+	c := client.New(conn, "termd-frontend")
 	defer c.Close()
 
 	restore, err := ui.SetupRawTerminal()
@@ -84,7 +90,6 @@ func main() {
 
 	pipeR, pipeW := io.Pipe()
 
-	endpoint := "unix:" + *socketPath
 	model := ui.NewModel(c, shell, shellArgs, logRing, endpoint)
 	p := tea.NewProgram(model,
 		tea.WithInput(pipeR),

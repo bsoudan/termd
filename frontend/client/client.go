@@ -25,13 +25,9 @@ type Client struct {
 	closeOnce sync.Once
 }
 
-// New connects to the termd server at the given Unix socket path.
-func New(socketPath string, processName string) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
-	}
-
+// New wraps an existing connection as a termd client. It starts the
+// read/write loops and sends an identify message.
+func New(conn net.Conn, processName string) *Client {
 	c := &Client{
 		conn:    conn,
 		updates: make(chan any, 128),
@@ -56,7 +52,7 @@ func New(socketPath string, processName string) (*Client, error) {
 		Username: username, Pid: os.Getpid(), Process: proc,
 	})
 
-	return c, nil
+	return c
 }
 
 // Send encodes msg as JSON and enqueues it for transmission.
