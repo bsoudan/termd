@@ -3,8 +3,8 @@ package ui
 import (
 	"encoding/base64"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	termlog "termd/frontend/log"
 	"termd/frontend/client"
 	"termd/frontend/protocol"
@@ -205,7 +205,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prefixMode = true
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.showLogView {
 			return m.updateLogViewer(msg)
 		}
@@ -216,7 +216,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) updatePrefixCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updatePrefixCommand(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.prefixMode = false
 	switch msg.String() {
 	case "d":
@@ -245,7 +245,7 @@ func (m Model) updatePrefixCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) updateLogViewer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) updateLogViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
 		m.showLogView = false
@@ -285,7 +285,7 @@ func (m *Model) initLogViewport() {
 	}
 	// Wide viewport — horizontal truncation is handled in the render step
 	// so horizontal scrolling can access the full line content.
-	m.logViewport = viewport.New(10000, h-4)
+	m.logViewport = viewport.New(viewport.WithWidth(10000), viewport.WithHeight(h-3))
 	m.refreshLogViewport()
 	m.logViewport.GotoBottom()
 }
@@ -301,6 +301,8 @@ func (m *Model) refreshLogViewport() {
 	}
 }
 
-func (m Model) View() string {
-	return renderView(m)
+func (m Model) View() tea.View {
+	v := tea.NewView(renderView(m))
+	v.AltScreen = true
+	return v
 }

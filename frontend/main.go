@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"termd/frontend/client"
 	termlog "termd/frontend/log"
 	"termd/frontend/ui"
@@ -84,7 +84,7 @@ func main() {
 	pipeR, pipeW := io.Pipe()
 
 	model := ui.NewModel(c, shell, shellArgs, logRing)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithInput(pipeR))
+	p := tea.NewProgram(model, tea.WithInput(pipeR))
 
 	stdinDupFd, err := syscall.Dup(int(os.Stdin.Fd()))
 	if err != nil {

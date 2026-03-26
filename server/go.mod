@@ -11,9 +11,8 @@ require (
 replace termd/frontend => ../frontend
 
 require (
-	github.com/clipperhouse/stringish v0.1.1 // indirect
-	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
-	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )

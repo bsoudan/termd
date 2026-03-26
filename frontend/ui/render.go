@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -89,13 +89,13 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 
 	content := m.logViewport.View()
 
-	// Truncate content to fit — lipgloss Height() is a minimum, not a max,
-	// and long lines wrap causing overflow.
-	maxContentLines := overlayH - 4
-	maxContentWidth := overlayW - 4 // border + padding
+	// overlayH = border(2) + log content + help(1)
+	maxLogLines := overlayH - 3
+	maxContentWidth := overlayW - 4
+
 	contentLines := strings.Split(content, "\n")
-	if len(contentLines) > maxContentLines {
-		contentLines = contentLines[:maxContentLines]
+	if len(contentLines) > maxLogLines {
+		contentLines = contentLines[:maxLogLines]
 	}
 	for i, line := range contentLines {
 		runes := []rune(line)
@@ -109,21 +109,31 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 		}
 		contentLines[i] = string(runes)
 	}
+
 	content = strings.Join(contentLines, "\n")
 
-	styled := overlayBorder.
-		Width(overlayW - 2).
-		Height(maxContentLines).
+	dialog := overlayBorder.
+		Width(overlayW).
+		Height(maxLogLines).
 		Render(content)
 
-	help := overlayHelp.Render(" q/esc: close  ↑↓/pgup/pgdn: scroll  ←→: pan  home: top ")
+	// lipgloss Height doesn't truncate — hard-clamp and re-add bottom border
+	dialogLines := strings.Split(dialog, "\n")
+	maxBoxLines := maxLogLines + 2 // content + border top/bottom
+	if len(dialogLines) > maxBoxLines {
+		lastLine := dialogLines[len(dialogLines)-1]
+		dialogLines = dialogLines[:maxBoxLines-1]
+		dialogLines = append(dialogLines, lastLine)
+	}
 
-	// Center the help text within the overlay width
+	// Add help text below the border
+	help := overlayHelp.Render(" q/esc: close  ↑↓/pgup/pgdn: scroll  ←→: pan  home: top ")
 	helpPad := (overlayW - lipgloss.Width(help)) / 2
 	if helpPad < 0 {
 		helpPad = 0
 	}
-	overlay := styled + "\n" + strings.Repeat(" ", helpPad) + help
+	dialogLines = append(dialogLines, strings.Repeat(" ", helpPad)+help)
+	dialog = strings.Join(dialogLines, "\n")
 
 	x := (width - overlayW) / 2
 	y := (height - overlayH) / 2
@@ -134,7 +144,9 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 		y = 0
 	}
 
-	return placeOverlay(x, y, overlay, base)
+	baseLayer := lipgloss.NewLayer(base)
+	dialogLayer := lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
 func renderTabBar(regionName, status string, width int) string {
@@ -161,38 +173,3 @@ func renderTabBar(regionName, status string, width int) string {
 	return tab + strings.Repeat(" ", fill) + styledStatus
 }
 
-// placeOverlay composites fg on top of bg at position (x, y).
-func placeOverlay(x, y int, fg, bg string) string {
-	bgLines := strings.Split(bg, "\n")
-	fgLines := strings.Split(fg, "\n")
-
-	for i, fgLine := range fgLines {
-		bgIdx := y + i
-		if bgIdx < 0 || bgIdx >= len(bgLines) {
-			continue
-		}
-		bgRunes := []rune(bgLines[bgIdx])
-		fgWidth := lipgloss.Width(fgLine)
-
-		// Build: bgRunes[0..x] + fgLine + bgRunes[x+fgWidth..]
-		var sb strings.Builder
-		if x > 0 {
-			end := x
-			if end > len(bgRunes) {
-				end = len(bgRunes)
-			}
-			sb.WriteString(string(bgRunes[:end]))
-			for j := len(bgRunes); j < x; j++ {
-				sb.WriteByte(' ')
-			}
-		}
-		sb.WriteString(fgLine)
-		after := x + fgWidth
-		if after < len(bgRunes) {
-			sb.WriteString(string(bgRunes[after:]))
-		}
-		bgLines[bgIdx] = sb.String()
-	}
-
-	return strings.Join(bgLines, "\n")
-}

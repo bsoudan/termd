@@ -7,8 +7,9 @@ import (
 	"log/slog"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
+	"golang.org/x/sys/unix"
 	"termd/frontend/client"
 	"termd/frontend/protocol"
 )
@@ -22,6 +23,13 @@ func SetupRawTerminal() (restore func(), err error) {
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
 		return nil, err
+	}
+	// MakeRaw clears OPOST which disables ONLCR (\n → \r\n translation).
+	// Re-enable it so terminal output renders correctly.
+	termios, err := unix.IoctlGetTermios(int(fd), unix.TCGETS)
+	if err == nil {
+		termios.Oflag |= unix.OPOST | unix.ONLCR
+		unix.IoctlSetTermios(int(fd), unix.TCSETS, termios)
 	}
 	return func() { term.Restore(fd, oldState) }, nil
 }
