@@ -75,6 +75,8 @@ func main() {
 	handler := tlog.NewHandler(os.Stderr, level, nil)
 	slog.SetDefault(slog.New(handler))
 
+	transport.InstallStackDump("termd")
+
 	listeners := make([]net.Listener, 0, len(listenSpecs))
 	for _, spec := range listenSpecs {
 		ln, err := transport.Listen(spec)

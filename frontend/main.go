@@ -70,6 +70,8 @@ func main() {
 		}
 	}
 
+	transport.InstallStackDump("termd-frontend")
+
 	endpoint := *socketPath
 	if !strings.Contains(endpoint, ":") {
 		endpoint = "unix:" + endpoint

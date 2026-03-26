@@ -41,6 +41,7 @@ func main() {
 				level = slog.LevelDebug
 			}
 			slog.SetDefault(slog.New(termlog.NewHandler(os.Stderr, level, nil)))
+			transport.InstallStackDump("termctl")
 			return nil
 		},
 		Commands: []*cli.Command{
