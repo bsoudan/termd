@@ -44,7 +44,10 @@ func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 	t.Helper()
 
 	cmd := exec.Command("termd-frontend", "--socket", socketPath)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// TERM=dumb prevents bubbletea's package init() from sending an OSC
+	// terminal query that times out after 5 seconds in a raw PTY with no
+	// terminal emulator behind it.
+	cmd.Env = append(os.Environ(), "TERM=dumb")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {

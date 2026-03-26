@@ -1,9 +1,13 @@
 package e2e
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 func TestStartAndRender(t *testing.T) {
@@ -257,6 +261,71 @@ func TestPrefixKeyStatusIndicator(t *testing.T) {
 	if strings.Contains(output, "ctrl+b ...") {
 		t.Fatal("prefix status indicator still visible after prefix mode ended")
 	}
+}
+
+func TestLogViewerOverlay(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	// Start with --debug to fill the log buffer (reproduces overflow bug)
+	cmd := exec.Command("termd-frontend", "--socket", socketPath, "--debug")
+	// See startFrontend for why TERM=dumb.
+	cmd.Env = append(os.Environ(), "TERM=dumb")
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatalf("start frontend: %v", err)
+	}
+	pio := newPtyIO(ptmx)
+	frontendCleanup := func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "bash", 10*time.Second)
+
+	// Open log viewer: ctrl+b l
+	pio.WaitForSilence(500 * time.Millisecond)
+	pio.buf.Reset()
+	pio.Write([]byte{0x02})
+	pio.Write([]byte("l"))
+
+	// The overlay must fit on screen. Verify:
+	// 1. The top border (╭) appears
+	// 2. The bottom border (╰) appears
+	// 3. The help text appears
+	// All three must be visible — if the overlay is clipped, one or more
+	// will be missing.
+	raw := pio.WaitForRaw(t, "\xe2\x95\xad", 5*time.Second) // ╭ = top border
+	if !strings.Contains(raw, "\xe2\x95\xb0") {              // ╰ = bottom border
+		t.Fatal("bottom border not visible — overlay is taller than screen")
+	}
+	if !strings.Contains(raw, "q/esc: close") {
+		t.Fatal("help text not visible — overlay is taller than screen")
+	}
+
+	// Verify the overlay height: count lines between top and bottom border
+	rawLines := strings.Split(raw, "\n")
+	topLine := -1
+	bottomLine := -1
+	for i, line := range rawLines {
+		if strings.Contains(line, "\xe2\x95\xad") {
+			topLine = i
+		}
+		if strings.Contains(line, "\xe2\x95\xb0") {
+			bottomLine = i
+		}
+	}
+	if topLine >= 0 && bottomLine >= 0 {
+		overlayHeight := bottomLine - topLine + 1
+		t.Logf("overlay rendered: lines %d-%d (%d lines), screen height=24", topLine, bottomLine, overlayHeight)
+		if overlayHeight > 24 {
+			t.Fatalf("overlay height %d exceeds screen height 24", overlayHeight)
+		}
+	}
+
+	// Close and verify normal input resumes
+	pio.Write([]byte("q"))
+	pio.WaitFor(t, ">", 10*time.Second)
+	pio.Write([]byte("echo logview_closed\r"))
+	pio.WaitFor(t, "logview_closed", 10*time.Second)
 }
 
 func TestSessionPersistence(t *testing.T) {

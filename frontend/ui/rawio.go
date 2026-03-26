@@ -14,11 +14,9 @@ import (
 )
 
 type prefixStartedMsg struct{}
-type prefixEndedMsg struct{}
 
 const prefixKey = 0x02 // ctrl+b
 
-// SetupRawTerminal puts stdin into raw mode and returns a restore function.
 func SetupRawTerminal() (restore func(), err error) {
 	fd := os.Stdin.Fd()
 	oldState, err := term.MakeRaw(fd)
@@ -29,11 +27,11 @@ func SetupRawTerminal() (restore func(), err error) {
 }
 
 // RawInputLoop reads raw bytes from stdin and forwards them to the server.
-// When ctrl+b is detected, the next byte is diverted to pipeW (bubbletea's
-// input) so the prefix command is handled by bubbletea's Update loop.
-// Sends prefixStartedMsg via program.Send() to trigger a re-render for the
-// status indicator.
-func RawInputLoop(stdin *os.File, c *client.Client, regionReady <-chan string, pipeW io.WriteCloser, program *tea.Program) {
+// When ctrl+b is pressed, one byte is diverted to bubbletea for prefix
+// command handling. If bubbletea requests extended input focus (e.g., for
+// the log viewer), it sends a done channel on focusCh; the raw loop stays
+// in focus mode until that channel is closed.
+func RawInputLoop(stdin *os.File, c *client.Client, regionReady <-chan string, pipeW io.WriteCloser, program *tea.Program, focusCh <-chan chan struct{}) {
 	defer pipeW.Close()
 
 	regionID, ok := <-regionReady
@@ -42,10 +40,26 @@ func RawInputLoop(stdin *os.File, c *client.Client, regionReady <-chan string, p
 	}
 	slog.Debug("raw input loop started", "region_id", regionID)
 
+	var focusDone chan struct{}
 	prefixActive := false
 	buf := make([]byte, 4096)
+
 	for {
+		select {
+		case done := <-focusCh:
+			focusDone = done
+		default:
+		}
+
 		n, err := stdin.Read(buf)
+
+		// Re-check after read — bubbletea may have requested focus while
+		// we were blocked on stdin.
+		select {
+		case done := <-focusCh:
+			focusDone = done
+		default:
+		}
 		if err != nil {
 			slog.Debug("raw input read error", "error", err)
 			return
@@ -56,8 +70,19 @@ func RawInputLoop(stdin *os.File, c *client.Client, regionReady <-chan string, p
 
 		chunk := buf[:n]
 
+		// Focus mode: all input goes to bubbletea.
+		if focusDone != nil {
+			select {
+			case <-focusDone:
+				focusDone = nil
+			default:
+				pipeW.Write(chunk)
+				continue
+			}
+		}
+
+		// Prefix active: divert one byte to bubbletea for the command.
 		if prefixActive {
-			// Divert the first byte to bubbletea for prefix command handling.
 			pipeW.Write(chunk[:1])
 			prefixActive = false
 			chunk = chunk[1:]
@@ -66,29 +91,24 @@ func RawInputLoop(stdin *os.File, c *client.Client, regionReady <-chan string, p
 			}
 		}
 
-		// Scan for prefix key in the chunk.
+		// Scan for prefix key.
 		if idx := bytes.IndexByte(chunk, prefixKey); idx >= 0 {
-			// Send everything before the prefix key to the server.
 			if idx > 0 {
 				sendInput(c, regionID, chunk[:idx])
 			}
 			program.Send(prefixStartedMsg{})
 			rest := chunk[idx+1:]
 			if len(rest) > 0 {
-				// Byte after ctrl+b is in the same read — divert it to bubbletea.
 				pipeW.Write(rest[:1])
-				// Remaining bytes after the prefix command go to the server.
 				if len(rest) > 1 {
 					sendInput(c, regionID, rest[1:])
 				}
 			} else {
-				// ctrl+b was the last byte — next read goes to bubbletea.
 				prefixActive = true
 			}
 			continue
 		}
 
-		// No prefix key — send the entire chunk to the server.
 		sendInput(c, regionID, chunk)
 	}
 }

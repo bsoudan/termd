@@ -1,24 +1,32 @@
-// Package ui contains the bubbletea model, messages, and renderer.
 package ui
 
 import (
 	"encoding/base64"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	termlog "termd/frontend/log"
 	"termd/frontend/client"
 	"termd/frontend/protocol"
 )
 
-// Model is the bubbletea model for the termd frontend.
-// Input is handled by a separate raw stdin reader (see rawio.go),
-// not by bubbletea's key parsing.
+// LogEntryMsg is sent by the log handler to trigger a re-render when new
+// log entries arrive (throttled to 100ms).
+type LogEntryMsg struct{}
+
 type Model struct {
 	client      *client.Client
 	cmd         string
 	cmdArgs     []string
-	RegionReady chan string // signals raw input goroutine with regionID
+	RegionReady chan string
+	FocusCh     chan chan struct{} // raw loop reads this to enter focus mode
 	Detached    bool
 	prefixMode  bool
+	focusDone   chan struct{}
+	showLogView bool
+	logViewport viewport.Model
+	logHScroll  int
+	LogRing     *termlog.LogRingBuffer
 	regionID    string
 	regionName  string
 	lines       []string
@@ -30,18 +38,19 @@ type Model struct {
 	err         string
 }
 
-func NewModel(c *client.Client, cmd string, args []string) Model {
+func NewModel(c *client.Client, cmd string, args []string, ring *termlog.LogRingBuffer) Model {
 	return Model{
 		client:      c,
 		cmd:         cmd,
 		cmdArgs:     args,
 		RegionReady: make(chan string, 1),
+		FocusCh:     make(chan chan struct{}, 1),
+		LogRing:     ring,
 		status:      "connecting...",
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	// First, list existing regions to check for a session to resume.
 	return tea.Batch(
 		func() tea.Msg {
 			err := m.client.Send(protocol.ListRegionsRequest{
@@ -81,7 +90,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if len(msg.Regions) > 0 {
-			// Resume existing session.
 			m.regionID = msg.Regions[0].RegionID
 			m.regionName = msg.Regions[0].Name
 			m.status = "subscribing..."
@@ -103,7 +111,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				waitForUpdate(m.client),
 			)
 		}
-		// No existing region — spawn a new one.
 		m.status = "spawning..."
 		return m, tea.Batch(
 			func() tea.Msg {
@@ -128,9 +135,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.regionID = msg.RegionID
 		m.regionName = msg.Name
 		m.status = "subscribing..."
-		// Signal the raw input goroutine that regionID is available
 		select {
-		case m.RegionReady <- msg.RegionID:
+		case m.RegionReady <- m.regionID:
 		default:
 		}
 		return m, tea.Batch(
@@ -167,6 +173,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lines = msg.Lines
 		m.cursorRow = int(msg.CursorRow)
 		m.cursorCol = int(msg.CursorCol)
+		if m.showLogView {
+			m.refreshLogViewport()
+		}
 		return m, waitForUpdate(m.client)
 
 	case RegionCreatedMsg:
@@ -186,33 +195,109 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Context + ": " + msg.Message
 		return m, tea.Quit
 
+	case LogEntryMsg:
+		if m.showLogView {
+			m.refreshLogViewport()
+		}
+		return m, nil
+
 	case prefixStartedMsg:
 		m.prefixMode = true
 		return m, nil
 
 	case tea.KeyMsg:
-		// Only received during prefix mode (raw loop diverted input to bubbletea).
-		m.prefixMode = false
-		switch msg.String() {
-		case "d":
-			m.Detached = true
-			return m, tea.Quit
-		case "ctrl+b":
-			if m.regionID != "" {
-				data := base64.StdEncoding.EncodeToString([]byte{0x02})
-				_ = m.client.Send(protocol.InputMsg{
-					Type:     "input",
-					RegionID: m.regionID,
-					Data:     data,
-				})
-			}
-			return m, nil
-		default:
-			return m, nil
+		if m.showLogView {
+			return m.updateLogViewer(msg)
 		}
+		return m.updatePrefixCommand(msg)
 
 	default:
 		return m, nil
+	}
+}
+
+func (m Model) updatePrefixCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.prefixMode = false
+	switch msg.String() {
+	case "d":
+		m.Detached = true
+		return m, tea.Quit
+	case "ctrl+b":
+		if m.regionID != "" {
+			data := base64.StdEncoding.EncodeToString([]byte{0x02})
+			_ = m.client.Send(protocol.InputMsg{
+				Type: "input", RegionID: m.regionID, Data: data,
+			})
+		}
+		return m, nil
+	case "l":
+		m.showLogView = true
+		m.initLogViewport()
+		done := make(chan struct{})
+		m.focusDone = done
+		select {
+		case m.FocusCh <- done:
+		default:
+		}
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) updateLogViewer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		m.showLogView = false
+		m.logHScroll = 0
+		if m.focusDone != nil {
+			close(m.focusDone)
+			m.focusDone = nil
+		}
+		return m, nil
+	case "left":
+		if m.logHScroll > 0 {
+			m.logHScroll--
+		}
+		return m, nil
+	case "right":
+		m.logHScroll++
+		return m, nil
+	case "home":
+		m.logHScroll = 0
+		m.logViewport.GotoTop()
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.logViewport, cmd = m.logViewport.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m *Model) initLogViewport() {
+	w := m.termWidth * 80 / 100
+	h := m.termHeight * 80 / 100
+	if w < 20 {
+		w = 20
+	}
+	if h < 5 {
+		h = 5
+	}
+	// Wide viewport — horizontal truncation is handled in the render step
+	// so horizontal scrolling can access the full line content.
+	m.logViewport = viewport.New(10000, h-4)
+	m.refreshLogViewport()
+	m.logViewport.GotoBottom()
+}
+
+func (m *Model) refreshLogViewport() {
+	if m.LogRing == nil {
+		return
+	}
+	atBottom := m.logViewport.AtBottom()
+	m.logViewport.SetContent(m.LogRing.String())
+	if atBottom {
+		m.logViewport.GotoBottom()
 	}
 }
 

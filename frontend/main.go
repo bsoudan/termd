@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"termd/frontend/client"
@@ -18,6 +19,7 @@ func main() {
 	flag.StringVar(socketPath, "s", "", "socket path (shorthand)")
 	debug := flag.Bool("debug", false, "enable debug logging (env: TERMD_DEBUG=1)")
 	flag.BoolVar(debug, "d", false, "enable debug logging (shorthand)")
+	logStderr := flag.Bool("log-stderr", false, "also write logs to stderr (corrupts terminal display)")
 	flag.Parse()
 
 	if !*debug && os.Getenv("TERMD_DEBUG") == "1" {
@@ -35,8 +37,13 @@ func main() {
 	if *debug {
 		level = slog.LevelDebug
 	}
-	ringBuf := termlog.NewLogRingBuffer(1000)
-	slog.SetDefault(slog.New(termlog.NewHandler(os.Stderr, level, ringBuf)))
+	logRing := termlog.NewLogRingBuffer(1000)
+	var logW io.Writer
+	if *logStderr {
+		logW = os.Stderr
+	}
+	logHandler := termlog.NewHandler(logW, level, logRing)
+	slog.SetDefault(slog.New(logHandler))
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -64,12 +71,24 @@ func main() {
 
 	pipeR, pipeW := io.Pipe()
 
-	model := ui.NewModel(c, shell, []string{})
+	model := ui.NewModel(c, shell, []string{}, logRing)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithInput(pipeR))
 
-	go ui.RawInputLoop(os.Stdin, c, model.RegionReady, pipeW, p)
+	// Dup stdin so we can close it on exit to unblock the raw loop
+	// without destroying the parent shell's stdin (fd 0).
+	stdinDupFd, err := syscall.Dup(int(os.Stdin.Fd()))
+	if err != nil {
+		slog.Error("dup stdin failed", "error", err)
+		os.Exit(1)
+	}
+	stdinDup := os.NewFile(uintptr(stdinDupFd), "stdin-dup")
+
+	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
+	go ui.RawInputLoop(stdinDup, c, model.RegionReady, pipeW, p, model.FocusCh)
 
 	finalModel, err := p.Run()
+	stdinDup.Close()
+
 	if err != nil {
 		slog.Error("program error", "error", err)
 		os.Exit(1)

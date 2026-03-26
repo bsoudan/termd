@@ -64,7 +64,9 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.w.Write([]byte(line))
+	if h.w != nil {
+		h.w.Write([]byte(line))
+	}
 
 	if h.ring != nil {
 		h.ring.append(line)
