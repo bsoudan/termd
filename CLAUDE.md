@@ -16,6 +16,14 @@ some context, though only what's readily accessible
 
 * prefer writing end to end (e2e) tests over writing unit tests, but unit tests are still good for particular tricky code and/or code that is hard to test using an end to end test
 
+* don't write tests that just exercise the standard library (e.g., JSON marshal/unmarshal round-trips).  tests should validate project-specific behavior.
+
+* don't write redundant tests that cover the same code path from different angles.  one well-placed e2e or integration test that exercises the full pipeline is better than multiple unit tests poking at the same intermediate step.  unit tests should focus on edge cases and error paths that e2e tests can't easily reach (malformed input, boundary conditions).
+
+* consolidate duplicated code before committing, not as a follow-up.  if the same logic exists in two places, extract it immediately.
+
+* when inventing wire formats or encodings, check whether an existing standard covers the use case before designing something ad-hoc.
+
 * do not commit without allowing me to review.
 
 * in general, don't comment code to describe what it's doing unless it's tricky or hard to understand.  better to have descriptive naming and structure.  save comments for things that the code doesn't convey, like intent, purpose, or design decisions that are not obvious.
