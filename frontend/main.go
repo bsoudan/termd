@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +21,8 @@ func main() {
 	debug := flag.Bool("debug", false, "enable debug logging (env: TERMD_DEBUG=1)")
 	flag.BoolVar(debug, "d", false, "enable debug logging (shorthand)")
 	logStderr := flag.Bool("log-stderr", false, "also write logs to stderr (corrupts terminal display)")
+	command := flag.String("command", "", "command to run (default: $SHELL or bash)")
+	flag.StringVar(command, "c", "", "command to run (shorthand)")
 	flag.Parse()
 
 	if !*debug && os.Getenv("TERMD_DEBUG") == "1" {
@@ -45,13 +48,22 @@ func main() {
 	logHandler := termlog.NewHandler(logW, level, logRing)
 	slog.SetDefault(slog.New(logHandler))
 
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		var err error
-		shell, err = exec.LookPath("bash")
-		if err != nil {
-			slog.Error("cannot find shell", "error", err)
-			os.Exit(1)
+	// Resolve the command to spawn
+	var shell string
+	var shellArgs []string
+	if *command != "" {
+		parts := strings.Fields(*command)
+		shell = parts[0]
+		shellArgs = parts[1:]
+	} else {
+		shell = os.Getenv("SHELL")
+		if shell == "" {
+			var err error
+			shell, err = exec.LookPath("bash")
+			if err != nil {
+				slog.Error("cannot find shell", "error", err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -71,11 +83,9 @@ func main() {
 
 	pipeR, pipeW := io.Pipe()
 
-	model := ui.NewModel(c, shell, []string{}, logRing)
+	model := ui.NewModel(c, shell, shellArgs, logRing)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithInput(pipeR))
 
-	// Dup stdin so we can close it on exit to unblock the raw loop
-	// without destroying the parent shell's stdin (fd 0).
 	stdinDupFd, err := syscall.Dup(int(os.Stdin.Fd()))
 	if err != nil {
 		slog.Error("dup stdin failed", "error", err)

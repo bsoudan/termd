@@ -47,7 +47,7 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 	name := extractName(cmdStr)
 
 	cmdObj := exec.Command(cmdStr, args...)
-	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=termd$ ")
 
 	ptmx, err := pty.StartWithSize(cmdObj, &pty.Winsize{
 		Rows: uint16(height),

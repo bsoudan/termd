@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/rcarmo/go-te/pkg/te"
 )
 
 func startServer(t *testing.T) (string, func()) {
@@ -43,7 +45,7 @@ func startServer(t *testing.T) (string, func()) {
 func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 	t.Helper()
 
-	cmd := exec.Command("termd-frontend", "--socket", socketPath)
+	cmd := exec.Command("termd-frontend", "--socket", socketPath, "--command", "bash --norc")
 	// TERM=dumb prevents bubbletea's package init() from sending an OSC
 	// terminal query that times out after 5 seconds in a raw PTY with no
 	// terminal emulator behind it.
@@ -54,7 +56,7 @@ func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 		t.Fatalf("start frontend in pty: %v (is termd-frontend in PATH?)", err)
 	}
 
-	io := newPtyIO(ptmx)
+	io := newPtyIO(ptmx, 80, 24)
 
 	return io, func() {
 		cmd.Process.Kill()
@@ -64,17 +66,25 @@ func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 }
 
 // ptyIO reads from a PTY in a background goroutine and provides
-// methods to wait for specific output and send input.
+// methods to wait for specific output and send input. It maintains
+// a go-te virtual screen that interprets ANSI escape sequences.
 type ptyIO struct {
-	ptmx *os.File
-	ch   chan []byte
-	buf  strings.Builder
+	ptmx   *os.File
+	ch     chan []byte
+	buf    strings.Builder
+	screen *te.Screen
+	stream *te.Stream
+	mu     sync.Mutex
 }
 
-func newPtyIO(ptmx *os.File) *ptyIO {
+func newPtyIO(ptmx *os.File, cols, rows int) *ptyIO {
+	screen := te.NewScreen(cols, rows)
+	stream := te.NewStream(screen, false)
 	p := &ptyIO{
-		ptmx: ptmx,
-		ch:   make(chan []byte, 256),
+		ptmx:   ptmx,
+		ch:     make(chan []byte, 256),
+		screen: screen,
+		stream: stream,
 	}
 	go p.readLoop()
 	return p
@@ -87,6 +97,12 @@ func (p *ptyIO) readLoop() {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+
+			p.mu.Lock()
+			p.stream.FeedBytes(data)
+			p.buf.Write(data)
+			p.mu.Unlock()
+
 			p.ch <- data
 		}
 		if err != nil {
@@ -96,52 +112,69 @@ func (p *ptyIO) readLoop() {
 	}
 }
 
-// WaitFor reads PTY output until needle appears or timeout elapses.
-// Searches stripped (no ANSI escapes) accumulated output.
-// Returns the stripped output on success.
-func (p *ptyIO) WaitFor(t *testing.T, needle string, timeout time.Duration) string {
+// ScreenLines returns the current screen content as a slice of strings.
+func (p *ptyIO) ScreenLines() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.screen.Display()
+}
+
+// ScreenLine returns a single row from the screen.
+func (p *ptyIO) ScreenLine(row int) string {
+	lines := p.ScreenLines()
+	if row < 0 || row >= len(lines) {
+		return ""
+	}
+	return lines[row]
+}
+
+// WaitForScreen polls the virtual screen until check returns true or timeout.
+func (p *ptyIO) WaitForScreen(t *testing.T, check func([]string) bool, desc string, timeout time.Duration) []string {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
-		stripped := stripAnsi(p.buf.String())
-		if strings.Contains(stripped, needle) {
-			return stripped
+		lines := p.ScreenLines()
+		if check(lines) {
+			return lines
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("timeout (%v) waiting for %q in output:\n%s", timeout, needle, stripped)
-			return ""
-		case data, ok := <-p.ch:
+			t.Fatalf("timeout (%v) waiting for %s\nscreen:\n%s", timeout, desc, strings.Join(lines, "\n"))
+			return nil
+		case _, ok := <-p.ch:
 			if !ok {
-				t.Fatalf("PTY closed while waiting for %q\noutput:\n%s", needle, stripped)
-				return ""
+				lines = p.ScreenLines()
+				if check(lines) {
+					return lines
+				}
+				t.Fatalf("PTY closed while waiting for %s\nscreen:\n%s", desc, strings.Join(lines, "\n"))
+				return nil
 			}
-			p.buf.Write(data)
 		}
 	}
 }
 
-// WaitForRaw is like WaitFor but searches the raw (non-stripped) output.
-func (p *ptyIO) WaitForRaw(t *testing.T, needle string, timeout time.Duration) string {
-	t.Helper()
-	deadline := time.After(timeout)
-	for {
-		raw := p.buf.String()
-		if strings.Contains(raw, needle) {
-			return raw
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("timeout (%v) waiting for raw %q in output (len=%d)", timeout, needle, len(raw))
-			return ""
-		case data, ok := <-p.ch:
-			if !ok {
-				t.Fatalf("PTY closed while waiting for raw %q", needle)
-				return ""
-			}
-			p.buf.Write(data)
+// FindOnScreen returns the row and column where needle first appears, or (-1,-1).
+func findOnScreen(lines []string, needle string) (row, col int) {
+	for i, line := range lines {
+		if j := strings.Index(line, needle); j >= 0 {
+			return i, j
 		}
 	}
+	return -1, -1
+}
+
+// WaitFor reads PTY output until needle appears on the virtual screen.
+func (p *ptyIO) WaitFor(t *testing.T, needle string, timeout time.Duration) []string {
+	t.Helper()
+	return p.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines {
+			if strings.Contains(line, needle) {
+				return true
+			}
+		}
+		return false
+	}, "screen to contain "+needle, timeout)
 }
 
 // WaitForSilence drains output until no new data arrives for the given duration.
@@ -149,11 +182,10 @@ func (p *ptyIO) WaitForRaw(t *testing.T, needle string, timeout time.Duration) s
 func (p *ptyIO) WaitForSilence(duration time.Duration) {
 	for {
 		select {
-		case data, ok := <-p.ch:
+		case _, ok := <-p.ch:
 			if !ok {
 				return
 			}
-			p.buf.Write(data)
 			// Reset: new data arrived, wait again.
 		case <-time.After(duration):
 			return // no new data for the duration — idle.
@@ -174,9 +206,10 @@ func runTermctl(t *testing.T, socketPath string, args ...string) string {
 }
 
 // spawnRegion uses termctl to spawn a region and returns the region ID.
+// Passes --norc so bash doesn't source .bashrc (which would override PS1).
 func spawnRegion(t *testing.T, socketPath string, shellCmd string) string {
 	t.Helper()
-	out := runTermctl(t, socketPath, "region", "spawn", shellCmd)
+	out := runTermctl(t, socketPath, "region", "spawn", shellCmd, "--norc")
 	id := strings.TrimSpace(out)
 	if len(id) != 36 {
 		t.Fatalf("expected 36-char region ID, got %q", id)
@@ -187,51 +220,4 @@ func spawnRegion(t *testing.T, socketPath string, shellCmd string) string {
 // Write sends raw bytes to the PTY (simulating keyboard input).
 func (p *ptyIO) Write(data []byte) {
 	p.ptmx.Write(data)
-}
-
-// stripAnsi removes ANSI escape sequences from a string.
-func stripAnsi(s string) string {
-	var out strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == '\x1b' {
-			i++
-			if i >= len(s) {
-				break
-			}
-			switch s[i] {
-			case '[': // CSI sequence: ESC [ ... final_byte
-				i++
-				for i < len(s) && s[i] >= 0x20 && s[i] <= 0x3f {
-					i++ // parameter bytes and intermediate bytes
-				}
-				if i < len(s) {
-					i++ // final byte
-				}
-			case ']': // OSC sequence: ESC ] ... BEL/ST
-				i++
-				for i < len(s) && s[i] != '\x07' {
-					if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
-						i += 2
-						break
-					}
-					i++
-				}
-				if i < len(s) && s[i] == '\x07' {
-					i++
-				}
-			case '(', ')': // Charset designation
-				i++
-				if i < len(s) {
-					i++
-				}
-			default: // Two-character escape
-				i++
-			}
-		} else {
-			out.WriteByte(s[i])
-			i++
-		}
-	}
-	return out.String()
 }
