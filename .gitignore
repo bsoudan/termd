@@ -1,9 +1,7 @@
 .claude-config
 .local
-.zig-cache
-zig-out
 frontend/termd-frontend
+termctl/termctl
 nano.*.save
 x
 x.save
-termctl/termctl

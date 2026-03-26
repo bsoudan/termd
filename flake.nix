@@ -19,21 +19,17 @@
             bash
             gnumake
 
-            # Server (Zig) — libghostty-vt is fetched via build.zig.zon
-            zig
-            zls
-
-            # Frontend (Go) — bubbletea/lipgloss fetched via go mod
+            # Server + Frontend + termctl (Go)
             go
             gopls
             gotools  # goimports, etc.
-            gcc      # C/C++ compiler for cgo (provides gcc, g++, and binutils)
+            gcc      # C/C++ compiler for cgo
 
             # Protocol debugging: NDJSON over a Unix socket
             jq
             netcat-gnu  # nc for manual socket interaction
 
-            # Version control / Zig package manager needs git
+            # Version control
             git
 
             # Sandbox
@@ -46,12 +42,10 @@
             export PATH="$PWD/.local/bin:$PATH"
             export GOPATH="$PWD/.local/go"
             export GOCACHE="$PWD/.local/var/cache/go"
-            export ZIG_GLOBAL_CACHE_DIR="$PWD/.local/var/cache/zig"
             export NIX_SHELL=termd
 
             echo
             echo "entering termd dev environment"
-            echo "  * zig $(zig version)"
             echo "  * go  $(go version)"
             echo "  * gcc $(gcc --version | awk 'NR==1{print $NF}')"
             if [ -z "$IN_SANDBOXED_SHELL" ]; then

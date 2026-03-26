@@ -54,8 +54,8 @@ Programs express placement preferences through tags (beside parent, float, take 
 
 | Layer | Technology | Rationale |
 |---|---|---|
-| Server | **Zig** | Native libghostty-vt integration as a Zig module; direct POSIX PTY access; no runtime |
-| VT parsing / screen state | **libghostty-vt** | Extracted from Ghostty; SIMD-optimized; zero dependencies (not even libc); battle-tested by millions of Ghostty users; handles Unicode, Kitty Graphics Protocol, text reflow on resize |
+| Server | **Go** | Goroutines per client/region; shared protocol types with frontend; creack/pty for PTY management |
+| VT parsing / screen state | **go-te** | Pure Go terminal emulator (port of Python pyte); full screen buffer with cursor tracking; handles escape sequences, resize, alternate buffer |
 | Reference frontend | **Go** | Goroutines map naturally onto the frontend's concurrent jobs (socket reader, input forwarder, render loop); bubbletea is a mature TUI framework |
 | TUI rendering | **bubbletea + lipgloss** | Elm-style model/update/view architecture; screen updates from server become `tea.Msg`s; lipgloss handles cell styling |
 
@@ -140,8 +140,8 @@ Deferred to later milestones:
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| VT parsing library | libghostty-vt over `vt100` crate | Production-proven, SIMD, Unicode, actively maintained; `vt100` has known coverage gaps |
-| Server language | Zig | Native libghostty-vt module; no runtime; direct POSIX access |
+| VT parsing library | go-te | Pure Go port of pyte; full screen buffer with cursor; handles resize and alternate buffer |
+| Server language | Go | Goroutines per client/region; shared types with frontend; simpler build |
 | Frontend language | Go | Goroutine model fits the frontend's concurrent structure naturally |
 | TUI framework | bubbletea + lipgloss | Elm architecture maps well to protocol message flow |
 | Wire format (v1) | Newline-delimited JSON | Debuggable; no toolchain; upgrade path clear |
