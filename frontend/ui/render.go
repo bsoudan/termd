@@ -304,67 +304,58 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
-var (
-	barStyle  = lipgloss.NewStyle().Faint(true)
-	barAccent = lipgloss.NewStyle().Bold(true)
-)
+var barStyle = lipgloss.NewStyle().Faint(true)
 
 // renderChromeBar renders a line like: ─ left ──────── right ─
 // Both left and right are optional. The line fills to width with ─ characters.
+// All content is rendered in the dim/faint style.
 func renderChromeBar(left, right string, width int) string {
+	// Build the content layout first, then style the whole thing.
+	// Layout: "─ left ───...─── right ─"
 	var sb strings.Builder
 	used := 0
 
-	dash := barStyle.Render("─")
-	dashW := 1 // visual width of one dash
+	// Leading: "─ "
+	sb.WriteString("─ ")
+	used += 2
 
-	// Leading dash + space
-	sb.WriteString(dash)
-	sb.WriteByte(' ')
-	used += dashW + 1
-
-	// Left content
+	// Left content + trailing space
 	if left != "" {
-		styled := barAccent.Render(left)
-		sb.WriteString(styled)
-		used += lipgloss.Width(styled)
+		sb.WriteString(left)
 		sb.WriteByte(' ')
-		used++
+		used += len([]rune(left)) + 1
 	}
 
-	// Right content (rendered later, but we need its width now)
-	var rightStyled string
-	rightW := 0
+	// Compute how much space the right side needs
+	rightTotal := 0
 	if right != "" {
-		rightStyled = barStyle.Render(right)
-		rightW = lipgloss.Width(rightStyled)
-	}
-
-	// Fill with dashes between left and right
-	fillCount := width - used - rightW
-	if right != "" {
-		fillCount -= 2 // space + trailing dash
+		rightTotal = len([]rune(right)) + 3 // " right ─"  (space + content + space + dash)
 	} else {
-		fillCount -= dashW // trailing dash
+		rightTotal = 1 // trailing "─"
 	}
+
+	// Fill with dashes
+	fillCount := width - used - rightTotal
 	if fillCount < 1 {
 		fillCount = 1
 	}
 	for range fillCount {
-		sb.WriteString(dash)
+		sb.WriteByte(0xe2) // UTF-8 for ─ (U+2500)
+		sb.WriteByte(0x94)
+		sb.WriteByte(0x80)
 	}
 
 	// Right content + trailing dash
 	if right != "" {
 		sb.WriteByte(' ')
-		sb.WriteString(rightStyled)
-		sb.WriteByte(' ')
-		sb.WriteString(dash)
+		sb.WriteString(right)
+		sb.WriteString(" ─")
 	} else {
-		sb.WriteString(dash)
+		sb.WriteString("─")
 	}
 
-	return sb.String()
+	// Style the whole line as faint
+	return barStyle.Render(sb.String())
 }
 
 func renderStatusBar(connStatus, endpoint string, width int) string {
