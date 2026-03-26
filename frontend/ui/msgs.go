@@ -63,6 +63,44 @@ type ServerErrorMsg struct {
 	Message string
 }
 
+// convertProtocolMsg converts a protocol-layer message to the corresponding
+// tea.Msg. Returns nil for unrecognized types.
+func convertProtocolMsg(msg any) tea.Msg {
+	switch m := msg.(type) {
+	case protocol.ScreenUpdate:
+		return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines, Cells: m.Cells}
+	case protocol.TerminalEvents:
+		return TerminalEventsMsg{RegionID: m.RegionID, Events: m.Events}
+	case protocol.RegionCreated:
+		return RegionCreatedMsg{RegionID: m.RegionID, Name: m.Name}
+	case protocol.RegionDestroyed:
+		return RegionDestroyedMsg{RegionID: m.RegionID}
+	case protocol.SpawnResponse:
+		return SpawnResponseMsg{
+			RegionID: m.RegionID, Name: m.Name,
+			Error: m.Error, Message: m.Message,
+		}
+	case protocol.SubscribeResponse:
+		return SubscribeResponseMsg{
+			RegionID: m.RegionID,
+			Error: m.Error, Message: m.Message,
+		}
+	case protocol.ResizeResponse:
+		return ResizeResponseMsg{
+			RegionID: m.RegionID,
+			Error: m.Error, Message: m.Message,
+		}
+	case protocol.ListRegionsResponse:
+		return ListRegionsResponseMsg{
+			Regions: m.Regions,
+			Error: m.Error, Message: m.Message,
+		}
+	default:
+		slog.Debug("convertProtocolMsg: unrecognized message", "type", fmt.Sprintf("%T", m))
+		return nil
+	}
+}
+
 // waitForUpdate returns a tea.Cmd that blocks on c.Updates() until a
 // recognized message arrives, then returns the appropriate tea.Msg.
 func waitForUpdate(c *client.Client) tea.Cmd {
@@ -72,38 +110,8 @@ func waitForUpdate(c *client.Client) tea.Cmd {
 			if !ok {
 				return RegionDestroyedMsg{}
 			}
-			switch m := msg.(type) {
-			case protocol.ScreenUpdate:
-				return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines, Cells: m.Cells}
-			case protocol.TerminalEvents:
-				return TerminalEventsMsg{RegionID: m.RegionID, Events: m.Events}
-			case protocol.RegionCreated:
-				return RegionCreatedMsg{RegionID: m.RegionID, Name: m.Name}
-			case protocol.RegionDestroyed:
-				return RegionDestroyedMsg{RegionID: m.RegionID}
-			case protocol.SpawnResponse:
-				return SpawnResponseMsg{
-					RegionID: m.RegionID, Name: m.Name,
-					Error: m.Error, Message: m.Message,
-				}
-			case protocol.SubscribeResponse:
-				return SubscribeResponseMsg{
-					RegionID: m.RegionID,
-					Error: m.Error, Message: m.Message,
-				}
-			case protocol.ResizeResponse:
-				return ResizeResponseMsg{
-					RegionID: m.RegionID,
-					Error: m.Error, Message: m.Message,
-				}
-			case protocol.ListRegionsResponse:
-				return ListRegionsResponseMsg{
-					Regions: m.Regions,
-					Error: m.Error, Message: m.Message,
-				}
-			default:
-				slog.Debug("waitForUpdate: discarding unrecognized message", "type", fmt.Sprintf("%T", m))
-				continue
+			if teaMsg := convertProtocolMsg(msg); teaMsg != nil {
+				return teaMsg
 			}
 		}
 	}

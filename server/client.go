@@ -39,7 +39,7 @@ func NewClient(conn net.Conn, server *Server, id uint32) *Client {
 func (c *Client) ReadLoop() {
 	defer func() {
 		c.server.removeClient(c.id)
-		c.conn.Close()
+		c.Close()
 	}()
 
 	scanner := bufio.NewScanner(c.conn)

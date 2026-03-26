@@ -121,7 +121,8 @@ func (s *Server) watchRegion(region *Region) {
 		s.sendTerminalEvents(region)
 	}
 	// Channel closed means region's process exited.
-	// Send a final update to capture any remaining output.
+	// Wait for readLoop to finish draining the PTY buffer before the final flush.
+	<-region.readerDone
 	s.sendTerminalEvents(region)
 	s.destroyRegion(region.id)
 }
@@ -226,35 +227,6 @@ func (s *Server) sendTerminalEvents(region *Region) {
 		Type:     "terminal_events",
 		RegionID: region.id,
 		Events:   events,
-	}
-
-	for _, c := range subscribers {
-		c.SendMessage(msg)
-	}
-}
-
-func (s *Server) sendScreenUpdate(region *Region) {
-	snap := region.Snapshot()
-
-	s.mu.Lock()
-	var subscribers []*Client
-	for _, c := range s.clients {
-		if c.GetSubscribedRegionID() == region.id {
-			subscribers = append(subscribers, c)
-		}
-	}
-	s.mu.Unlock()
-
-	if len(subscribers) == 0 {
-		return
-	}
-
-	msg := protocol.ScreenUpdate{
-		Type:      "screen_update",
-		RegionID:  region.id,
-		CursorRow: snap.CursorRow,
-		CursorCol: snap.CursorCol,
-		Lines:     snap.Lines,
 	}
 
 	for _, c := range subscribers {

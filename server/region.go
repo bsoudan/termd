@@ -41,8 +41,9 @@ type Region struct {
 	stream *te.Stream
 	mu     sync.Mutex
 
-	notify chan struct{}
-	done   chan struct{}
+	notify     chan struct{}
+	done       chan struct{}
+	readerDone chan struct{}
 }
 
 func NewRegion(cmdStr string, args []string, width, height int) (*Region, error) {
@@ -76,8 +77,9 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 		screen: screen,
 		proxy:  proxy,
 		stream: stream,
-		notify: make(chan struct{}, 1),
-		done:   make(chan struct{}),
+		notify:     make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		readerDone: make(chan struct{}),
 	}
 
 	slog.Debug("spawned child", "pid", r.pid, "cmd", cmdStr)
@@ -89,6 +91,7 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 }
 
 func (r *Region) readLoop() {
+	defer close(r.readerDone)
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.ptmx.Read(buf)
@@ -115,7 +118,9 @@ func (r *Region) waitLoop() {
 }
 
 func (r *Region) WriteInput(data []byte) {
-	r.ptmx.Write(data)
+	if _, err := r.ptmx.Write(data); err != nil {
+		slog.Debug("write input error", "region_id", r.id, "err", err)
+	}
 }
 
 func (r *Region) Resize(width, height uint16) error {
@@ -259,7 +264,9 @@ func padLine(line string, width int) string {
 
 func generateUUID() string {
 	var b [16]byte
-	io.ReadFull(rand.Reader, b[:])
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic(fmt.Sprintf("crypto/rand failure: %v", err))
+	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",

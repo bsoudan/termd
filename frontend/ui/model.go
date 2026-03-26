@@ -209,10 +209,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TerminalEventsMsg:
 		if m.localScreen != nil {
-			needsClear := replayEvents(m.localScreen, msg.Events)
+			needsClear := ReplayEvents(m.localScreen, msg.Events)
 
 			// Drain any additional pending terminal events to keep up
 			// with fast-updating programs like top.
+			var pendingMsg tea.Msg
 		drain:
 			for {
 				select {
@@ -221,9 +222,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break drain
 					}
 					if te, ok := pending.(protocol.TerminalEvents); ok {
-						if replayEvents(m.localScreen, te.Events) {
+						if ReplayEvents(m.localScreen, te.Events) {
 							needsClear = true
 						}
+					} else {
+						// Non-events message: convert and save for processing.
+						pendingMsg = convertProtocolMsg(pending)
+						break drain
 					}
 				default:
 					break drain
@@ -233,9 +238,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursorRow = m.localScreen.Cursor.Row
 			m.cursorCol = m.localScreen.Cursor.Col
 			if needsClear {
-				return m, tea.Batch(
+				cmds := []tea.Cmd{
 					func() tea.Msg { return tea.ClearScreen() },
 					waitForUpdate(m.client),
+				}
+				if pendingMsg != nil {
+					saved := pendingMsg
+					cmds = append(cmds, func() tea.Msg { return saved })
+				}
+				return m, tea.Batch(cmds...)
+			}
+			if pendingMsg != nil {
+				saved := pendingMsg
+				return m, tea.Batch(
+					waitForUpdate(m.client),
+					func() tea.Msg { return saved },
 				)
 			}
 		}
@@ -367,9 +384,9 @@ func (m *Model) refreshLogViewport() {
 	}
 }
 
-// replayEvents applies terminal events to the screen. Returns true if the
+// ReplayEvents applies terminal events to the screen. Returns true if the
 // screen needs a full repaint (e.g., alt screen transition).
-func replayEvents(screen *te.Screen, events []protocol.TerminalEvent) bool {
+func ReplayEvents(screen *te.Screen, events []protocol.TerminalEvent) bool {
 	needsClear := false
 	for _, ev := range events {
 		switch ev.Op {
