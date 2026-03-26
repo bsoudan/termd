@@ -1,7 +1,2 @@
 .claude-config
 .local
-frontend/termd-frontend
-termctl/termctl
-nano.*.save
-x
-x.save
