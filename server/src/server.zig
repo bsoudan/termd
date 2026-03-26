@@ -16,10 +16,21 @@ pub const Server = struct {
     socket_fd: std.posix.fd_t,
     socket_path: []const u8,
     start_time: i64,
-    next_client_id: u32,
+    next_client_id: u32, // wraps at u32 max; unlikely to be a problem in practice
     regions: std.StringArrayHashMap(*Region),
     clients: std.ArrayList(*Client),
     running: bool,
+    signal_pipe_read: std.posix.fd_t,
+    signal_pipe_write: std.posix.fd_t,
+
+    // Global signal pipe write fd, set during init and used by the signal handler.
+    var signal_pipe_write_global: std.posix.fd_t = -1;
+
+    fn signalHandler(_: c_int) callconv(.c) void {
+        if (signal_pipe_write_global >= 0) {
+            _ = std.posix.write(signal_pipe_write_global, &[_]u8{1}) catch {};
+        }
+    }
 
     pub fn init(alloc: std.mem.Allocator, socket_path: [:0]const u8) !Server {
         std.posix.unlink(socket_path) catch {};
@@ -35,6 +46,23 @@ pub const Server = struct {
         try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
         try std.posix.listen(sock, 5);
 
+        // Create signal self-pipe for graceful shutdown
+        const sig_fds = try std.posix.pipe2(.{ .CLOEXEC = true });
+        errdefer {
+            std.posix.close(sig_fds[0]);
+            std.posix.close(sig_fds[1]);
+        }
+        signal_pipe_write_global = sig_fds[1];
+
+        // Install signal handlers for SIGTERM and SIGINT
+        const sa: std.posix.Sigaction = .{
+            .handler = .{ .handler = signalHandler },
+            .mask = std.posix.sigemptyset(),
+            .flags = std.os.linux.SA.RESTART,
+        };
+        std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
+        std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+
         log.info("listening on {s}", .{socket_path});
         return .{
             .alloc = alloc,
@@ -45,6 +73,8 @@ pub const Server = struct {
             .regions = .{ .unmanaged = .{}, .allocator = alloc, .ctx = .{} },
             .clients = .{},
             .running = true,
+            .signal_pipe_read = sig_fds[0],
+            .signal_pipe_write = sig_fds[1],
         };
     }
 
@@ -60,14 +90,18 @@ pub const Server = struct {
         self.regions.deinit();
 
         std.posix.close(self.socket_fd);
+        std.posix.close(self.signal_pipe_read);
+        std.posix.close(self.signal_pipe_write);
+        signal_pipe_write_global = -1;
     }
 
     pub fn run(self: *Server) !void {
         while (self.running) {
-            // Build poll fd list: [socket, ...clients, ...region notifies]
+            // Build poll fd list: [signal_pipe, socket, ...clients, ...region notifies]
             var pollfds: std.ArrayList(std.posix.pollfd) = .{};
             defer pollfds.deinit(self.alloc);
 
+            try pollfds.append(self.alloc, .{ .fd = self.signal_pipe_read, .events = std.posix.POLL.IN, .revents = 0 });
             try pollfds.append(self.alloc, .{ .fd = self.socket_fd, .events = std.posix.POLL.IN, .revents = 0 });
 
             for (self.clients.items) |client| {
@@ -94,8 +128,17 @@ pub const Server = struct {
                 continue;
             };
 
-            // 1. Accept new connections
+            // 0. Check signal pipe for shutdown
             if (pollfds.items[0].revents & std.posix.POLL.IN != 0) {
+                var sig_buf: [64]u8 = undefined;
+                _ = std.posix.read(self.signal_pipe_read, &sig_buf) catch {};
+                log.info("received shutdown signal", .{});
+                self.running = false;
+                break;
+            }
+
+            // 1. Accept new connections
+            if (pollfds.items[1].revents & std.posix.POLL.IN != 0) {
                 self.acceptClient() catch |err| {
                     log.debug("accept error: {}", .{err});
                 };
@@ -112,7 +155,7 @@ pub const Server = struct {
                         _ = self.clients.swapRemove(i);
                         continue;
                     }
-                    const pfd = pollfds.items[1 + i];
+                    const pfd = pollfds.items[2 + i];
                     if (pfd.revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
                         const ok = cl.readAvailable() catch false;
                         if (!ok) {
@@ -128,7 +171,7 @@ pub const Server = struct {
             defer dead_keys.deinit(self.alloc);
 
             for (region_keys.items, 0..) |key, ri| {
-                const pfd = pollfds.items[1 + client_count + ri];
+                const pfd = pollfds.items[2 + client_count + ri];
                 if (pfd.revents & std.posix.POLL.IN == 0) continue;
 
                 const region = self.regions.get(key) orelse continue;

@@ -58,6 +58,7 @@ pub fn main() !void {
     defer std.process.argsFree(alloc, args);
 
     var socket_path: [:0]const u8 = "/tmp/termd.sock";
+    var socket_flag_set = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -74,6 +75,7 @@ pub fn main() !void {
                 return;
             }
             socket_path = args[i];
+            socket_flag_set = true;
         } else {
             _ = std.posix.write(2, "error: unknown option: ") catch {};
             _ = std.posix.write(2, arg) catch {};
@@ -89,7 +91,7 @@ pub fn main() !void {
             if (std.mem.eql(u8, val, "1")) debug_enabled = true;
         }
     }
-    if (std.mem.eql(u8, socket_path, "/tmp/termd.sock")) {
+    if (!socket_flag_set) {
         if (std.posix.getenv("TERMD_SOCKET")) |val| {
             socket_path = val;
         }

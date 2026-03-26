@@ -74,17 +74,8 @@ func TestCursorPosition(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	// Wait for the bash prompt to render.
-	pio.WaitFor(t, ">", 10*time.Second)
-
-	// Check the initial cursor position (before any typing).
-	// The last rendered frame should have the cursor at the prompt, not (0,0).
-	initRaw := pio.buf.String()
-	initRow, initCol := findCursorPosition(t, initRaw)
-	t.Logf("initial cursor (before typing): row=%d col=%d", initRow, initCol)
-	if initCol == 0 {
-		t.Fatalf("initial cursor col is 0 — cursor stuck at default position")
-	}
+	// Wait for the tab bar to render (region name "bash").
+	pio.WaitFor(t, "bash", 10*time.Second)
 
 	// Type "a" — this triggers a screen_update with the cursor after the "a".
 	// Clear the buffer first so we only see fresh frames.

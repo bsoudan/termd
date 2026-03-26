@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"fmt"
+	"log/slog"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"termd/frontend/client"
 	"termd/frontend/protocol"
@@ -91,7 +94,8 @@ func waitForUpdate(c *client.Client) tea.Cmd {
 					Error: m.Error, Message: m.Message,
 				}
 			default:
-				continue // unknown type; drain and wait for next
+				slog.Debug("waitForUpdate: discarding unrecognized message", "type", fmt.Sprintf("%T", m))
+				continue
 			}
 		}
 	}

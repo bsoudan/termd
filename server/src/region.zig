@@ -38,13 +38,12 @@ pub const Region = struct {
         width: u16,
         height: u16,
     ) !*Region {
-        // Create notify pipe (non-blocking read end)
-        const notify_fds = try std.posix.pipe();
+        // Create notify pipe with CLOEXEC so child processes don't inherit it
+        const notify_fds = try std.posix.pipe2(.{ .CLOEXEC = true });
         errdefer {
             std.posix.close(notify_fds[0]);
             std.posix.close(notify_fds[1]);
         }
-        // Note: read end is blocking. Server reads once per poll cycle.
 
         // Open PTY
         const pty = try openPty(width, height);

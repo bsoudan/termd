@@ -113,6 +113,8 @@ func NewLogRingBuffer(capacity int) *LogRingBuffer {
 }
 
 func (r *LogRingBuffer) append(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	idx := (r.head + r.count) % r.cap
 	r.entries[idx] = line
 	if r.count < r.cap {

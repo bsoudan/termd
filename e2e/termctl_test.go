@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,7 @@ func TestTermctlRegionView(t *testing.T) {
 		if strings.Contains(out, "viewtest_marker") {
 			return
 		}
+		runtime.Gosched()
 	}
 	t.Fatal("region view never showed 'viewtest_marker'")
 }
@@ -78,6 +80,7 @@ func TestTermctlRegionKill(t *testing.T) {
 		if strings.Contains(out, "no regions") {
 			return
 		}
+		runtime.Gosched()
 	}
 	t.Fatalf("region still listed after kill:\n%s", out)
 }
@@ -98,6 +101,7 @@ func TestTermctlRegionSend(t *testing.T) {
 		if strings.Contains(out, "sendtest_ok") {
 			return
 		}
+		runtime.Gosched()
 	}
 	t.Fatal("region view never showed 'sendtest_ok'")
 }

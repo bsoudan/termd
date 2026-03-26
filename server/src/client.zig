@@ -11,9 +11,12 @@ pub const Client = struct {
     server: *Server,
     id: u32,
     hostname: []const u8,
+    hostname_owned: bool,
     username: []const u8,
+    username_owned: bool,
     client_pid: i32,
     process: []const u8,
+    process_owned: bool,
     subscribed_region_id: ?[36]u8,
     read_buf: std.ArrayList(u8),
     dead: bool,
@@ -26,9 +29,12 @@ pub const Client = struct {
             .server = server,
             .id = id,
             .hostname = "unknown",
+            .hostname_owned = false,
             .username = "unknown",
+            .username_owned = false,
             .client_pid = 0,
             .process = "unknown",
+            .process_owned = false,
             .subscribed_region_id = null,
             .read_buf = .{},
             .dead = false,
@@ -41,9 +47,9 @@ pub const Client = struct {
         log.debug("client disconnected fd={d} id={d}", .{ self.conn_fd, self.id });
         std.posix.close(self.conn_fd);
         self.read_buf.deinit(self.alloc);
-        if (self.hostname.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.hostname);
-        if (self.username.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.username);
-        if (self.process.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.process);
+        if (self.hostname_owned) self.alloc.free(self.hostname);
+        if (self.username_owned) self.alloc.free(self.username);
+        if (self.process_owned) self.alloc.free(self.process);
         self.alloc.destroy(self);
     }
 
@@ -71,13 +77,24 @@ pub const Client = struct {
     }
 
     pub fn sendMessage(self: *Client, msg: protocol.OutboundMessage) void {
-        var buf: [65536]u8 = undefined;
-        var writer = std.io.Writer.fixed(&buf);
-        protocol.writeOutbound(&writer, msg) catch |err| {
+        var aw: std.io.Writer.Allocating = .init(self.alloc);
+        defer aw.deinit();
+        protocol.writeOutbound(&aw.writer, msg) catch |err| {
             log.debug("client send error fd={d}: {}", .{ self.conn_fd, err });
             return;
         };
-        _ = std.posix.write(self.conn_fd, buf[0..writer.end]) catch {};
+        aw.writer.flush() catch |err| {
+            log.debug("client flush error fd={d}: {}", .{ self.conn_fd, err });
+            return;
+        };
+        const data = aw.writer.buffer[0..aw.writer.end];
+        var offset: usize = 0;
+        while (offset < data.len) {
+            offset += std.posix.write(self.conn_fd, data[offset..]) catch |err| {
+                log.debug("client write error fd={d}: {}", .{ self.conn_fd, err });
+                return;
+            };
+        }
     }
 
     fn handleMessage(self: *Client, line: []const u8) !void {
@@ -103,13 +120,29 @@ pub const Client = struct {
     }
 
     fn handleIdentify(self: *Client, req: protocol.Identify) void {
-        if (self.hostname.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.hostname);
-        if (self.username.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.username);
-        if (self.process.ptr != @as([*]const u8, "unknown")) self.alloc.free(self.process);
-        self.hostname = self.alloc.dupe(u8, req.hostname) catch return;
-        self.username = self.alloc.dupe(u8, req.username) catch return;
+        const new_hostname = self.alloc.dupe(u8, req.hostname) catch return;
+        const new_username = self.alloc.dupe(u8, req.username) catch {
+            self.alloc.free(new_hostname);
+            return;
+        };
+        const new_process = self.alloc.dupe(u8, req.process) catch {
+            self.alloc.free(new_hostname);
+            self.alloc.free(new_username);
+            return;
+        };
+
+        if (self.hostname_owned) self.alloc.free(self.hostname);
+        if (self.username_owned) self.alloc.free(self.username);
+        if (self.process_owned) self.alloc.free(self.process);
+
+        self.hostname = new_hostname;
+        self.hostname_owned = true;
+        self.username = new_username;
+        self.username_owned = true;
         self.client_pid = req.pid;
-        self.process = self.alloc.dupe(u8, req.process) catch return;
+        self.process = new_process;
+        self.process_owned = true;
+
         log.debug("client id={d} identified: {s}@{s} pid={d} process={s}", .{
             self.id, self.username, self.hostname, self.client_pid, self.process,
         });
@@ -129,6 +162,8 @@ pub const Client = struct {
             .@"error" = false, .message = "",
         } });
 
+        // Intentionally broadcast to all clients including the spawning client.
+        // The spawning client gets both spawn_response and region_created by design.
         self.server.broadcast(.{ .region_created = .{
             .region_id = &region.id, .name = region.name,
         } });
