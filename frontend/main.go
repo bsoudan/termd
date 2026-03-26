@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"termd/frontend/client"
 	termlog "termd/frontend/log"
 	"termd/frontend/ui"
@@ -84,7 +85,10 @@ func main() {
 	pipeR, pipeW := io.Pipe()
 
 	model := ui.NewModel(c, shell, shellArgs, logRing)
-	p := tea.NewProgram(model, tea.WithInput(pipeR))
+	p := tea.NewProgram(model,
+		tea.WithInput(pipeR),
+		tea.WithColorProfile(colorprofile.TrueColor),
+	)
 
 	stdinDupFd, err := syscall.Dup(int(os.Stdin.Fd()))
 	if err != nil {

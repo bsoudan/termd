@@ -128,6 +128,13 @@ func (p *ptyIO) ScreenLine(row int) string {
 	return lines[row]
 }
 
+// ScreenCells returns the full cell data including attributes and colors.
+func (p *ptyIO) ScreenCells() [][]te.Cell {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.screen.LinesCells()
+}
+
 // WaitForScreen polls the virtual screen until check returns true or timeout.
 func (p *ptyIO) WaitForScreen(t *testing.T, check func([]string) bool, desc string, timeout time.Duration) []string {
 	t.Helper()

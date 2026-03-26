@@ -251,6 +251,7 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest) {
 		CursorRow: snap.CursorRow,
 		CursorCol: snap.CursorCol,
 		Lines:     snap.Lines,
+		Cells:     snap.Cells,
 	})
 
 	c.SendMessage(protocol.SubscribeResponse{

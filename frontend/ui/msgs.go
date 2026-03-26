@@ -16,6 +16,7 @@ type ScreenUpdateMsg struct {
 	CursorRow uint16
 	CursorCol uint16
 	Lines     []string
+	Cells     [][]protocol.ScreenCell
 }
 
 type TerminalEventsMsg struct {
@@ -73,7 +74,7 @@ func waitForUpdate(c *client.Client) tea.Cmd {
 			}
 			switch m := msg.(type) {
 			case protocol.ScreenUpdate:
-				return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines}
+				return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines, Cells: m.Cells}
 			case protocol.TerminalEvents:
 				return TerminalEventsMsg{RegionID: m.RegionID, Events: m.Events}
 			case protocol.RegionCreated:

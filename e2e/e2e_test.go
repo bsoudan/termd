@@ -364,6 +364,108 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 	}
 }
 
+func TestColorRendering(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Produce colored output. The output line will start with "RED" at col 0.
+	pio.Write([]byte("echo -e '\\033[31mRED\\033[0m \\033[32mGRN\\033[0m \\033[1mBLD\\033[0m \\033[38;5;208mORNG\\033[0m'\r"))
+
+	// Wait for the output line (starts with "RED" at col 0, not the command echo)
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines {
+			if strings.HasPrefix(line, "RED") {
+				return true
+			}
+		}
+		return false
+	}, "output line starting with 'RED'", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	cells := pio.ScreenCells()
+
+	// Find the output line (starts with "RED" at col 0)
+	outputRow := -1
+	for row, line := range cells {
+		if len(line) > 0 && line[0].Data == "R" &&
+			len(line) > 2 && line[1].Data == "E" && line[2].Data == "D" {
+			outputRow = row
+			break
+		}
+	}
+	if outputRow < 0 {
+		t.Fatal("could not find output line starting with 'RED'")
+	}
+
+	line := cells[outputRow]
+	t.Logf("output row %d: first 40 chars with attrs:", outputRow)
+	for col := 0; col < 40 && col < len(line); col++ {
+		c := line[col]
+		if c.Data != " " || (c.Attr.Fg.Name != "" && c.Attr.Fg.Name != "default") {
+			t.Logf("  [%d] %q fg=%d/%q bg=%d/%q bold=%v",
+				col, c.Data, c.Attr.Fg.Mode, c.Attr.Fg.Name, c.Attr.Bg.Mode, c.Attr.Bg.Name, c.Attr.Bold)
+		}
+	}
+
+	// Check "RED" (col 0-2) has red foreground
+	if line[0].Attr.Fg.Name != "red" {
+		t.Errorf("'RED' at col 0: expected red fg, got mode=%d name=%q", line[0].Attr.Fg.Mode, line[0].Attr.Fg.Name)
+	}
+
+	// Find "GRN" after "RED " (col 4-6)
+	grnCol := -1
+	for col := 3; col+3 <= len(line); col++ {
+		if line[col].Data == "G" && line[col+1].Data == "R" && line[col+2].Data == "N" {
+			grnCol = col
+			break
+		}
+	}
+	if grnCol < 0 {
+		t.Fatal("could not find 'GRN' on output line")
+	}
+	if line[grnCol].Attr.Fg.Name != "green" {
+		t.Errorf("'GRN' at col %d: expected green fg, got mode=%d name=%q", grnCol, line[grnCol].Attr.Fg.Mode, line[grnCol].Attr.Fg.Name)
+	}
+
+	// Find "BLD" and check bold
+	bldCol := -1
+	for col := grnCol + 3; col+3 <= len(line); col++ {
+		if line[col].Data == "B" && line[col+1].Data == "L" && line[col+2].Data == "D" {
+			bldCol = col
+			break
+		}
+	}
+	if bldCol < 0 {
+		t.Fatal("could not find 'BLD' on output line")
+	}
+	if !line[bldCol].Attr.Bold {
+		t.Errorf("'BLD' at col %d: expected bold", bldCol)
+	}
+
+	// Find "ORNG" and check 256-color (index 208)
+	orngCol := -1
+	for col := bldCol + 3; col+4 <= len(line); col++ {
+		if line[col].Data == "O" && line[col+1].Data == "R" &&
+			line[col+2].Data == "N" && line[col+3].Data == "G" {
+			orngCol = col
+			break
+		}
+	}
+	if orngCol < 0 {
+		t.Fatal("could not find 'ORNG' on output line")
+	}
+	fg := line[orngCol].Attr.Fg
+	if fg.Mode == 0 && (fg.Name == "" || fg.Name == "default") {
+		t.Errorf("'ORNG' at col %d: expected non-default color, got mode=%d name=%q index=%d",
+			orngCol, fg.Mode, fg.Name, fg.Index)
+	}
+}
+
 func TestRawInputPassthrough(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
@@ -552,10 +654,35 @@ func TestSessionPersistence(t *testing.T) {
 	pio1, cleanup1 := startFrontend(t, socketPath)
 
 	pio1.WaitFor(t, "bash", 10*time.Second)
-	pio1.Write([]byte("echo persistence_marker_12345\r"))
 	pio1.WaitFor(t, "termd$ ", 10*time.Second)
-	pio1.WaitFor(t, "persistence_marker_12345", 10*time.Second)
 
+	// Output colored text before detaching
+	pio1.Write([]byte("echo -e '\\033[31mCOLOR_PERSIST\\033[0m'\r"))
+	pio1.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines {
+			if strings.HasPrefix(line, "COLOR_PERSIST") {
+				return true
+			}
+		}
+		return false
+	}, "output line starting with 'COLOR_PERSIST'", 10*time.Second)
+	pio1.WaitForSilence(200 * time.Millisecond)
+
+	// Verify colors are present before detach
+	cells1 := pio1.ScreenCells()
+	for row, line := range cells1 {
+		if len(line) > 0 && line[0].Data == "C" &&
+			len(line) > 12 && line[12].Data == "T" {
+			fg := line[0].Attr.Fg
+			t.Logf("before detach: 'COLOR_PERSIST' at row %d, fg=%d/%q", row, fg.Mode, fg.Name)
+			if fg.Name != "red" {
+				t.Fatalf("before detach: expected red fg, got %q", fg.Name)
+			}
+			break
+		}
+	}
+
+	// Detach
 	pio1.Write([]byte{0x02})
 	pio1.Write([]byte("d"))
 
@@ -575,10 +702,31 @@ func TestSessionPersistence(t *testing.T) {
 reconnect:
 	cleanup1()
 
+	// Reattach
 	pio2, cleanup2 := startFrontend(t, socketPath)
 	defer cleanup2()
 
-	pio2.WaitFor(t, "persistence_marker_12345", 10*time.Second)
+	pio2.WaitFor(t, "COLOR_PERSIST", 10*time.Second)
+	pio2.WaitForSilence(200 * time.Millisecond)
+
+	// Verify colors survived reattach
+	cells2 := pio2.ScreenCells()
+	found := false
+	for row, line := range cells2 {
+		if len(line) > 0 && line[0].Data == "C" &&
+			len(line) > 12 && line[12].Data == "T" {
+			fg := line[0].Attr.Fg
+			t.Logf("after reattach: 'COLOR_PERSIST' at row %d, fg=%d/%q", row, fg.Mode, fg.Name)
+			if fg.Name != "red" {
+				t.Errorf("after reattach: expected red fg, got mode=%d name=%q", fg.Mode, fg.Name)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("could not find 'COLOR_PERSIST' output line after reattach")
+	}
 }
 
 func TestExit(t *testing.T) {

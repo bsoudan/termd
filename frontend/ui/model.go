@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -186,13 +187,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			height = 24
 		}
 		m.localScreen = te.NewScreen(width, height)
-		// Feed the snapshot lines into the local screen by drawing them
-		for i, line := range msg.Lines {
-			if i > 0 {
-				m.localScreen.LineFeed()
-				m.localScreen.CarriageReturn()
+		if len(msg.Cells) > 0 {
+			// Cell data available: restore with full color/attribute info
+			initScreenFromCells(m.localScreen, msg.Cells)
+		} else {
+			// Plain text fallback
+			for i, line := range msg.Lines {
+				if i > 0 {
+					m.localScreen.LineFeed()
+					m.localScreen.CarriageReturn()
+				}
+				m.localScreen.Draw(line)
 			}
-			m.localScreen.Draw(line)
 		}
 		// Position cursor to match server
 		m.localScreen.CursorPosition(int(msg.CursorRow)+1, int(msg.CursorCol)+1)
@@ -224,8 +230,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			display := m.localScreen.Display()
-			m.lines = display
 			m.cursorRow = m.localScreen.Cursor.Row
 			m.cursorCol = m.localScreen.Cursor.Col
 			if needsClear {
@@ -548,6 +552,73 @@ func replayEvents(screen *te.Screen, events []protocol.TerminalEvent) bool {
 		}
 	}
 	return needsClear
+}
+
+// initScreenFromCells writes cell data (including colors and attributes)
+// directly into the screen buffer.
+func initScreenFromCells(screen *te.Screen, cells [][]protocol.ScreenCell) {
+	for row := range screen.Buffer {
+		if row >= len(cells) {
+			break
+		}
+		for col := range screen.Buffer[row] {
+			if col >= len(cells[row]) {
+				break
+			}
+			pc := cells[row][col]
+			ch := pc.Char
+			if ch == "" || ch == "\x00" {
+				ch = " "
+			}
+			screen.Buffer[row][col] = te.Cell{
+				Data: ch,
+				Attr: te.Attr{
+					Fg:            specToColor(pc.Fg),
+					Bg:            specToColor(pc.Bg),
+					Bold:          pc.A&1 != 0,
+					Italics:       pc.A&2 != 0,
+					Underline:     pc.A&4 != 0,
+					Strikethrough: pc.A&8 != 0,
+					Reverse:       pc.A&16 != 0,
+					Blink:         pc.A&32 != 0,
+					Conceal:       pc.A&64 != 0,
+				},
+			}
+		}
+	}
+}
+
+// specToColor converts a color spec string back to a go-te Color.
+func specToColor(spec string) te.Color {
+	if spec == "" {
+		return te.Color{Mode: te.ColorDefault, Name: "default"}
+	}
+	// ANSI256: "5;N"
+	if len(spec) > 2 && spec[0] == '5' && spec[1] == ';' {
+		var idx uint8
+		fmt.Sscanf(spec[2:], "%d", &idx)
+		return te.Color{Mode: te.ColorANSI256, Index: idx}
+	}
+	// TrueColor: "2;rrggbb"
+	if len(spec) > 2 && spec[0] == '2' && spec[1] == ';' {
+		return te.Color{Mode: te.ColorTrueColor, Name: spec[2:]}
+	}
+	// ANSI16: color name like "red", "brightgreen"
+	return te.Color{Mode: te.ColorANSI16, Name: spec, Index: ansi16Index(spec)}
+}
+
+var ansi16NameToIndex = map[string]uint8{
+	"black": 0, "red": 1, "green": 2, "brown": 3,
+	"blue": 4, "magenta": 5, "cyan": 6, "white": 7,
+	"brightblack": 8, "brightred": 9, "brightgreen": 10, "brightbrown": 11,
+	"brightblue": 12, "brightmagenta": 13, "brightcyan": 14, "brightwhite": 15,
+}
+
+func ansi16Index(name string) uint8 {
+	if idx, ok := ansi16NameToIndex[name]; ok {
+		return idx
+	}
+	return 0
 }
 
 func splitCharset(s string) []string {

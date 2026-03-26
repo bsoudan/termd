@@ -353,6 +353,51 @@ func TestEventProxyReplayWithAltScreen(t *testing.T) {
 	}
 }
 
+func TestEventProxyReplayColors(t *testing.T) {
+	const cols, rows = 80, 24
+
+	serverScreen := te.NewScreen(cols, rows)
+	proxy := NewEventProxy(serverScreen)
+	stream := te.NewStream(proxy, false)
+
+	// SGR 31 = red fg, then draw "RED", then SGR 0 = reset, then " ", SGR 32 = green, draw "GRN"
+	input := "\x1b[31mRED\x1b[0m \x1b[32mGRN\x1b[0m \x1b[1mBLD\x1b[0m"
+	stream.FeedBytes([]byte(input))
+
+	// Check server screen cells have correct colors
+	serverCells := serverScreen.LinesCells()
+	t.Logf("server cell[0][0]: Data=%q Fg=%+v Bold=%v", serverCells[0][0].Data, serverCells[0][0].Attr.Fg, serverCells[0][0].Attr.Bold)
+	t.Logf("server cell[0][4]: Data=%q Fg=%+v Bold=%v", serverCells[0][4].Data, serverCells[0][4].Attr.Fg, serverCells[0][4].Attr.Bold)
+	t.Logf("server cell[0][8]: Data=%q Fg=%+v Bold=%v", serverCells[0][8].Data, serverCells[0][8].Attr.Fg, serverCells[0][8].Attr.Bold)
+
+	if serverCells[0][0].Attr.Fg.Name != "red" {
+		t.Fatalf("server: expected 'R' to have red fg, got %+v", serverCells[0][0].Attr.Fg)
+	}
+
+	// Flush and replay
+	allEvents := proxy.Flush()
+	allEvents = roundTripEvents(allEvents)
+
+	frontendScreen := te.NewScreen(cols, rows)
+	replayEvents(frontendScreen, allEvents)
+
+	frontendCells := frontendScreen.LinesCells()
+	t.Logf("frontend cell[0][0]: Data=%q Fg=%+v Bold=%v", frontendCells[0][0].Data, frontendCells[0][0].Attr.Fg, frontendCells[0][0].Attr.Bold)
+	t.Logf("frontend cell[0][4]: Data=%q Fg=%+v Bold=%v", frontendCells[0][4].Data, frontendCells[0][4].Attr.Fg, frontendCells[0][4].Attr.Bold)
+	t.Logf("frontend cell[0][8]: Data=%q Fg=%+v Bold=%v", frontendCells[0][8].Data, frontendCells[0][8].Attr.Fg, frontendCells[0][8].Attr.Bold)
+
+	// Verify colors match
+	if frontendCells[0][0].Attr.Fg.Name != "red" {
+		t.Errorf("frontend: 'R' expected red fg, got %+v", frontendCells[0][0].Attr.Fg)
+	}
+	if frontendCells[0][4].Attr.Fg.Name != "green" {
+		t.Errorf("frontend: 'G' expected green fg, got %+v", frontendCells[0][4].Attr.Fg)
+	}
+	if !frontendCells[0][8].Attr.Bold {
+		t.Errorf("frontend: 'B' expected bold, got %+v", frontendCells[0][8].Attr)
+	}
+}
+
 func TestEventProxyJSONRoundTrip(t *testing.T) {
 	// Test that events with zero-value fields survive JSON round-trip
 	events := []protocol.TerminalEvent{

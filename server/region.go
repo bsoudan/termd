@@ -22,6 +22,7 @@ type Snapshot struct {
 	Lines     []string
 	CursorRow uint16
 	CursorCol uint16
+	Cells     [][]protocol.ScreenCell
 }
 
 type Region struct {
@@ -151,11 +152,72 @@ func (r *Region) Snapshot() Snapshot {
 		}
 	}
 
+	// Include cell-level color/attribute data.
+	// Read Buffer directly to avoid go-te's LinesCells() which can panic
+	// when Buffer has more rows than Lines after a resize.
+	numRows := r.height
+	if numRows > len(r.screen.Buffer) {
+		numRows = len(r.screen.Buffer)
+	}
+	cells := make([][]protocol.ScreenCell, numRows)
+	for row := 0; row < numRows; row++ {
+		srcRow := r.screen.Buffer[row]
+		cells[row] = make([]protocol.ScreenCell, len(srcRow))
+		for col, c := range srcRow {
+			cells[row][col] = cellToProtocol(c)
+		}
+	}
+
 	return Snapshot{
 		Lines:     lines,
 		CursorRow: uint16(r.screen.Cursor.Row),
 		CursorCol: uint16(r.screen.Cursor.Col),
+		Cells:     cells,
 	}
+}
+
+func cellToProtocol(c te.Cell) protocol.ScreenCell {
+	pc := protocol.ScreenCell{Char: c.Data}
+	pc.Fg = colorToSpec(c.Attr.Fg)
+	pc.Bg = colorToSpec(c.Attr.Bg)
+	var a uint8
+	if c.Attr.Bold {
+		a |= 1
+	}
+	if c.Attr.Italics {
+		a |= 2
+	}
+	if c.Attr.Underline {
+		a |= 4
+	}
+	if c.Attr.Strikethrough {
+		a |= 8
+	}
+	if c.Attr.Reverse {
+		a |= 16
+	}
+	if c.Attr.Blink {
+		a |= 32
+	}
+	if c.Attr.Conceal {
+		a |= 64
+	}
+	pc.A = a
+	return pc
+}
+
+func colorToSpec(c te.Color) string {
+	switch c.Mode {
+	case te.ColorDefault:
+		return ""
+	case te.ColorANSI16:
+		return c.Name // e.g., "red", "brightgreen"
+	case te.ColorANSI256:
+		return fmt.Sprintf("5;%d", c.Index)
+	case te.ColorTrueColor:
+		return "2;" + c.Name // Name is hex like "ff8700"
+	}
+	return ""
 }
 
 func (r *Region) FlushEvents() []protocol.TerminalEvent {

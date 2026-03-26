@@ -96,12 +96,21 @@ type RegionCreated struct {
 	Name     string `json:"name"`
 }
 
+// ScreenCell carries per-cell color and attribute data for initial sync.
+type ScreenCell struct {
+	Char string `json:"c,omitempty"`
+	Fg   string `json:"fg,omitempty"` // SGR color: "31", "38;5;208", "38;2;R;G;B", or "" for default
+	Bg   string `json:"bg,omitempty"`
+	A    uint8  `json:"a,omitempty"` // bitfield: 1=bold 2=italic 4=underline 8=strikethrough 16=reverse 32=blink 64=conceal
+}
+
 type ScreenUpdate struct {
-	Type      string   `json:"type"`
-	RegionID  string   `json:"region_id"`
-	CursorRow uint16   `json:"cursor_row"`
-	CursorCol uint16   `json:"cursor_col"`
-	Lines     []string `json:"lines"`
+	Type      string         `json:"type"`
+	RegionID  string         `json:"region_id"`
+	CursorRow uint16         `json:"cursor_row"`
+	CursorCol uint16         `json:"cursor_col"`
+	Lines     []string       `json:"lines"`
+	Cells     [][]ScreenCell `json:"cells,omitempty"`
 }
 
 type RegionDestroyed struct {
