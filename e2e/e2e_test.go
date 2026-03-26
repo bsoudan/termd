@@ -20,12 +20,12 @@ func TestStartAndRender(t *testing.T) {
 
 	lines := pio.WaitFor(t, "bash", 10*time.Second)
 
-	// "bash" should be at the start of row 0 (tab bar, left-aligned)
+	// "bash" should be on row 0 (tab bar), near the left side
 	row, col := findOnScreen(lines, "bash")
 	if row != 0 {
 		t.Fatalf("expected 'bash' on row 0, found on row %d", row)
 	}
-	if col > 2 {
+	if col > 10 {
 		t.Fatalf("expected 'bash' near start of row 0, found at col %d", col)
 	}
 

@@ -10,9 +10,7 @@ import (
 )
 
 var (
-	tabActiveStyle = lipgloss.NewStyle().Bold(true).Reverse(true)
-	statusStyle    = lipgloss.NewStyle().Italic(true).Faint(true)
-	overlayBorder  = lipgloss.NewStyle().
+	overlayBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
 			Padding(0, 1)
@@ -306,43 +304,78 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
-var statusBarStyle = lipgloss.NewStyle().Faint(true)
+var (
+	barStyle  = lipgloss.NewStyle().Faint(true)
+	barAccent = lipgloss.NewStyle().Bold(true)
+)
 
-func renderStatusBar(connStatus, endpoint string, width int) string {
-	left := statusBarStyle.Render(connStatus)
-	right := statusBarStyle.Render(endpoint)
+// renderChromeBar renders a line like: ─ left ──────── right ─
+// Both left and right are optional. The line fills to width with ─ characters.
+func renderChromeBar(left, right string, width int) string {
+	var sb strings.Builder
+	used := 0
 
-	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(right)
-	fill := width - leftW - rightW
-	if fill < 1 {
-		fill = 1
+	dash := barStyle.Render("─")
+	dashW := 1 // visual width of one dash
+
+	// Leading dash + space
+	sb.WriteString(dash)
+	sb.WriteByte(' ')
+	used += dashW + 1
+
+	// Left content
+	if left != "" {
+		styled := barAccent.Render(left)
+		sb.WriteString(styled)
+		used += lipgloss.Width(styled)
+		sb.WriteByte(' ')
+		used++
 	}
 
-	return left + strings.Repeat(" ", fill) + right
+	// Right content (rendered later, but we need its width now)
+	var rightStyled string
+	rightW := 0
+	if right != "" {
+		rightStyled = barStyle.Render(right)
+		rightW = lipgloss.Width(rightStyled)
+	}
+
+	// Fill with dashes between left and right
+	fillCount := width - used - rightW
+	if right != "" {
+		fillCount -= 2 // space + trailing dash
+	} else {
+		fillCount -= dashW // trailing dash
+	}
+	if fillCount < 1 {
+		fillCount = 1
+	}
+	for range fillCount {
+		sb.WriteString(dash)
+	}
+
+	// Right content + trailing dash
+	if right != "" {
+		sb.WriteByte(' ')
+		sb.WriteString(rightStyled)
+		sb.WriteByte(' ')
+		sb.WriteString(dash)
+	} else {
+		sb.WriteString(dash)
+	}
+
+	return sb.String()
+}
+
+func renderStatusBar(connStatus, endpoint string, width int) string {
+	return renderChromeBar(connStatus, endpoint, width)
 }
 
 func renderTabBar(regionName, status string, width int) string {
-	tab := ""
+	left := ""
 	if regionName != "" {
-		tab = tabActiveStyle.Render(" " + regionName + " ")
+		left = "[" + regionName + "]"
 	}
-
-	if len(status) > 20 {
-		status = status[:20]
-	}
-	styledStatus := ""
-	if status != "" {
-		styledStatus = statusStyle.Render(status)
-	}
-
-	tabWidth := lipgloss.Width(tab)
-	statusWidth := lipgloss.Width(styledStatus)
-	fill := width - tabWidth - statusWidth
-	if fill < 0 {
-		fill = 0
-	}
-
-	return tab + strings.Repeat(" ", fill) + styledStatus
+	return renderChromeBar(left, status, width)
 }
 
