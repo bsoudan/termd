@@ -766,17 +766,17 @@ func TestResizeMidSession(t *testing.T) {
 		return false
 	}, "'120' at col 0 on a content row", 10*time.Second)
 
-	// Verify new row count (40 - 2 for tab bar and status bar = 38)
+	// Verify new row count (40 - 1 for tab bar = 39)
 	pio.WaitFor(t, "termd$ ", 10*time.Second)
 	pio.Write([]byte("tput lines\r"))
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for i := 1; i < len(lines); i++ {
-			if strings.HasPrefix(lines[i], "38") {
+			if strings.HasPrefix(lines[i], "39") {
 				return true
 			}
 		}
 		return false
-	}, "'38' at col 0 on a content row", 10*time.Second)
+	}, "'39' at col 0 on a content row", 10*time.Second)
 }
 
 func TestTCPTransport(t *testing.T) {
@@ -800,11 +800,11 @@ func TestTCPTransport(t *testing.T) {
 	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "termd$ ", 10*time.Second)
 
-	// Verify the status bar shows the TCP endpoint
+	// Verify the tab bar shows the TCP endpoint
 	lines := pio.ScreenLines()
-	lastLine := lines[len(lines)-1]
-	if !strings.Contains(lastLine, tcpAddr) {
-		t.Errorf("status bar should show TCP addr %q, got: %q", tcpAddr, lastLine)
+	row0 := lines[0]
+	if !strings.Contains(row0, tcpAddr) {
+		t.Errorf("tab bar should show TCP addr %q, got: %q", tcpAddr, row0)
 	}
 
 	// Type a command and verify round-trip works

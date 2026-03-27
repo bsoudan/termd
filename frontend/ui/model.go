@@ -47,7 +47,7 @@ type Model struct {
 // contentHeight returns the number of rows available for terminal content
 // (total height minus tab bar and status bar).
 func (m Model) contentHeight() int {
-	h := m.termHeight - 2
+	h := m.termHeight - 1 // tab bar only
 	if h < 1 {
 		h = 1
 	}
@@ -194,7 +194,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		height := m.contentHeight()
 		if m.termHeight <= 0 {
-			height = 22 // default 24 - 2 chrome rows
+			height = 23 // default 24 - 1 for tab bar
 		}
 		m.localScreen = te.NewScreen(width, height)
 		if len(msg.Cells) > 0 {

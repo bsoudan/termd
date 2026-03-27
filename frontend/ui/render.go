@@ -35,14 +35,21 @@ func renderView(m Model) string {
 
 	var sb strings.Builder
 
-	status := m.status
-	if m.prefixMode && !m.showLogView {
-		status = "ctrl+b ..."
+	// Right side of tab bar: connection info or prefix mode indicator
+	rightInfo := m.Endpoint
+	if m.connStatus != "connected" && m.connStatus != "" {
+		rightInfo = m.connStatus
 	}
-	sb.WriteString(renderTabBar(m.regionName, status, width))
+	if m.prefixMode && !m.showLogView {
+		rightInfo = "ctrl+b ..."
+	}
+	if m.status != "" {
+		rightInfo = m.status
+	}
+	sb.WriteString(renderTabBar(m.regionName, rightInfo, width))
 	sb.WriteByte('\n')
 
-	contentHeight := height - 2 // tab bar + status bar
+	contentHeight := height - 1 // tab bar only
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
@@ -56,7 +63,9 @@ func renderView(m Model) string {
 				row = cells[i]
 			}
 			renderCellLine(&sb, row, width, i, m.cursorRow, m.cursorCol, showCursor)
-			sb.WriteByte('\n')
+			if i < contentHeight-1 {
+				sb.WriteByte('\n')
+			}
 		}
 	} else {
 		for i := range contentHeight {
@@ -81,11 +90,11 @@ func renderView(m Model) string {
 					sb.WriteRune(ch)
 				}
 			}
-			sb.WriteByte('\n')
+			if i < contentHeight-1 {
+				sb.WriteByte('\n')
+			}
 		}
 	}
-
-	sb.WriteString(renderStatusBar(m.connStatus, m.Endpoint, width))
 
 	base := sb.String()
 
@@ -304,69 +313,73 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
-var barStyle = lipgloss.NewStyle().Faint(true)
+var (
+	barStyle     = lipgloss.NewStyle().Faint(true)
+	barBoldStyle = lipgloss.NewStyle().Bold(true)
+)
 
-// renderChromeBar renders a line like: ─ left ──────── right ─
-// Both left and right are optional. The line fills to width with ─ characters.
-// All content is rendered in the dim/faint style.
-func renderChromeBar(left, right string, width int) string {
-	// Build the content layout first, then style the whole thing.
-	// Layout: "─ left ───...─── right ─"
+// renderChromeBar renders a line like: ─ left ──── right ─ suffix ─
+// left, right, and suffix are optional. suffix is rendered bold (not faint).
+// The line fills to width with ─ characters.
+func renderChromeBar(left, right, suffix string, width int) string {
 	var sb strings.Builder
 	used := 0
 
-	// Leading: "─ "
-	sb.WriteString("─ ")
+	// Leading: "• "
+	sb.WriteString("• ")
 	used += 2
 
-	// Left content + trailing space
+	// Left content: "left •"
 	if left != "" {
 		sb.WriteString(left)
-		sb.WriteByte(' ')
-		used += len([]rune(left)) + 1
+		sb.WriteString(" •")
+		used += len([]rune(left)) + 2
 	}
 
-	// Compute how much space the right side needs
+	// Compute space needed for right side: "• right " or trailing "•"
 	rightTotal := 0
 	if right != "" {
-		rightTotal = len([]rune(right)) + 3 // " right ─"  (space + content + space + dash)
+		rightTotal = len([]rune(right)) + 4 // "• right •"
 	} else {
-		rightTotal = 1 // trailing "─"
+		rightTotal = 1 // trailing "•"
 	}
 
-	// Fill with dashes
-	fillCount := width - used - rightTotal
+	suffixTotal := 0
+	if suffix != "" {
+		suffixTotal = len([]rune(suffix)) + 4 // " suffix •"
+	}
+
+	// Fill with middle dots
+	fillCount := width - used - rightTotal - suffixTotal
 	if fillCount < 1 {
 		fillCount = 1
 	}
 	for range fillCount {
-		sb.WriteByte(0xe2) // UTF-8 for ─ (U+2500)
-		sb.WriteByte(0x94)
-		sb.WriteByte(0x80)
+		sb.WriteString("·")
 	}
 
-	// Right content + trailing dash
+	// Right content
 	if right != "" {
-		sb.WriteByte(' ')
+		sb.WriteString("• ")
 		sb.WriteString(right)
-		sb.WriteString(" ─")
+		sb.WriteString(" •")
 	} else {
-		sb.WriteString("─")
+		sb.WriteString("•")
 	}
 
-	// Style the whole line as faint
-	return barStyle.Render(sb.String())
-}
+	// Faint everything so far
+	result := barStyle.Render(sb.String())
 
-func renderStatusBar(connStatus, endpoint string, width int) string {
-	return renderChromeBar(connStatus, endpoint, width)
+	// Bold suffix appended outside the faint span
+	if suffix != "" {
+		result += barStyle.Render(" ") + barBoldStyle.Render(suffix) + barStyle.Render(" •")
+	}
+
+	return result
 }
 
 func renderTabBar(regionName, status string, width int) string {
-	left := ""
-	if regionName != "" {
-		left = "[" + regionName + "]"
-	}
-	return renderChromeBar(left, status, width)
+	left := regionName
+	return renderChromeBar(left, status, "termd-tui", width)
 }
 
