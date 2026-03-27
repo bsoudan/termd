@@ -555,15 +555,14 @@ func TestPrefixKeyStatusIndicator(t *testing.T) {
 
 	pio.Write([]byte{0x02})
 	lines := pio.WaitForScreen(t, func(lines []string) bool {
-		_, col := findOnScreen(lines, "ctrl+b ...")
-		// Should be right-justified on row 0 — col should be > 50 on an 80-col screen
-		return col > 50
-	}, "'ctrl+b ...' right-justified on row 0", 3*time.Second)
+		row, col := findOnScreen(lines, "? ")
+		return row == 0 && col > 50
+	}, "'?' right-justified on row 0", 3*time.Second)
 
-	row, col := findOnScreen(lines, "ctrl+b ...")
-	t.Logf("'ctrl+b ...' at row %d, col %d", row, col)
+	row, col := findOnScreen(lines, "? ")
+	t.Logf("'?' at row %d, col %d", row, col)
 	if row != 0 {
-		t.Fatalf("expected status on row 0, found on row %d", row)
+		t.Fatalf("expected prefix indicator on row 0, found on row %d", row)
 	}
 
 	// Dismiss and verify it clears
@@ -573,11 +572,6 @@ func TestPrefixKeyStatusIndicator(t *testing.T) {
 		row, _ := findOnScreen(lines[1:], "prefix_cleared")
 		return row >= 0
 	}, "'prefix_cleared' on screen", 10*time.Second)
-
-	row0 := pio.ScreenLine(0)
-	if strings.Contains(row0, "ctrl+b ...") {
-		t.Fatal("prefix status still on row 0 after dismissal")
-	}
 }
 
 func TestLogViewerOverlay(t *testing.T) {

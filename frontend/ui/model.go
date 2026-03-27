@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +18,9 @@ import (
 // log entries arrive (throttled to 100ms).
 type LogEntryMsg struct{}
 
+type showHintMsg struct{}
+type hideHintMsg struct{}
+
 type Model struct {
 	client      *client.Client
 	cmd         string
@@ -27,6 +31,9 @@ type Model struct {
 	Detached    bool
 	prefixMode  bool
 	focusDone   chan struct{}
+	showHelp    bool
+	helpCursor  int
+	showHint    bool
 	showLogView bool
 	logViewport viewport.Model
 	logHScroll  int
@@ -80,6 +87,7 @@ func (m Model) Init() tea.Cmd {
 			return nil
 		},
 		waitForUpdate(m.client),
+		tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} }),
 	)
 }
 
@@ -294,11 +302,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case showHintMsg:
+		m.showHint = true
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hideHintMsg{} })
+
+	case hideHintMsg:
+		m.showHint = false
+		return m, nil
+
 	case prefixStartedMsg:
 		m.prefixMode = true
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.showHelp {
+			return m.updateHelpViewer(msg)
+		}
 		if m.showLogView {
 			return m.updateLogViewer(msg)
 		}
@@ -333,7 +352,90 @@ func (m Model) updatePrefixCommand(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 		}
 		return m, nil
+	case "?":
+		m.showHelp = true
+		done := make(chan struct{})
+		m.focusDone = done
+		select {
+		case m.FocusCh <- done:
+		default:
+		}
+		return m, nil
 	default:
+		return m, nil
+	}
+}
+
+type helpItem struct {
+	key    string
+	label  string
+	action func(m Model) (Model, tea.Cmd)
+}
+
+var helpItems = []helpItem{
+	{"d", "detach", func(m Model) (Model, tea.Cmd) {
+		m.Detached = true
+		return m, tea.Quit
+	}},
+	{"l", "log viewer", func(m Model) (Model, tea.Cmd) {
+		m.showLogView = true
+		m.initLogViewport()
+		done := make(chan struct{})
+		m.focusDone = done
+		select {
+		case m.FocusCh <- done:
+		default:
+		}
+		return m, nil
+	}},
+	{"b", "send literal ctrl+b", func(m Model) (Model, tea.Cmd) {
+		if m.regionID != "" {
+			data := base64.StdEncoding.EncodeToString([]byte{0x02})
+			_ = m.client.Send(protocol.InputMsg{
+				Type: "input", RegionID: m.regionID, Data: data,
+			})
+		}
+		return m, nil
+	}},
+}
+
+func (m Model) closeHelp() Model {
+	m.showHelp = false
+	m.helpCursor = 0
+	if m.focusDone != nil {
+		close(m.focusDone)
+		m.focusDone = nil
+	}
+	return m
+}
+
+func (m Model) updateHelpViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "?":
+		m = m.closeHelp()
+		return m, nil
+	case "up", "k":
+		if m.helpCursor > 0 {
+			m.helpCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.helpCursor < len(helpItems)-1 {
+			m.helpCursor++
+		}
+		return m, nil
+	case "enter":
+		item := helpItems[m.helpCursor]
+		m = m.closeHelp()
+		return item.action(m)
+	default:
+		// Direct key shortcut while help is open
+		for _, item := range helpItems {
+			if msg.String() == item.key {
+				m = m.closeHelp()
+				return item.action(m)
+			}
+		}
 		return m, nil
 	}
 }

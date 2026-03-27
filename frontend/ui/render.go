@@ -12,7 +12,7 @@ import (
 var (
 	overlayBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(lipgloss.Color("8")).
 			Padding(0, 1)
 	overlayHelp = lipgloss.NewStyle().
 			Faint(true).
@@ -35,18 +35,29 @@ func renderView(m Model) string {
 
 	var sb strings.Builder
 
-	// Right side of tab bar: connection info or prefix mode indicator
+	// Right side of tab bar: connection info, or mode indicator when active
 	rightInfo := m.Endpoint
+	rightBold := false
 	if m.connStatus != "connected" && m.connStatus != "" {
 		rightInfo = m.connStatus
-	}
-	if m.prefixMode && !m.showLogView {
-		rightInfo = "ctrl+b ..."
 	}
 	if m.status != "" {
 		rightInfo = m.status
 	}
-	sb.WriteString(renderTabBar(m.regionName, rightInfo, width))
+	if m.showHelp {
+		rightInfo = "help"
+		rightBold = true
+	} else if m.showLogView {
+		rightInfo = "logviewer"
+		rightBold = true
+	} else if m.prefixMode {
+		rightInfo = "?"
+		rightBold = true
+	} else if m.showHint {
+		rightInfo = "ctrl+b ? for help"
+		rightBold = true
+	}
+	sb.WriteString(renderTabBar(m.regionName, rightInfo, rightBold, width))
 	sb.WriteByte('\n')
 
 	contentHeight := height - 1 // tab bar only
@@ -98,6 +109,9 @@ func renderView(m Model) string {
 
 	base := sb.String()
 
+	if m.showHelp {
+		return renderHelpOverlay(base, m.helpCursor, width, height)
+	}
 	if m.showLogView {
 		return renderLogOverlay(m, base, width, height)
 	}
@@ -313,6 +327,47 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
+var helpSelected = lipgloss.NewStyle().Reverse(true)
+
+func renderHelpOverlay(base string, cursor, width, height int) string {
+	var lines []string
+	for i, item := range helpItems {
+		line := fmt.Sprintf("  ctrl+b %s   %s", item.key, item.label)
+		if i == cursor {
+			line = fmt.Sprintf("▸ ctrl+b %s   %s", item.key, item.label)
+			line = helpSelected.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	content := strings.Join(lines, "\n")
+
+	overlayW := 38
+	dialog := overlayBorder.Width(overlayW).Render(content)
+
+	help := overlayHelp.Render(" ↑↓/enter: select  q/esc: close ")
+	dialogLines := strings.Split(dialog, "\n")
+	helpPad := (overlayW - lipgloss.Width(help)) / 2
+	if helpPad < 0 {
+		helpPad = 0
+	}
+	dialogLines = append(dialogLines, strings.Repeat(" ", helpPad)+help)
+	dialog = strings.Join(dialogLines, "\n")
+
+	dialogH := strings.Count(dialog, "\n") + 1
+	x := (width - overlayW) / 2
+	y := (height - dialogH) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	baseLayer := lipgloss.NewLayer(base)
+	dialogLayer := lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
+}
+
 var (
 	barStyle     = lipgloss.NewStyle().Faint(true)
 	barBoldStyle = lipgloss.NewStyle().Bold(true)
@@ -321,7 +376,7 @@ var (
 // renderChromeBar renders a line like: ─ left ──── right ─ suffix ─
 // left, right, and suffix are optional. suffix is rendered bold (not faint).
 // The line fills to width with ─ characters.
-func renderChromeBar(left, right, suffix string, width int) string {
+func renderChromeBar(left, right, suffix string, rightBold bool, width int) string {
 	var sb strings.Builder
 	used := 0
 
@@ -346,7 +401,7 @@ func renderChromeBar(left, right, suffix string, width int) string {
 
 	suffixTotal := 0
 	if suffix != "" {
-		suffixTotal = len([]rune(suffix)) + 4 // " suffix •"
+		suffixTotal = len([]rune(suffix)) + 3 // " suffix •"
 	}
 
 	// Fill with middle dots
@@ -359,16 +414,21 @@ func renderChromeBar(left, right, suffix string, width int) string {
 	}
 
 	// Right content
-	if right != "" {
-		sb.WriteString("• ")
-		sb.WriteString(right)
-		sb.WriteString(" •")
+	var result string
+	if right != "" && rightBold {
+		// Faint everything up to here, then bold "• right •"
+		result = barStyle.Render(sb.String())
+		result += barBoldStyle.Render("• " + right + " •")
 	} else {
-		sb.WriteString("•")
+		if right != "" {
+			sb.WriteString("• ")
+			sb.WriteString(right)
+			sb.WriteString(" •")
+		} else {
+			sb.WriteString("•")
+		}
+		result = barStyle.Render(sb.String())
 	}
-
-	// Faint everything so far
-	result := barStyle.Render(sb.String())
 
 	// Bold suffix appended outside the faint span
 	if suffix != "" {
@@ -378,8 +438,7 @@ func renderChromeBar(left, right, suffix string, width int) string {
 	return result
 }
 
-func renderTabBar(regionName, status string, width int) string {
-	left := regionName
-	return renderChromeBar(left, status, "termd-tui", width)
+func renderTabBar(regionName, status string, prefixMode bool, width int) string {
+	return renderChromeBar(regionName, status, "termd-tui", prefixMode, width)
 }
 
