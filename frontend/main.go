@@ -23,7 +23,7 @@ var version = "dev"
 
 func main() {
 	app := &cli.Command{
-		Name:    "termd-frontend",
+		Name:    "termd-tui",
 		Usage:   "terminal multiplexer TUI client",
 		Version: version,
 		Flags: []cli.Flag{
@@ -99,7 +99,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		shell, shellArgs = defaultShell()
 	}
 
-	transport.InstallStackDump("termd-frontend")
+	transport.InstallStackDump("termd-tui")
 
 	// CLI --socket > config connect > platform default
 	socketVal := cmd.String("socket")
@@ -113,7 +113,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", endpoint, err)
 	}
-	c := client.New(conn, dialFn, "termd-frontend")
+	c := client.New(conn, dialFn, "termd-tui")
 	defer c.Close()
 
 	restore, err := ui.SetupRawTerminal()

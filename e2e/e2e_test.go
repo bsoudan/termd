@@ -586,7 +586,7 @@ func TestLogViewerOverlay(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	cmd := exec.Command("termd-frontend", "--socket", socketPath, "--debug", "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", socketPath, "--debug", "--command", "bash --norc")
 	cmd.Env = append(os.Environ(), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -789,7 +789,7 @@ func TestTCPTransport(t *testing.T) {
 	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
 
 	// Connect frontend via TCP
-	cmd := exec.Command("termd-frontend", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
 	cmd.Env = append(os.Environ(), "TERM=dumb")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
@@ -830,7 +830,7 @@ func TestWebSocketTransport(t *testing.T) {
 	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
 
 	// Connect frontend via WebSocket
-	cmd := exec.Command("termd-frontend", "--socket", "ws://"+wsAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "ws://"+wsAddr, "--command", "bash --norc")
 	cmd.Env = append(os.Environ(), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -903,7 +903,7 @@ func TestSSHTransport(t *testing.T) {
 	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
 
 	// Connect frontend via SSH
-	feCmd := exec.Command("termd-frontend", "--socket", "ssh://"+sshAddr, "--command", "bash --norc")
+	feCmd := exec.Command("termd-tui", "--socket", "ssh://"+sshAddr, "--command", "bash --norc")
 	feCmd.Env = append(os.Environ(), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(feCmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -995,7 +995,7 @@ func TestReconnectTCP(t *testing.T) {
 	defer serverCleanup()
 
 	// Connect frontend via TCP
-	cmd := exec.Command("termd-frontend", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
 	cmd.Env = append(os.Environ(), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -1021,19 +1021,19 @@ func TestReconnectTCP(t *testing.T) {
 	pio.WaitFor(t, "tcp_reconnected", 10*time.Second)
 }
 
-// findFrontendClientID returns the client ID of the termd-frontend process.
+// findFrontendClientID returns the client ID of the termd-tui process.
 func findFrontendClientID(t *testing.T, socketPath string) string {
 	t.Helper()
 	out := runTermctl(t, socketPath, "client", "list")
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "termd-frontend") {
+		if strings.Contains(line, "termd-tui") {
 			fields := strings.Fields(line)
 			if len(fields) > 0 {
 				return fields[0]
 			}
 		}
 	}
-	t.Fatal("could not find termd-frontend client ID")
+	t.Fatal("could not find termd-tui client ID")
 	return ""
 }
 
@@ -1052,7 +1052,7 @@ func TestMultiTransportSharedRegion(t *testing.T) {
 	pio1.WaitFor(t, "multi_transport_marker", 10*time.Second)
 
 	// Start frontend 2 via TCP (subscribes to the same region)
-	cmd := exec.Command("termd-frontend", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
 	cmd.Env = append(os.Environ(), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {

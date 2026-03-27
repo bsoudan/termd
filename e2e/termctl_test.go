@@ -116,8 +116,8 @@ func TestTermctlClientList(t *testing.T) {
 	pio.WaitFor(t, "bash", 10*time.Second)
 
 	out := runTermctl(t, socketPath, "client", "list")
-	if !strings.Contains(out, "termd-frontend") {
-		t.Fatalf("client list missing 'termd-frontend':\n%s", out)
+	if !strings.Contains(out, "termd-tui") {
+		t.Fatalf("client list missing 'termd-tui':\n%s", out)
 	}
 	if !strings.Contains(out, "termctl") {
 		t.Fatalf("client list missing 'termctl':\n%s", out)
@@ -137,7 +137,7 @@ func TestTermctlClientKill(t *testing.T) {
 	out := runTermctl(t, socketPath, "client", "list")
 	var frontendClientID string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "termd-frontend") {
+		if strings.Contains(line, "termd-tui") {
 			fields := strings.Fields(line)
 			if len(fields) > 0 {
 				frontendClientID = fields[0]
@@ -157,7 +157,7 @@ func TestTermctlClientKill(t *testing.T) {
 
 	// The killed client should be gone immediately on the next list.
 	out = runTermctl(t, socketPath, "client", "list")
-	if strings.Contains(out, "termd-frontend") {
+	if strings.Contains(out, "termd-tui") {
 		t.Fatalf("frontend client still listed after kill:\n%s", out)
 	}
 }

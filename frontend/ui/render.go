@@ -14,9 +14,6 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
 			Padding(0, 1)
-	overlayHelp = lipgloss.NewStyle().
-			Faint(true).
-			Italic(true)
 )
 
 func renderView(m Model) string {
@@ -308,17 +305,18 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 		dialogLines = append(dialogLines, lastLine)
 	}
 
-	// Add help text below the border
-	help := overlayHelp.Render(" q/esc: close  ↑↓/pgup/pgdn: scroll  ←→: pan  home: top ")
-	helpPad := (overlayW - lipgloss.Width(help)) / 2
+	// Add help text below the border in dot-bar style
+	help := barStyle.Render("• q/esc: close • ↑↓/pgup/pgdn: scroll • ←→: pan • home: top •")
+	helpPad := (overlayW + 2 - lipgloss.Width(help)) / 2
 	if helpPad < 0 {
 		helpPad = 0
 	}
 	dialogLines = append(dialogLines, strings.Repeat(" ", helpPad)+help)
 	dialog = strings.Join(dialogLines, "\n")
 
+	dialogH := strings.Count(dialog, "\n") + 1
 	x := (width - overlayW) / 2
-	y := (height - overlayH) / 2
+	y := (height - dialogH) / 2
 	if x < 0 {
 		x = 0
 	}
@@ -348,9 +346,9 @@ func renderHelpOverlay(base string, cursor, width, height int) string {
 	overlayW := 38
 	dialog := overlayBorder.Width(overlayW).Render(content)
 
-	help := overlayHelp.Render(" ↑↓/enter: select  q/esc: close ")
+	help := barStyle.Render("• ↑↓/enter: select • q/esc: close •")
 	dialogLines := strings.Split(dialog, "\n")
-	helpPad := (overlayW - lipgloss.Width(help)) / 2
+	helpPad := (overlayW + 2 - lipgloss.Width(help)) / 2
 	if helpPad < 0 {
 		helpPad = 0
 	}

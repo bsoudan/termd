@@ -49,7 +49,7 @@ Server-initiated messages (`region_created`, `screen_update`, `terminal_events`,
 Identify the connecting client to the server. Fire-and-forget; no response.
 
 ```json
-{ "type": "identify", "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-frontend" }
+{ "type": "identify", "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-tui" }
 ```
 
 | Field    | Type   | Description                    |
@@ -319,7 +319,7 @@ List all connected clients.
 ### list_clients_response
 
 ```json
-{ "type": "list_clients_response", "clients": [{"client_id": 1, "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-frontend", "subscribed_region_id": "abc123"}], "error": false, "message": "" }
+{ "type": "list_clients_response", "clients": [{"client_id": 1, "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-tui", "subscribed_region_id": "abc123"}], "error": false, "message": "" }
 ```
 
 | Field   | Type           | Description                           |

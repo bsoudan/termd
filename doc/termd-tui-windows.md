@@ -1,6 +1,6 @@
-# termd-frontend Windows Support
+# termd-tui Windows Support
 
-Goal: make `termd-frontend` build and run on Windows, connecting to a
+Goal: make `termd-tui` build and run on Windows, connecting to a
 remote termd server over TCP, WebSocket, or SSH.  The server and termctl
 remain Linux/macOS only.  Unix socket support is excluded on Windows.
 
