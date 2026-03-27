@@ -1,13 +1,44 @@
 # termd Protocol Specification
 
-Wire format: newline-delimited JSON. Each message is one UTF-8 JSON object followed by `\n`.
+## Transport Layer
+
+The protocol is transport-agnostic. The server and clients communicate over a bidirectional
+byte stream carrying newline-delimited JSON. Any transport that provides a reliable ordered
+byte stream can be used.
+
+### Supported transports
+
+| Scheme   | Server                        | Client                          |
+|----------|-------------------------------|---------------------------------|
+| `unix:`  | `--listen unix:/path`         | `--socket /path`                |
+| `tcp:`   | `--listen tcp:host:port`      | `--socket tcp:host:port`        |
+| `ws:`    | `--listen ws:host:port`       | `--socket ws://host:port`       |
+| `ssh:`   | `--listen ssh:host:port`      | `--socket ssh://user@host:port` |
+
+The server accepts multiple `--listen` flags to listen on several transports simultaneously.
+All listeners share the same server state (regions, clients).
+
+SSH transport requires `--ssh-host-key` (auto-generated if missing) and optionally
+`--ssh-auth-keys` for public key authentication. Without `--ssh-auth-keys`, all connections
+are accepted (dev mode).
+
+### Reconnection
+
+The frontend automatically reconnects on connection loss with exponential backoff (100ms to
+60s cap). On reconnect it re-identifies and re-subscribes to the previous region. The tab bar
+shows `reconnecting...` during attempts and the endpoint address once connected.
+
+## Wire Format
+
+Newline-delimited JSON. Each message is one UTF-8 JSON object followed by `\n`.
 
 All request messages have a corresponding response. The `input` and `identify` messages are
 fire-and-forget exceptions. The response always includes `error` (bool) and `message` (string)
 fields. `message` is empty on success and contains a human-readable description with context on
 failure.
 
-Server-initiated messages (`region_created`, `screen_update`, `region_destroyed`) have no response.
+Server-initiated messages (`region_created`, `screen_update`, `terminal_events`,
+`region_destroyed`) have no response.
 
 ---
 

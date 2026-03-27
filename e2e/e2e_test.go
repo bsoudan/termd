@@ -1030,6 +1030,39 @@ func findFrontendClientID(t *testing.T, socketPath string) string {
 	return ""
 }
 
+func TestMultiTransportSharedRegion(t *testing.T) {
+	socketPath, tcpAddr, serverCleanup := startServerWithTCP(t)
+	defer serverCleanup()
+
+	// Start frontend 1 via Unix socket
+	pio1, cleanup1 := startFrontend(t, socketPath)
+	defer cleanup1()
+
+	pio1.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Type a marker in frontend 1
+	pio1.Write([]byte("echo multi_transport_marker\r"))
+	pio1.WaitFor(t, "multi_transport_marker", 10*time.Second)
+
+	// Start frontend 2 via TCP (subscribes to the same region)
+	cmd := exec.Command("termd-frontend", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd.Env = append(os.Environ(), "TERM=dumb")
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	if err != nil {
+		t.Fatalf("start frontend 2 via TCP: %v", err)
+	}
+	pio2 := newPtyIO(ptmx, 80, 24)
+	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+
+	// Frontend 2 should see the marker (it gets the screen snapshot on subscribe)
+	pio2.WaitFor(t, "multi_transport_marker", 10*time.Second)
+
+	// Type in frontend 2, verify frontend 1 sees it
+	pio2.WaitFor(t, "termd$ ", 10*time.Second)
+	pio2.Write([]byte("echo from_tcp_client\r"))
+	pio1.WaitFor(t, "from_tcp_client", 10*time.Second)
+}
+
 func TestExit(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
