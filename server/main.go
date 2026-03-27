@@ -55,6 +55,23 @@ func main() {
 			},
 		},
 		Action: runServer,
+		Commands: []*cli.Command{
+			{
+				Name:   "start",
+				Usage:  "install and start termd as a systemd user service",
+				Action: cmdStart,
+			},
+			{
+				Name:   "stop",
+				Usage:  "stop and remove the termd systemd user service",
+				Action: cmdStop,
+			},
+			{
+				Name:   "status",
+				Usage:  "show the termd systemd user service status",
+				Action: cmdStatus,
+			},
+		},
 	}
 
 	if err := app.Run(context.Background(), os.Args); err != nil {
