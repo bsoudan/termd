@@ -57,11 +57,11 @@ Description=termd %s
 Type=simple
 ExecStart=%s
 Restart=on-failure
-Environment=TERMD_VERSION=%s
+Environment="TERMD_VERSION=%s PATH=%s"
 
 [Install]
 WantedBy=default.target
-`, version, execLine, version)
+`, version, execLine, version, os.Getenv("PATH"))
 }
 
 // readUnitVersion reads the TERMD_VERSION from an installed unit file.
@@ -119,6 +119,7 @@ func cmdStart(_ context.Context, cmd *cli.Command) error {
 	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("write unit file: %w", err)
 	}
+	fmt.Printf("wrote %s\n", unitPath)
 
 	// Reload and start
 	if _, err := systemctl("daemon-reload"); err != nil {
@@ -145,6 +146,7 @@ func cmdStop(_ context.Context, cmd *cli.Command) error {
 	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove unit file: %w", err)
 	}
+	fmt.Printf("removed %s\n", unitPath)
 
 	// Reload
 	systemctl("daemon-reload")
