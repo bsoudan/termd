@@ -134,6 +134,8 @@ type ListRegionsResponse struct {
 
 type StatusResponse struct {
 	Type          string `json:"type"`
+	Hostname      string `json:"hostname"`
+	Version       string `json:"version"`
 	Pid           int    `json:"pid"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	SocketPath    string `json:"socket_path"`

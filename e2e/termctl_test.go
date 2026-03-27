@@ -14,7 +14,7 @@ func TestTermctlStatus(t *testing.T) {
 
 	out := runTermctl(t, socketPath, "status")
 
-	for _, want := range []string{"PID:", "Uptime:", "Socket:", "Clients:", "Regions:"} {
+	for _, want := range []string{"Hostname:", "Version:", "PID:", "Uptime:", "Listeners:", "Clients:", "Regions:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}

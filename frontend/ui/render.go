@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	te "github.com/rcarmo/go-te/pkg/te"
@@ -41,7 +42,10 @@ func renderView(m Model) string {
 	if m.status != "" {
 		rightInfo = m.status
 	}
-	if m.showHelp {
+	if m.showStatus {
+		rightInfo = "status"
+		rightBold = true
+	} else if m.showHelp {
 		rightInfo = "help"
 		rightBold = true
 	} else if m.showLogView {
@@ -110,6 +114,9 @@ func renderView(m Model) string {
 
 	base := sb.String()
 
+	if m.showStatus {
+		return renderStatusOverlay(base, m.Version, m.Endpoint, m.localHostname, m.serverStatus, width, height)
+	}
 	if m.showHelp {
 		return renderHelpOverlay(base, m.helpCursor, width, height)
 	}
@@ -307,6 +314,57 @@ func renderLogOverlay(m Model, base string, width, height int) string {
 
 	// Add help text below the border in dot-bar style
 	help := barStyle.Render("• q/esc: close • ↑↓/pgup/pgdn: scroll • ←→: pan • home: top •")
+	helpPad := (overlayW + 2 - lipgloss.Width(help)) / 2
+	if helpPad < 0 {
+		helpPad = 0
+	}
+	dialogLines = append(dialogLines, strings.Repeat(" ", helpPad)+help)
+	dialog = strings.Join(dialogLines, "\n")
+
+	dialogH := strings.Count(dialog, "\n") + 1
+	x := (width - overlayW) / 2
+	y := (height - dialogH) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	baseLayer := lipgloss.NewLayer(base)
+	dialogLayer := lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
+}
+
+func renderStatusOverlay(base, version, endpoint, localHostname string, status *protocol.StatusResponse, width, height int) string {
+	var lines []string
+
+	lines = append(lines, "termd-tui:")
+	lines = append(lines, fmt.Sprintf("  Hostname:  %s", localHostname))
+	lines = append(lines, fmt.Sprintf("  Version:   %s", version))
+	lines = append(lines, fmt.Sprintf("  Endpoint:  %s", endpoint))
+	lines = append(lines, "")
+	lines = append(lines, "termd:")
+	if status != nil {
+		d := time.Duration(status.UptimeSeconds) * time.Second
+		lines = append(lines, fmt.Sprintf("  Hostname:  %s", status.Hostname))
+		lines = append(lines, fmt.Sprintf("  Version:   %s", status.Version))
+		lines = append(lines, fmt.Sprintf("  PID:       %d", status.Pid))
+		lines = append(lines, fmt.Sprintf("  Uptime:    %s", d.String()))
+		lines = append(lines, fmt.Sprintf("  Listeners: %s", status.SocketPath))
+		lines = append(lines, fmt.Sprintf("  Clients:   %d", status.NumClients))
+		lines = append(lines, fmt.Sprintf("  Regions:   %d", status.NumRegions))
+	} else {
+		lines = append(lines, "  loading...")
+	}
+
+	content := strings.Join(lines, "\n")
+
+	overlayW := 50
+	dialog := overlayBorder.Width(overlayW).Render(content)
+
+	help := barStyle.Render("• q/esc: close •")
+	dialogLines := strings.Split(dialog, "\n")
 	helpPad := (overlayW + 2 - lipgloss.Width(help)) / 2
 	if helpPad < 0 {
 		helpPad = 0

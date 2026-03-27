@@ -13,6 +13,7 @@ import (
 )
 
 type Server struct {
+	version      string
 	listeners    []net.Listener
 	startTime    time.Time
 	nextClientID atomic.Uint32
@@ -25,12 +26,13 @@ type Server struct {
 	shutdown atomic.Bool
 }
 
-func NewServer(listeners []net.Listener) *Server {
+func NewServer(listeners []net.Listener, version string) *Server {
 	for _, ln := range listeners {
 		slog.Info("listening", "addr", ln.Addr().String())
 	}
 
 	s := &Server{
+		version:   version,
 		listeners: listeners,
 		startTime: time.Now(),
 		regions:   make(map[string]*Region),
@@ -247,8 +249,11 @@ func (s *Server) getStatus() protocol.StatusResponse {
 	numRegions := len(s.regions)
 	s.mu.Unlock()
 
+	hostname, _ := os.Hostname()
 	return protocol.StatusResponse{
 		Type:          "status_response",
+		Hostname:      hostname,
+		Version:       s.version,
 		Pid:           os.Getpid(),
 		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
 		SocketPath:    s.listenerAddrs(),

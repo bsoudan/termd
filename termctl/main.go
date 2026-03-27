@@ -148,11 +148,13 @@ func cmdStatus(_ context.Context, cmd *cli.Command) error {
 	}
 
 	d := time.Duration(resp.UptimeSeconds) * time.Second
-	fmt.Printf("PID:      %d\n", resp.Pid)
-	fmt.Printf("Uptime:   %s\n", d.String())
-	fmt.Printf("Socket:   %s\n", resp.SocketPath)
-	fmt.Printf("Clients:  %d\n", resp.NumClients)
-	fmt.Printf("Regions:  %d\n", resp.NumRegions)
+	fmt.Printf("Hostname:  %s\n", resp.Hostname)
+	fmt.Printf("Version:   %s\n", resp.Version)
+	fmt.Printf("PID:       %d\n", resp.Pid)
+	fmt.Printf("Uptime:    %s\n", d.String())
+	fmt.Printf("Listeners: %s\n", resp.SocketPath)
+	fmt.Printf("Clients:   %d\n", resp.NumClients)
+	fmt.Printf("Regions:   %d\n", resp.NumRegions)
 	return nil
 }
 

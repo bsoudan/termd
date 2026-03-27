@@ -23,6 +23,7 @@
             go
             gopls
             gotools  # goimports, etc.
+            delve    # Go debugger
             gcc      # C/C++ compiler for cgo
 
             # Protocol debugging: NDJSON over a Unix socket

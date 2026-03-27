@@ -152,6 +152,77 @@ func cmdStop(_ context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// readUnitExecArgs reads the ExecStart line from the unit file and returns
+// everything after the binary path as individual arguments.
+func readUnitExecArgs(unitPath string) ([]string, error) {
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "ExecStart=") {
+			parts := strings.Fields(strings.TrimPrefix(line, "ExecStart="))
+			if len(parts) > 1 {
+				return parts[1:], nil // skip the binary path
+			}
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("no ExecStart found in %s", unitPath)
+}
+
+func cmdRestart(ctx context.Context, cmd *cli.Command) error {
+	unitPath, err := serviceUnitPath()
+	if err != nil {
+		return err
+	}
+	if readUnitVersion(unitPath) == "" {
+		return fmt.Errorf("termd service is not installed; use 'termd start' first")
+	}
+
+	// Grab args from the existing unit before stopping
+	prevArgs, err := readUnitExecArgs(unitPath)
+	if err != nil {
+		return err
+	}
+
+	// Stop and remove
+	systemctl("stop", serviceName)
+
+	// Reinstall with previous args + current binary
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot find termd binary path: %w", err)
+	}
+	execPath, err = filepath.Abs(execPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve binary path: %w", err)
+	}
+
+	// Build the ExecStart line from the new binary + old args
+	var args []string
+	args = append(args, execPath)
+	args = append(args, prevArgs...)
+	execLine := strings.Join(args, " ")
+
+	unit := fmt.Sprintf("[Unit]\nDescription=termd %s\n\n[Service]\nType=simple\nExecStart=%s\nRestart=on-failure\nEnvironment=TERMD_VERSION=%s\nEnvironment=PATH=%s\n\n[Install]\nWantedBy=default.target\n",
+		version, execLine, version, os.Getenv("PATH"))
+
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		return fmt.Errorf("write unit file: %w", err)
+	}
+	fmt.Printf("wrote %s\n", unitPath)
+
+	if _, err := systemctl("daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
+	}
+	if out, err := systemctl("start", serviceName); err != nil {
+		return fmt.Errorf("start: %s", out)
+	}
+
+	return cmdStatus(ctx, cmd)
+}
+
 func cmdStatus(_ context.Context, cmd *cli.Command) error {
 	unitPath, err := serviceUnitPath()
 	if err != nil {

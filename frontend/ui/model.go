@@ -36,6 +36,8 @@ type Model struct {
 	showHelp    bool
 	helpCursor  int
 	showHint    bool
+	showStatus   bool
+	serverStatus *protocol.StatusResponse
 	showLogView bool
 	logViewport viewport.Model
 	logHScroll  int
@@ -346,11 +348,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showHint = false
 		return m, nil
 
+	case protocol.StatusResponse:
+		m.serverStatus = &msg
+		return m, nil
+
 	case prefixStartedMsg:
 		m.prefixMode = true
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.showStatus {
+			return m.updateStatusViewer(msg)
+		}
 		if m.showHelp {
 			return m.updateHelpViewer(msg)
 		}
@@ -397,6 +406,20 @@ func (m Model) updatePrefixCommand(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 		}
 		return m, nil
+	case "s":
+		m.showStatus = true
+		m.serverStatus = nil
+		done := make(chan struct{})
+		m.focusDone = done
+		select {
+		case m.FocusCh <- done:
+		default:
+		}
+		// Request server status
+		return m, func() tea.Msg {
+			_ = m.client.Send(protocol.StatusRequest{Type: "status_request"})
+			return nil
+		}
 	default:
 		return m, nil
 	}
@@ -424,6 +447,18 @@ var helpItems = []helpItem{
 		}
 		return m, nil
 	}},
+	{"s", "status", func(m Model) (Model, tea.Cmd) {
+		m.showStatus = true
+		m.serverStatus = nil
+		done := make(chan struct{})
+		m.focusDone = done
+		select {
+		case m.FocusCh <- done:
+		default:
+		}
+		_ = m.client.Send(protocol.StatusRequest{Type: "status_request"})
+		return m, nil
+	}},
 	{"b", "send literal ctrl+b", func(m Model) (Model, tea.Cmd) {
 		if m.regionID != "" {
 			data := base64.StdEncoding.EncodeToString([]byte{0x02})
@@ -443,6 +478,21 @@ func (m Model) closeHelp() Model {
 		m.focusDone = nil
 	}
 	return m
+}
+
+func (m Model) updateStatusViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "s":
+		m.showStatus = false
+		m.serverStatus = nil
+		if m.focusDone != nil {
+			close(m.focusDone)
+			m.focusDone = nil
+		}
+		return m, nil
+	default:
+		return m, nil
+	}
 }
 
 func (m Model) updateHelpViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

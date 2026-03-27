@@ -86,6 +86,11 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 				Action: cmdStop,
 			},
 			{
+				Name:   "restart",
+				Usage:  "restart the termd systemd user service",
+				Action: cmdRestart,
+			},
+			{
 				Name:   "status",
 				Usage:  "show the termd systemd user service status",
 				Action: cmdStatus,
@@ -176,7 +181,7 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 		listeners = append(listeners, ln)
 	}
 
-	srv := NewServer(listeners)
+	srv := NewServer(listeners, version)
 	defer srv.Shutdown()
 
 	sigCh := make(chan os.Signal, 1)
