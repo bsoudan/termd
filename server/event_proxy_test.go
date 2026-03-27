@@ -75,7 +75,7 @@ func TestEventProxyReplay(t *testing.T) {
 	input += "termd$ "
 
 	stream.FeedBytes([]byte(input))
-	allEvents := proxy.Flush()
+	allEvents, _ := proxy.Flush()
 
 	t.Logf("total events captured: %d", len(allEvents))
 
@@ -147,7 +147,7 @@ func TestEventProxyReplayWithAltScreen(t *testing.T) {
 	input += "termd$ "
 
 	stream.FeedBytes([]byte(input))
-	allEvents := proxy.Flush()
+	allEvents, _ := proxy.Flush()
 
 	t.Logf("total events: %d", len(allEvents))
 
@@ -196,7 +196,7 @@ func TestEventProxyReplayColors(t *testing.T) {
 	input := "\x1b[31mRED\x1b[0m \x1b[32mGRN\x1b[0m \x1b[1mBLD\x1b[0m \x1b[38;5;208mIDX\x1b[0m \x1b[38;2;255;128;0mRGB\x1b[0m"
 	stream.FeedBytes([]byte(input))
 
-	allEvents := proxy.Flush()
+	allEvents, _ := proxy.Flush()
 	allEvents = roundTripEvents(allEvents)
 
 	frontendScreen := te.NewScreen(cols, rows)
@@ -226,4 +226,91 @@ func TestEventProxyReplayColors(t *testing.T) {
 	}
 }
 
+func TestSyncOutputSnapshot(t *testing.T) {
+	const cols, rows = 80, 24
+
+	serverScreen := te.NewScreen(cols, rows)
+	proxy := NewEventProxy(serverScreen)
+	stream := te.NewStream(proxy, false)
+
+	// Draw initial content before sync
+	stream.FeedBytes([]byte("before"))
+
+	// Flush pre-sync events — should return normally
+	preEvents, needsSnap := proxy.Flush()
+	if needsSnap {
+		t.Fatal("expected no snapshot before sync")
+	}
+	if len(preEvents) == 0 {
+		t.Fatal("expected pre-sync events")
+	}
+
+	// Enter sync mode, draw content, exit sync mode, draw trailing content
+	stream.FeedBytes([]byte(
+		"\x1b[?2026h" + // begin synchronized output
+			"\x1b[H\x1b[2J" + // home + clear (inside sync)
+			"synced content" + // draw inside sync
+			"\x1b[?2026l" + // end synchronized output
+			"trailing", // draw AFTER sync
+	))
+
+	// Flush should return needsSnapshot=true, no events (snapshot captures everything)
+	events, needsSnap := proxy.Flush()
+	if !needsSnap {
+		t.Fatal("expected needsSnapshot after sync output")
+	}
+	if len(events) != 0 {
+		t.Errorf("expected no events (snapshot captures all), got %d", len(events))
+	}
+
+	// The server screen should have both synced and trailing content
+	display := serverScreen.Display()
+	if !strings.Contains(display[0], "synced content") {
+		t.Errorf("server screen should contain 'synced content', got %q", display[0])
+	}
+	if !strings.Contains(display[0], "trailing") {
+		t.Errorf("server screen should contain 'trailing', got %q", display[0])
+	}
+
+	// A snapshot taken now captures the full state including trailing content.
+	// The frontend would receive this as a screen_update and render it atomically.
+	frontendScreen := te.NewScreen(cols, rows)
+	copy(frontendScreen.Buffer[0], serverScreen.Buffer[0])
+
+	frontendLines := frontendScreen.Display()
+	if !strings.Contains(frontendLines[0], "synced contenttrailing") {
+		t.Errorf("frontend should show full content, got %q", frontendLines[0])
+	}
+}
+
+func TestSyncOutputHoldsDuringSync(t *testing.T) {
+	const cols, rows = 80, 24
+
+	serverScreen := te.NewScreen(cols, rows)
+	proxy := NewEventProxy(serverScreen)
+	stream := te.NewStream(proxy, false)
+
+	// Enter sync mode and draw
+	stream.FeedBytes([]byte("\x1b[?2026h" + "inside sync"))
+
+	// Flush while sync is active — should return nothing
+	events, needsSnap := proxy.Flush()
+	if needsSnap {
+		t.Fatal("should not need snapshot while still in sync mode")
+	}
+	if events != nil {
+		t.Fatalf("should return nil events during sync, got %d", len(events))
+	}
+
+	// End sync with no trailing content
+	stream.FeedBytes([]byte("\x1b[?2026l"))
+
+	events, needsSnap = proxy.Flush()
+	if !needsSnap {
+		t.Fatal("expected snapshot after sync end")
+	}
+	if len(events) != 0 {
+		t.Errorf("expected no trailing events, got %d", len(events))
+	}
+}
 

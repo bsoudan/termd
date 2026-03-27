@@ -214,8 +214,9 @@ func (s *Server) removeClient(id uint32) {
 }
 
 func (s *Server) sendTerminalEvents(region *Region) {
-	events := region.FlushEvents()
-	if len(events) == 0 {
+	events, needsSnapshot := region.FlushEvents()
+
+	if !needsSnapshot && len(events) == 0 {
 		return
 	}
 
@@ -229,6 +230,24 @@ func (s *Server) sendTerminalEvents(region *Region) {
 	s.mu.Unlock()
 
 	if len(subscribers) == 0 {
+		return
+	}
+
+	if needsSnapshot {
+		// Synchronized output completed — send an atomic screen snapshot
+		// instead of individual events to avoid rendering intermediate states.
+		snap := region.Snapshot()
+		snapMsg := protocol.ScreenUpdate{
+			Type:      "screen_update",
+			RegionID:  region.id,
+			CursorRow: snap.CursorRow,
+			CursorCol: snap.CursorCol,
+			Lines:     snap.Lines,
+			Cells:     snap.Cells,
+		}
+		for _, c := range subscribers {
+			c.SendMessage(snapMsg)
+		}
 		return
 	}
 

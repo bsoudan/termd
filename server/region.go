@@ -225,7 +225,11 @@ func colorToSpec(c te.Color) string {
 	return ""
 }
 
-func (r *Region) FlushEvents() []protocol.TerminalEvent {
+// FlushEvents returns accumulated events. If a synchronized output batch
+// completed (mode 2026), needsSnapshot is true — the caller should send a
+// screen_update snapshot, then send any trailing events that came after the
+// sync ended.
+func (r *Region) FlushEvents() (events []protocol.TerminalEvent, needsSnapshot bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.proxy.Flush()

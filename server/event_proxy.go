@@ -6,21 +6,41 @@ import (
 )
 
 type EventProxy struct {
-	screen *te.Screen
-	batch  []protocol.TerminalEvent
+	screen       *te.Screen
+	batch        []protocol.TerminalEvent
+	syncMode     bool // true when synchronized output mode (2026) is active
+	syncEndIndex int  // index in batch where sync mode ended (-1 = no sync completed)
 }
 
 func NewEventProxy(screen *te.Screen) *EventProxy {
-	return &EventProxy{screen: screen}
+	return &EventProxy{screen: screen, syncEndIndex: -1}
 }
 
-func (p *EventProxy) Flush() []protocol.TerminalEvent {
+// Flush returns accumulated events and whether a snapshot is needed.
+// If a synchronized output batch completed (mode 2026), needsSnapshot is true
+// and events contains only the events AFTER the sync ended. The caller should
+// send a screen_update snapshot first, then send these trailing events.
+func (p *EventProxy) Flush() (events []protocol.TerminalEvent, needsSnapshot bool) {
+	if p.syncMode {
+		// Still in sync mode — hold everything.
+		return nil, false
+	}
+
+	if p.syncEndIndex >= 0 {
+		// Sync completed. The snapshot captures the full screen state
+		// including any events after the sync ended, so discard the
+		// entire batch.
+		p.batch = nil
+		p.syncEndIndex = -1
+		return nil, true
+	}
+
 	if len(p.batch) == 0 {
-		return nil
+		return nil, false
 	}
 	out := p.batch
 	p.batch = nil
-	return out
+	return out, false
 }
 
 func (p *EventProxy) ev(op string) {
@@ -111,12 +131,31 @@ func (p *EventProxy) SetMode(modes []int, private bool) {
 	cp := make([]int, len(modes))
 	copy(cp, modes)
 	p.batch = append(p.batch, protocol.TerminalEvent{Op: "sm", Params: cp, Private: private})
+	if private {
+		for _, m := range modes {
+			if m == 2026 {
+				p.syncMode = true
+			}
+		}
+	}
 }
 func (p *EventProxy) ResetMode(modes []int, private bool) {
 	p.screen.ResetMode(modes, private)
 	cp := make([]int, len(modes))
 	copy(cp, modes)
 	p.batch = append(p.batch, protocol.TerminalEvent{Op: "rm", Params: cp, Private: private})
+	if private {
+		for _, m := range modes {
+			if m == 2026 {
+				if p.syncMode {
+					p.syncMode = false
+					// Mark where sync ended — everything before this is
+					// replaced by a snapshot, everything after is sent normally.
+					p.syncEndIndex = len(p.batch)
+				}
+			}
+		}
+	}
 }
 func (p *EventProxy) SaveModes(modes []int)    { p.screen.SaveModes(modes); p.evParams("savem", modes) }
 func (p *EventProxy) RestoreModes(modes []int) { p.screen.RestoreModes(modes); p.evParams("restm", modes) }
