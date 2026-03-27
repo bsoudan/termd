@@ -22,8 +22,11 @@ type SSHListenerConfig struct {
 	HostKeyPath string
 
 	// AuthorizedKeysPath is the path to an authorized_keys file.
-	// If empty, all public key auth is accepted (insecure, for dev use).
+	// Defaults to ~/.ssh/authorized_keys if empty.
 	AuthorizedKeysPath string
+
+	// NoAuth disables authentication entirely. Must be explicitly set.
+	NoAuth bool
 }
 
 // ListenSSH starts an SSH server on addr and returns a net.Listener.
@@ -39,21 +42,31 @@ func ListenSSH(addr string, cfg SSHListenerConfig) (net.Listener, error) {
 	serverConfig.AddHostKey(hostKey)
 
 	// Auth
-	authorizedKeys, err := loadAuthorizedKeys(cfg.AuthorizedKeysPath)
-	if err != nil {
-		return nil, fmt.Errorf("ssh authorized keys: %w", err)
-	}
-	if authorizedKeys != nil {
+	if cfg.NoAuth {
+		slog.Warn("ssh: authentication disabled (--ssh-no-auth)")
+		serverConfig.NoClientAuth = true
+	} else {
+		authKeysPath := cfg.AuthorizedKeysPath
+		if authKeysPath == "" {
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				authKeysPath = home + "/.ssh/authorized_keys"
+			}
+		}
+		authorizedKeys, err := loadAuthorizedKeys(authKeysPath)
+		if err != nil {
+			return nil, fmt.Errorf("ssh authorized keys: %w", err)
+		}
+		if authorizedKeys == nil || len(authorizedKeys) == 0 {
+			return nil, fmt.Errorf("ssh: no authorized keys found at %s (use --ssh-auth-keys or --ssh-no-auth)", authKeysPath)
+		}
+		slog.Info("ssh: loaded authorized keys", "path", authKeysPath, "keys", len(authorizedKeys))
 		serverConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if _, ok := authorizedKeys[string(key.Marshal())]; ok {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("unknown public key for %s", conn.User())
 		}
-	} else {
-		// No authorized keys file — accept all (dev mode)
-		slog.Warn("ssh: no authorized_keys configured, accepting all public keys")
-		serverConfig.NoClientAuth = true
 	}
 
 	tcpLn, err := net.Listen("tcp", addr)

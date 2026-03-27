@@ -848,7 +848,8 @@ func TestSSHTransport(t *testing.T) {
 	socketPath := filepath.Join(dir, "termd.sock")
 	cmd := exec.Command("termd", "--socket", socketPath,
 		"--listen", "ssh:127.0.0.1:0",
-		"--ssh-host-key", hostKeyPath)
+		"--ssh-host-key", hostKeyPath,
+		"--ssh-no-auth")
 	stderrR, stderrW, _ := os.Pipe()
 	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {

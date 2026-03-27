@@ -20,8 +20,9 @@ Options:
   -l, --listen <spec>       Listen address (repeatable; default: unix:/tmp/termd.sock)
                              Schemes: unix:<path>, tcp:<host:port>, ws:<host:port>, ssh:<host:port>
   -s, --socket <path>       Shorthand for --listen unix:<path>
-      --ssh-host-key <path> SSH host key file (auto-generated if missing)
-      --ssh-auth-keys <path> SSH authorized_keys file (if omitted, accepts all keys)
+      --ssh-host-key <path>  SSH host key file (auto-generated if missing)
+      --ssh-auth-keys <path> SSH authorized_keys file (default: ~/.ssh/authorized_keys)
+      --ssh-no-auth          Disable SSH authentication (insecure)
   -d, --debug               Enable debug logging (env: TERMD_DEBUG=1)
   -h, --help                Show this help
 `)
@@ -30,6 +31,7 @@ Options:
 func main() {
 	var listenSpecs []string
 	var sshHostKey, sshAuthKeys string
+	sshNoAuth := false
 	debug := false
 
 	args := os.Args[1:]
@@ -68,6 +70,8 @@ func main() {
 				os.Exit(1)
 			}
 			sshAuthKeys = args[i]
+		case "--ssh-no-auth":
+			sshNoAuth = true
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown option: %s\n", args[i])
 			printUsage()
@@ -104,6 +108,7 @@ func main() {
 			ln, err = transport.ListenSSH(addr, transport.SSHListenerConfig{
 				HostKeyPath:        sshHostKey,
 				AuthorizedKeysPath: sshAuthKeys,
+				NoAuth:             sshNoAuth,
 			})
 		} else {
 			ln, err = transport.Listen(spec)
