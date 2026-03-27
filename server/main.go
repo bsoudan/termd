@@ -81,6 +81,11 @@ func main() {
 }
 
 func runServer(_ context.Context, cmd *cli.Command) error {
+	if cmd.NArg() > 0 {
+		cli.ShowAppHelp(cmd)
+		return fmt.Errorf("unknown command: %s", cmd.Args().First())
+	}
+
 	level := slog.LevelInfo
 	if cmd.Bool("debug") {
 		level = slog.LevelDebug
