@@ -107,6 +107,8 @@ func convertProtocolMsg(msg any) tea.Msg {
 			Regions: m.Regions,
 			Error: m.Error, Message: m.Message,
 		}
+	case protocol.GetScreenResponse:
+		return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines, Cells: m.Cells}
 	case protocol.StatusResponse:
 		return m
 	case client.DisconnectedMsg:

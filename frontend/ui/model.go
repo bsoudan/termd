@@ -55,10 +55,11 @@ type Model struct {
 	lines       []string
 	cursorRow   int
 	cursorCol   int
-	termWidth   int
-	termHeight  int
-	status      string
-	err         string
+	termWidth    int
+	termHeight   int
+	pendingClear bool
+	status       string
+	err          string
 }
 
 // contentHeight returns the number of rows available for terminal content
@@ -241,6 +242,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.localScreen.CursorPosition(int(msg.CursorRow)+1, int(msg.CursorCol)+1)
 		if m.showLogView {
 			m.refreshLogViewport()
+		}
+		if m.pendingClear {
+			m.pendingClear = false
+			return m, tea.Batch(
+				func() tea.Msg { return tea.ClearScreen() },
+				waitForUpdate(m.client),
+			)
 		}
 		return m, waitForUpdate(m.client)
 
@@ -454,6 +462,23 @@ func (m Model) updatePrefixCommand(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			_ = m.client.Send(protocol.StatusRequest{Type: "status_request"})
 			return nil
 		}
+	case "r":
+		// Request a full screen refresh from the server.
+		// The ClearScreen happens when the response arrives (in ScreenUpdateMsg).
+		if m.regionID != "" {
+			m.pendingClear = true
+			return m, tea.Batch(
+				func() tea.Msg {
+					_ = m.client.Send(protocol.GetScreenRequest{
+						Type:     "get_screen_request",
+						RegionID: m.regionID,
+					})
+					return nil
+				},
+				waitForUpdate(m.client),
+			)
+		}
+		return m, nil
 	default:
 		return m, nil
 	}
@@ -491,6 +516,17 @@ var helpItems = []helpItem{
 		default:
 		}
 		_ = m.client.Send(protocol.StatusRequest{Type: "status_request"})
+		return m, nil
+	}},
+	{"r", "refresh screen", func(m Model) (Model, tea.Cmd) {
+		if m.regionID != "" {
+			m.pendingClear = true
+			_ = m.client.Send(protocol.GetScreenRequest{
+				Type:     "get_screen_request",
+				RegionID: m.regionID,
+			})
+			return m, waitForUpdate(m.client)
+		}
 		return m, nil
 	}},
 	{"b", "send literal ctrl+b", func(m Model) (Model, tea.Cmd) {
