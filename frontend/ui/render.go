@@ -44,20 +44,11 @@ func renderView(m Model) string {
 	if m.status != "" {
 		rightInfo = m.status
 	}
-	if m.overlayMode == "changelog" {
-		rightInfo = "release notes"
-		rightBold = true
-	} else if m.showStatus {
-		rightInfo = "status"
-		rightBold = true
-	} else if m.showHelp {
-		rightInfo = "help"
+	if m.overlay != nil {
+		rightInfo = m.overlay.Label()
 		rightBold = true
 	} else if m.scrollback.Active() {
 		rightInfo = m.scrollback.StatusText()
-		rightBold = true
-	} else if m.overlayMode == "log" {
-		rightInfo = "logviewer"
 		rightBold = true
 	} else if m.prefixMode {
 		rightInfo = "?"
@@ -72,7 +63,7 @@ func renderView(m Model) string {
 		rightRed = true
 	}
 	suffix := "termd-tui"
-	if m.Version != "" && (m.showHint || m.showHelp || m.overlayMode == "changelog") {
+	if m.Version != "" && (m.showHint || m.overlay != nil) {
 		suffix = "termd-tui " + m.Version
 	}
 	sb.WriteString(renderTabBar(m.regionName, rightInfo, suffix, rightBold, rightRed, width))
@@ -82,7 +73,7 @@ func renderView(m Model) string {
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	showCursor := m.overlayMode == "" && !m.scrollback.Active()
+	showCursor := m.overlay == nil && !m.scrollback.Active()
 	disconnected := m.connStatus == "reconnecting"
 
 	if m.scrollback.Active() && m.terminal.Screen != nil {
@@ -93,14 +84,8 @@ func renderView(m Model) string {
 
 	base := sb.String()
 
-	if m.overlayMode != "" {
-		return renderScrollableOverlay(m, base, width, height)
-	}
-	if m.showStatus {
-		return renderStatusOverlay(base, m, width, height)
-	}
-	if m.showHelp {
-		return renderHelpOverlay(base, m.helpCursor, width, height)
+	if m.overlay != nil {
+		return m.overlay.View(base, width, height)
 	}
 	return base
 }
@@ -251,7 +236,7 @@ func teColorAttrs(c te.Color, isBg bool) []ansi.Attr {
 	return []ansi.Attr{ansi.AttrDefaultForegroundColor}
 }
 
-func renderScrollableOverlay(m Model, base string, width, height int) string {
+func renderScrollableOverlay(vpContent string, hScroll int, base string, width, height int) string {
 	overlayW := width * 80 / 100
 	overlayH := height * 80 / 100
 	if overlayW < 20 {
@@ -261,20 +246,18 @@ func renderScrollableOverlay(m Model, base string, width, height int) string {
 		overlayH = 5
 	}
 
-	content := m.overlayVP.View()
-
 	maxLines := overlayH - 3
 	maxContentWidth := overlayW - 4
 
-	contentLines := strings.Split(content, "\n")
+	contentLines := strings.Split(vpContent, "\n")
 	if len(contentLines) > maxLines {
 		contentLines = contentLines[:maxLines]
 	}
 	for i, line := range contentLines {
 		runes := []rune(line)
-		if m.overlayHScroll > 0 && m.overlayHScroll < len(runes) {
-			runes = runes[m.overlayHScroll:]
-		} else if m.overlayHScroll >= len(runes) {
+		if hScroll > 0 && hScroll < len(runes) {
+			runes = runes[hScroll:]
+		} else if hScroll >= len(runes) {
 			runes = nil
 		}
 		if len(runes) > maxContentWidth {
@@ -283,7 +266,7 @@ func renderScrollableOverlay(m Model, base string, width, height int) string {
 		contentLines[i] = string(runes)
 	}
 
-	content = strings.Join(contentLines, "\n")
+	content := strings.Join(contentLines, "\n")
 
 	dialog := overlayBorder.
 		Width(overlayW).
@@ -321,78 +304,60 @@ func renderScrollableOverlay(m Model, base string, width, height int) string {
 	return lipgloss.NewCompositor(baseLayer, dialogLayer).Render()
 }
 
-func renderStatusOverlay(base string, m Model, width, height int) string {
+func renderStatusOverlay(base string, caps StatusCaps, status *protocol.StatusResponse, width, height int) string {
 	var lines []string
 
 	lines = append(lines, "termd-tui:")
-	lines = append(lines, fmt.Sprintf("  Hostname:  %s", m.localHostname))
-	lines = append(lines, fmt.Sprintf("  Version:   %s", m.Version))
-	endpointStr := m.Endpoint
-	if m.connStatus == "reconnecting" {
+	lines = append(lines, fmt.Sprintf("  Hostname:  %s", caps.Hostname))
+	lines = append(lines, fmt.Sprintf("  Version:   %s", caps.Version))
+	endpointStr := caps.Endpoint
+	if caps.ConnStatus == "reconnecting" {
 		endpointStr += " (disconnected)"
 	}
 	lines = append(lines, fmt.Sprintf("  Endpoint:  %s", endpointStr))
 	lines = append(lines, "")
 
 	lines = append(lines, "terminal:")
-	if term, ok := m.termEnv["TERM"]; ok {
+	if term, ok := caps.TermEnv["TERM"]; ok {
 		lines = append(lines, fmt.Sprintf("  TERM:      %s", term))
 	}
-	if ct, ok := m.termEnv["COLORTERM"]; ok {
+	if ct, ok := caps.TermEnv["COLORTERM"]; ok {
 		lines = append(lines, fmt.Sprintf("  COLORTERM: %s", ct))
 	}
-	if tp, ok := m.termEnv["TERM_PROGRAM"]; ok {
+	if tp, ok := caps.TermEnv["TERM_PROGRAM"]; ok {
 		lines = append(lines, fmt.Sprintf("  Program:   %s", tp))
 	}
-	if m.keyboardFlags > 0 {
-		var caps []string
-		if m.keyboardFlags&1 != 0 {
-			caps = append(caps, "disambiguate")
+	if caps.KeyboardFlags > 0 {
+		var kbCaps []string
+		if caps.KeyboardFlags&1 != 0 {
+			kbCaps = append(kbCaps, "disambiguate")
 		}
-		if m.keyboardFlags&2 != 0 {
-			caps = append(caps, "event-types")
+		if caps.KeyboardFlags&2 != 0 {
+			kbCaps = append(kbCaps, "event-types")
 		}
-		if m.keyboardFlags&4 != 0 {
-			caps = append(caps, "alt-keys")
+		if caps.KeyboardFlags&4 != 0 {
+			kbCaps = append(kbCaps, "alt-keys")
 		}
-		if m.keyboardFlags&8 != 0 {
-			caps = append(caps, "all-as-escapes")
+		if caps.KeyboardFlags&8 != 0 {
+			kbCaps = append(kbCaps, "all-as-escapes")
 		}
-		lines = append(lines, fmt.Sprintf("  Keyboard:  kitty (%s)", strings.Join(caps, ", ")))
+		lines = append(lines, fmt.Sprintf("  Keyboard:  kitty (%s)", strings.Join(kbCaps, ", ")))
 	} else {
 		lines = append(lines, "  Keyboard:  legacy")
 	}
-	if m.bgDark != nil {
-		if *m.bgDark {
+	if caps.BgDark != nil {
+		if *caps.BgDark {
 			lines = append(lines, "  Background: dark")
 		} else {
 			lines = append(lines, "  Background: light")
 		}
 	}
-	if m.terminal.Screen != nil {
-		var mouseModes []string
-		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseNormal.Mode())]; ok {
-			mouseModes = append(mouseModes, "normal(1000)")
-		}
-		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseButtonEvent.Mode())]; ok {
-			mouseModes = append(mouseModes, "button(1002)")
-		}
-		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseAnyEvent.Mode())]; ok {
-			mouseModes = append(mouseModes, "any(1003)")
-		}
-		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseExtSgr.Mode())]; ok {
-			mouseModes = append(mouseModes, "sgr(1006)")
-		}
-		if len(mouseModes) > 0 {
-			lines = append(lines, fmt.Sprintf("  Mouse:     %s", strings.Join(mouseModes, ", ")))
-		} else {
-			lines = append(lines, "  Mouse:     off")
-		}
+	if caps.MouseModes != "" {
+		lines = append(lines, fmt.Sprintf("  Mouse:     %s", caps.MouseModes))
 	}
 	lines = append(lines, "")
 
 	lines = append(lines, "termd:")
-	status := m.serverStatus
 	if status != nil {
 		d := time.Duration(status.UptimeSeconds) * time.Second
 		lines = append(lines, fmt.Sprintf("  Hostname:  %s", status.Hostname))
@@ -437,9 +402,9 @@ func renderStatusOverlay(base string, m Model, width, height int) string {
 
 var helpSelected = lipgloss.NewStyle().Reverse(true)
 
-func renderHelpOverlay(base string, cursor, width, height int) string {
+func renderHelpOverlay(base string, cursor int, items []helpItem, width, height int) string {
 	var lines []string
-	for i, item := range helpItems {
+	for i, item := range items {
 		line := fmt.Sprintf("  ctrl+b %s   %s", item.key, item.label)
 		if i == cursor {
 			line = fmt.Sprintf("▸ ctrl+b %s   %s", item.key, item.label)

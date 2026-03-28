@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	termlog "termd/frontend/log"
 	"termd/frontend/protocol"
 )
@@ -33,19 +33,12 @@ type Model struct {
 	Endpoint    string
 	Version     string
 	Changelog   string
-	Detached    bool
-	prefixMode  bool
-	nextReqID   uint64
-	pending     map[uint64]ReplyFunc
-	showHelp    bool
-	helpCursor  int
-	showHint    bool
-	showStatus    bool
-	serverStatus  *protocol.StatusResponse
-	// Scrollable overlay viewer — used for log viewer and changelog
-	overlayMode    string // "" = hidden, "log", "changelog"
-	overlayVP      viewport.Model
-	overlayHScroll int
+	Detached   bool
+	prefixMode bool
+	nextReqID  uint64
+	pending    map[uint64]ReplyFunc
+	showHint   bool
+	overlay    Overlay
 	LogRing     *termlog.LogRingBuffer
 	regionID    string
 	regionName  string
@@ -126,8 +119,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Re-enter Update with the unwrapped payload
-		return m.Update(pmsg.Payload)
+		msg = pmsg.Payload
 	}
 
 	switch msg := msg.(type) {
@@ -213,8 +205,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if needsClear {
 			return m, func() tea.Msg { return tea.ClearScreen() }
 		}
-		if m.overlayMode == "log" {
-			m.refreshOverlay()
+		if m.overlay != nil {
+			m.refreshLogOverlay()
 		}
 		return m, nil
 
@@ -247,7 +239,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case protocol.StatusResponse:
-		m.serverStatus = &msg
+		if so, ok := m.overlay.(*StatusOverlay); ok { so.SetStatus(&msg) }
 		return m, nil
 
 	case protocol.GetScrollbackResponse:
@@ -259,8 +251,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.quit()
 
 	case LogEntryMsg:
-		if m.overlayMode == "log" {
-			m.refreshOverlay()
+		if m.overlay != nil {
+			m.refreshLogOverlay()
 		}
 		return m, nil
 
@@ -301,14 +293,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case tea.KeyPressMsg:
-		if m.overlayMode != "" {
-			return m.updateOverlayViewer(msg)
-		}
-		if m.showStatus {
-			return m.updateStatusViewer(msg)
-		}
-		if m.showHelp {
-			return m.updateHelpViewer(msg)
+		if m.overlay != nil {
+			return m.updateOverlay(msg)
 		}
 		if m.scrollback.Active() {
 			var exited bool
@@ -333,8 +319,8 @@ func (m Model) handleScreenUpdate(lines []string, cells [][]protocol.ScreenCell,
 		height = 23
 	}
 	m.terminal = m.terminal.HandleScreenUpdate(lines, cells, cursorRow, cursorCol, m.termWidth, height)
-	if m.overlayMode == "log" {
-		m.refreshOverlay()
+	if m.overlay != nil {
+		m.refreshLogOverlay()
 	}
 	var clear bool
 	m.terminal, clear = m.terminal.ConsumePendingClear()
@@ -351,21 +337,30 @@ const prefixKey = 0x02 // ctrl+b
 func (m Model) handleRawInput(chunk []byte) (tea.Model, tea.Cmd) {
 	// Focus mode (overlay/help/status with keyboard nav): write to bubbletea's
 	// input pipe so it parses as key events. Mouse still parsed here.
-	if m.overlayMode != "" || m.showStatus || m.showHelp || m.scrollback.Active() {
+	if m.overlay != nil || m.scrollback.Active() {
 		if bytes.Contains(chunk, sgrMousePrefix) {
 			mice, rest := extractSGRMouseSequences(chunk)
-			if len(rest) > 0 {
-				m.pipeW.Write(rest)
-			}
 			var cmds []tea.Cmd
+			if len(rest) > 0 {
+				pipeW := m.pipeW
+				cmds = append(cmds, func() tea.Msg {
+					pipeW.Write(rest)
+					return nil
+				})
+			}
 			for _, mouse := range mice {
 				saved := mouse
 				cmds = append(cmds, func() tea.Msg { return saved })
 			}
 			return m, tea.Batch(cmds...)
 		}
-		m.pipeW.Write(chunk)
-		return m, nil
+		pipeW := m.pipeW
+		data := make([]byte, len(chunk))
+		copy(data, chunk)
+		return m, func() tea.Msg {
+			pipeW.Write(data)
+			return nil
+		}
 	}
 
 	// Prefix active: next byte is the command
@@ -469,20 +464,22 @@ func (m Model) handlePrefixCommand(key byte) (tea.Model, tea.Cmd) {
 		m.sendRawToServer([]byte{prefixKey})
 		return m, nil
 	case 'l':
-		m.overlayMode = "log"
-		m.initOverlay(m.LogRing.String(), true)
+		m.overlay = NewScrollableOverlay("logviewer", m.LogRing.String(), true, m.termWidth, m.termHeight)
 		return m, nil
 	case '?':
-		m.showHelp = true
+		m.overlay = NewHelpOverlay(helpItems)
 		return m, nil
 	case 's':
-		m.showStatus = true
-		m.serverStatus = nil
-		m.server.Send(protocol.StatusRequest{})
+		so := NewStatusOverlay(m.buildStatusCaps())
+		m.overlay = so
+		m.request(protocol.StatusRequest{}, func(payload any) {
+			if resp, ok := payload.(*protocol.StatusResponse); ok {
+				so.SetStatus(resp)
+			}
+		})
 		return m, nil
 	case 'n':
-		m.overlayMode = "changelog"
-		m.initOverlay(strings.TrimRight(m.Changelog, "\n"), false)
+		m.overlay = NewScrollableOverlay("release notes", strings.TrimRight(m.Changelog, "\n"), false, m.termWidth, m.termHeight)
 		return m, nil
 	case '[':
 		if m.regionID != "" {
@@ -516,19 +513,21 @@ var helpItems = []helpItem{
 		return model.(Model), cmd
 	}},
 	{"l", "log viewer", func(m Model) (Model, tea.Cmd) {
-		m.overlayMode = "log"
-		m.initOverlay(m.LogRing.String(), true)
+		m.overlay = NewScrollableOverlay("logviewer", m.LogRing.String(), true, m.termWidth, m.termHeight)
 		return m, nil
 	}},
 	{"s", "status", func(m Model) (Model, tea.Cmd) {
-		m.showStatus = true
-		m.serverStatus = nil
-		m.server.Send(protocol.StatusRequest{})
+		so := NewStatusOverlay(m.buildStatusCaps())
+		m.overlay = so
+		m.request(protocol.StatusRequest{}, func(payload any) {
+			if resp, ok := payload.(*protocol.StatusResponse); ok {
+				so.SetStatus(resp)
+			}
+		})
 		return m, nil
 	}},
 	{"n", "release notes", func(m Model) (Model, tea.Cmd) {
-		m.overlayMode = "changelog"
-		m.initOverlay(strings.TrimRight(m.Changelog, "\n"), false)
+		m.overlay = NewScrollableOverlay("release notes", strings.TrimRight(m.Changelog, "\n"), false, m.termWidth, m.termHeight)
 		return m, nil
 	}},
 	{"r", "refresh screen", func(m Model) (Model, tea.Cmd) {
@@ -559,92 +558,64 @@ var helpItems = []helpItem{
 	}},
 }
 
-func (m Model) closeHelp() Model {
-	m.showHelp = false
-	m.helpCursor = 0
-	return m
+func (m Model) updateOverlay(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	updated, action, cmd := m.overlay.Update(msg)
+	m.overlay = updated
+	if action != nil {
+		m, cmd2 := action(m)
+		return m, tea.Batch(cmd, cmd2)
+	}
+	return m, cmd
 }
 
-
-
-func (m Model) updateStatusViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc", "s":
-		m.showStatus = false
-		m.serverStatus = nil
-		return m, nil
-	default:
-		return m, nil
+func (m *Model) refreshLogOverlay() {
+	if so, ok := m.overlay.(*ScrollableOverlay); ok && so.Label() == "logviewer" {
+		so.RefreshContent(m.LogRing.String())
 	}
 }
 
-func (m Model) updateHelpViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc", "?":
-		m = m.closeHelp()
-		return m, nil
-	case "up", "k":
-		if m.helpCursor > 0 {
-			m.helpCursor--
-		}
-		return m, nil
-	case "down", "j":
-		if m.helpCursor < len(helpItems)-1 {
-			m.helpCursor++
-		}
-		return m, nil
-	case "enter":
-		item := helpItems[m.helpCursor]
-		m = m.closeHelp()
-		return item.action(m)
-	default:
-		// Direct key shortcut while help is open
-		for _, item := range helpItems {
-			if msg.String() == item.key {
-				m = m.closeHelp()
-				return item.action(m)
-			}
-		}
-		return m, nil
+func (m Model) buildStatusCaps() StatusCaps {
+	caps := StatusCaps{
+		Hostname:      m.localHostname,
+		Endpoint:      m.Endpoint,
+		Version:       m.Version,
+		ConnStatus:    m.connStatus,
+		KeyboardFlags: m.keyboardFlags,
+		BgDark:        m.bgDark,
+		TermEnv:       m.termEnv,
 	}
-}
-
-func (m Model) updateOverlayViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc":
-		m.overlayMode = ""
-		m.overlayHScroll = 0
-		return m, nil
-	case "left":
-		if m.overlayHScroll > 0 {
-			m.overlayHScroll--
+	if m.terminal.Screen != nil {
+		var mouseModes []string
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseNormal.Mode())]; ok {
+			mouseModes = append(mouseModes, "normal(1000)")
 		}
-		return m, nil
-	case "right":
-		m.overlayHScroll++
-		return m, nil
-	case "home":
-		m.overlayHScroll = 0
-		m.overlayVP.GotoTop()
-		return m, nil
-	default:
-		var cmd tea.Cmd
-		m.overlayVP, cmd = m.overlayVP.Update(msg)
-		return m, cmd
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseButtonEvent.Mode())]; ok {
+			mouseModes = append(mouseModes, "button(1002)")
+		}
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseAnyEvent.Mode())]; ok {
+			mouseModes = append(mouseModes, "any(1003)")
+		}
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseExtSgr.Mode())]; ok {
+			mouseModes = append(mouseModes, "sgr(1006)")
+		}
+		if len(mouseModes) > 0 {
+			caps.MouseModes = strings.Join(mouseModes, ", ")
+		} else {
+			caps.MouseModes = "off"
+		}
 	}
+	return caps
 }
 
 // handleMouse processes mouse events. If an overlay is active, route to it.
 // If the child app has mouse mode enabled, forward to the server.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Overlays get mouse events (scroll wheel) while they're visible
-	if m.overlayMode != "" || m.showStatus || m.showHelp {
+	if m.overlay != nil {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-			if m.overlayMode != "" {
-				var cmd tea.Cmd
-				m.overlayVP, cmd = m.overlayVP.Update(wheel)
-				return m, cmd
-			}
+			var cmd tea.Cmd
+			m.overlay, cmd = m.overlay.HandleWheel(wheel)
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -689,33 +660,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) initOverlay(content string, gotoBottom bool) {
-	w := m.termWidth * 80 / 100
-	h := m.termHeight * 80 / 100
-	if w < 20 {
-		w = 20
-	}
-	if h < 5 {
-		h = 5
-	}
-	m.overlayHScroll = 0
-	m.overlayVP = viewport.New(viewport.WithWidth(10000), viewport.WithHeight(h-3))
-	m.overlayVP.SetContent(content)
-	if gotoBottom {
-		m.overlayVP.GotoBottom()
-	}
-}
 
-func (m *Model) refreshOverlay() {
-	if m.overlayMode != "log" || m.LogRing == nil {
-		return
-	}
-	atBottom := m.overlayVP.AtBottom()
-	m.overlayVP.SetContent(m.LogRing.String())
-	if atBottom {
-		m.overlayVP.GotoBottom()
-	}
-}
 
 func (m Model) View() tea.View {
 	v := tea.NewView(renderView(m))
