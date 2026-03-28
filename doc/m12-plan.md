@@ -8,9 +8,9 @@
 
 ```go
 type Layer interface {
-    Update(tea.Msg) (tea.Msg, bool)           // response, handled
-    View(below string, width, height int) string
-    Status() (text string, bold bool, red bool) // empty text = defer to layer below
+    Update(tea.Msg) (tea.Msg, bool)              // response, handled
+    View(width, height int) *lipgloss.Layer       // nil = transparent
+    Status() (text string, bold bool, red bool)   // empty text = defer to layer below
 }
 ```
 
@@ -21,37 +21,51 @@ continue to the next layer.
 The `tea.Msg` return is how layers communicate back to the model:
 - `nil` — no follow-up
 - `tea.Cmd` — async work for bubbletea to run (result feeds back next cycle)
-- `QuitLayerMsg{}` — model pops this layer immediately
-- `PushLayerMsg{layer}` — arrives via tea.Cmd on the next cycle, model appends
+- `QuitLayerMsg{}` — model pops this layer immediately (same cycle, no flicker)
 
-**Popping is immediate** (no flicker): model checks for QuitLayerMsg in the same
-Update cycle and removes the layer from the stack.
-
-**Pushing is async**: the layer returns a tea.Cmd that produces a PushLayerMsg.
+Pushing is async: the layer returns a `tea.Cmd` that produces a `PushLayerMsg`.
 The model sees it at the top of the next Update and appends to the stack.
-One frame of latency, fine for opening overlays.
 
 Messages iterate **top-down**: the topmost layer gets first crack. If it returns
 `handled = true`, the loop breaks and lower layers never see the message.
 Server messages (TerminalEvents, ScreenUpdate) pass through overlays unhandled
-and reach the terminal/session layers at the bottom.
-
-The stack is a slice, bottom-first: `[session, terminal, prefix, ...]`.
-Temporary layers are appended (pushed) and removed (popped).
+and reach session at the bottom.
 
 ```go
 type QuitLayerMsg struct{}
 type PushLayerMsg struct{ Layer Layer }
 ```
 
-The model holds:
+## Terminal interface
+
+Terminals are children of the session layer, not on the layer stack.
+Session owns, routes to, and renders them.
+
+```go
+type Terminal interface {
+    Update(tea.Msg) tea.Msg
+    View(width, height int) string
+    Title() string                              // tab bar label ("bash", "python")
+    Status() (text string, bold bool, red bool) // per-terminal status
+}
+```
+
+Differences from Layer:
+- No `handled bool` — session decides what to route, terminal always processes
+- No `below string` in View — renders its own content, session composes it
+- Simpler `tea.Msg` return — just follow-up messages, no stack manipulation
+
+Scrollback is a mode of the terminal, not a separate layer. The terminal holds
+scrollback state and switches what it renders and reports in Status().
+
+## Model
+
 ```go
 type Model struct {
     layers    []Layer
     pending   map[uint64]ReplyFunc
     nextReqID uint64
     Version   string
-    Changelog string
     Detached  bool
 }
 ```
@@ -84,94 +98,129 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 Model.View:
 ```go
 func renderView(m Model) string {
-    var view string
+    var layers []lipgloss.Layer
     for _, layer := range m.layers {
-        view = layer.View(view, width, height)
+        if l := layer.View(width, height); l != nil {
+            layers = append(layers, *l)
+        }
     }
-    // Tab bar: topmost layer with non-empty Status() wins
-    // Status() returns (text, bold, red)
-    return tabBar + "\n" + view
+
+    // Stamp status text + branding onto top-right of row 0
+    text, bold, red := topLayerStatus(m.layers)
+    layers = append(layers, renderStatusOverlay(text, bold, red, width))
+
+    return lipgloss.NewCompositor(layers...).Render()
 }
 ```
+
+Session's layer includes the tab bar (row 0) with terminal tabs on the left.
+The model stamps the right side of row 0 on top — the topmost non-empty
+`Status()` from the layer stack plus "termd-tui" branding.
+
+Each layer returns a positioned `lipgloss.Layer` — session returns a
+full-screen layer (tab bar + terminal content), overlays return centered
+dialog layers with higher Z. Transparent layers (command, hint) return nil.
+The compositor handles all stacking.
 
 ---
 
 ## Step 1: Session layer
 
-Extract from model: session lifecycle, connection state, reconnect, server
-communication, log capture.
+The root layer, always on the stack. Owns server communication, region
+lifecycle, and terminal children.
 
 ### State
 - server *Server
+- terminals []*TerminalImpl
+- active int
 - regionID, regionName, cmd, cmdArgs
 - connStatus, retryAt
 - status, err string
-- logRing
+- logRing *LogRingBuffer
 
 ### Update handles
 - ListRegionsResponse → spawn or subscribe
 - SpawnResponse → subscribe
-- SubscribeResponse → push terminal layer (via tea.Cmd → PushLayerMsg)
+- SubscribeResponse → create terminal, add to terminals list
+- ScreenUpdate / TerminalEvents → route to correct terminal by regionID
 - DisconnectedMsg / ReconnectedMsg / reconnectTickMsg
-- ServerErrorMsg → return QuitLayerMsg (signals app to exit)
+- ServerErrorMsg → signal app exit
 - LogEntryMsg → handled (triggers re-render; log viewer reads ring on View)
+- RawInputMsg → forward to active terminal
+- MouseMsg → forward to active terminal
+- WindowSizeMsg → forward to all terminals
 
 ### View
-- When no terminal layer above: render status text ("connecting...", etc.)
-- When terminal is active: transparent (returns `below` unchanged)
+- Returns full-screen layer: tab bar (row 0) + content below
+- Tab bar left side: terminal tabs with active highlighted
+- When no terminals: content is status text ("connecting...", "spawning...", etc.)
+- When terminals exist: content is active terminal's rendered output
 
 ### Status
 - Reconnecting: text="reconnecting to X in Ns...", bold=true, red=true
-- Connected: text="endpoint", bold=false
+- Normal: text=endpoint, bold=false, red=false
+
+### Tab titles
+- Exposes terminal list for model to build tab bar
+- Provides active index for highlighting
 
 ---
 
-## Step 2: Terminal layer
+## Step 2: Terminal (as session child)
 
-Extract from model + terminal.go: screen state, capabilities, window size,
-raw input forwarding.
+Implements the Terminal interface. Owns screen state, capabilities,
+scrollback mode. Not on the layer stack.
 
 ### State
-- Terminal (screen, cursor, lines)
+- screen, cursor, lines (current Terminal struct)
+- scrollback (current Scrollback struct)
 - termWidth, termHeight
 - termEnv, keyboardFlags, bgDark, localHostname
-- pipeW (for focus mode raw input forwarding)
+- pipeW (for overlay focus mode raw input forwarding)
 - server reference (for sending input/resize)
+- regionID
 
 ### Update handles
 - ScreenUpdate / GetScreenResponse → update screen
 - TerminalEvents → replay on screen
 - WindowSizeMsg → store dimensions, send resize via server
 - KeyboardEnhancementsMsg, BackgroundColorMsg, EnvMsg
-- RawInputMsg → detect ctrl+b (push CommandLayer), forward rest to server
-- MouseMsg → forward to server when child wants mouse
+- RawInputMsg → detect ctrl+b (return PushLayerMsg for CommandLayer),
+  forward rest to server. If scrollback active, write to pipeW.
+- MouseMsg → forward to server when child wants mouse, scroll wheel
+  enters/exits scrollback mode
 
 ### View
-- Renders terminal content (cells + cursor)
+- If scrollback active: render scrollback + screen combined view
+- Otherwise: render terminal content (cells + cursor)
+
+### Title
+- Region name ("bash", "python", etc.)
 
 ### Status
-- Empty (session layer provides the region name)
+- If scrollback active: text="scrollback [n/n]", bold=true
+- Otherwise: empty
 
 ---
 
-## Step 3: Prefix + hint as layers
+## Step 3: CommandLayer + HintLayer
 
 ### CommandLayer (temporary)
 
-Pushed by terminal layer when ctrl+b is detected in RawInputMsg.
+Pushed by terminal when ctrl+b is detected in RawInputMsg.
 
 - Update: captures next RawInputMsg byte, dispatches command:
-  - 'd' → return QuitLayerMsg (detach — session handles app exit)
-  - 'l' → return tea.Cmd that produces PushLayerMsg{LogViewerLayer}
-  - 's' → return tea.Cmd that produces PushLayerMsg{StatusLayer}
-  - '?' → return tea.Cmd that produces PushLayerMsg{HelpLayer}
-  - '[' → return tea.Cmd that produces PushLayerMsg{ScrollbackLayer}
-  - 'n' → return tea.Cmd that produces PushLayerMsg{ReleaseNotesLayer}
-  - 'r' → refresh screen, return QuitLayerMsg to pop self
-  - ctrl+b → forward literal ctrl+b, return QuitLayerMsg to pop self
-  - anything else → return QuitLayerMsg to pop self
-- View: transparent (returns `below` unchanged)
-- Status: "?"
+  - 'd' → detach (session handles app exit)
+  - 'l' → push LogViewerLayer
+  - 's' → push StatusLayer
+  - '?' → push HelpLayer
+  - 'n' → push ReleaseNotesLayer
+  - 'r' → refresh screen
+  - '[' → enter scrollback mode on active terminal
+  - ctrl+b → forward literal ctrl+b
+  - All cases: return QuitLayerMsg to pop self after dispatch
+- View: nil (transparent)
+- Status: "?", bold=true
 
 ### HintLayer (temporary)
 
@@ -179,56 +228,46 @@ Pushed at startup by Init().
 
 - Update: handles hideHintMsg → return QuitLayerMsg. Ignores everything else.
 - View: transparent
-- Status: "ctrl+b ? for help"
-- Init returns a tea.Cmd that fires showHintMsg after 3s, then hideHintMsg
-  after 3 more seconds
+- Status: "ctrl+b ? for help", bold=true
+- On push, returns tea.Cmd that fires hideHintMsg after 3 seconds
 
 ---
 
 ## Step 4: Overlays as layers
 
-Convert existing overlay types to implement Layer interface.
-
-### ScrollbackLayer
-- State: offset, cells
-- Update: keyboard nav (arrows, pgup/pgdn, q), scroll wheel, handles
-  GetScrollbackResponse to populate data. RawInputMsg written to pipeW for
-  keyboard parsing.
-- View: renders combined scrollback + screen over terminal view
-- Status: "scrollback [n/n]"
-- Returns QuitLayerMsg on q/esc or scroll to bottom
-
 ### LogViewerLayer
-- State: viewport + hscroll
+- State: viewport + hscroll + logRing reference
 - Update: keyboard nav (arrows, q/esc, left/right). RawInputMsg written to
-  pipeW.
-- View: renders scrollable overlay dialog over below
-- Status: "logviewer"
+  pipeW for key event parsing.
+- View: returns centered dialog layer (higher Z). Reads current content
+  from logRing on each View() call.
+- Status: "logviewer", bold=true
 - Returns QuitLayerMsg on q/esc
 
 ### ReleaseNotesLayer
-- State: viewport + hscroll + changelog content
-- Changelog string passed at construction (from model.Version/Changelog)
-- Update: keyboard nav (arrows, q/esc, left/right). RawInputMsg written to pipeW.
-- View: renders scrollable overlay dialog over below
-- Status: "release notes"
+- State: viewport + hscroll + changelog string
+- Changelog passed at construction
+- Update: keyboard nav (arrows, q/esc, left/right). RawInputMsg written to
+  pipeW.
+- View: returns centered dialog layer (higher Z)
+- Status: "release notes", bold=true
 - Returns QuitLayerMsg on q/esc
 
 ### StatusLayer
 - State: StatusCaps + *StatusResponse
-- On creation: sends status request via server (with reply handler)
-- Update: q/esc → QuitLayerMsg. StatusResponse populates data via reply handler.
-  RawInputMsg written to pipeW.
-- View: renders status dialog over below
-- Status: "status"
+- On creation: sends status request via server (with reply handler that
+  populates response data)
+- Update: q/esc → QuitLayerMsg. RawInputMsg written to pipeW.
+- View: returns centered status dialog layer (higher Z)
+- Status: "status", bold=true
 
 ### HelpLayer
 - State: cursor, items
 - Update: up/down/enter/q, shortcut keys. RawInputMsg written to pipeW.
-- View: renders help dialog over below
-- Status: "help"
-- On selection: returns QuitLayerMsg to pop self, returns tea.Cmd that executes
-  the selected action (which might push another layer)
+- View: returns centered help dialog layer (higher Z)
+- Status: "help", bold=true
+- On selection: returns QuitLayerMsg to pop self, returns tea.Cmd that
+  executes the selected action (which might push another layer)
 
 ---
 
@@ -236,8 +275,8 @@ Convert existing overlay types to implement Layer interface.
 
 ```
 Step 1 (session layer)
-  → Step 2 (terminal layer)
-    → Step 3 (prefix + hint as layers)
+  → Step 2 (terminal as session child)
+    → Step 3 (command + hint layers)
       → Step 4 (overlays as layers)
 ```
 
@@ -247,15 +286,13 @@ Each step is independently testable — all existing e2e tests pass after each.
 
 ## What the model becomes
 
-After all steps, model.go is approximately:
-
 ```go
 type Model struct {
     layers    []Layer
     pending   map[uint64]ReplyFunc
     nextReqID uint64
-    Version  string
-    Detached bool
+    Version   string
+    Detached  bool
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -265,8 +302,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() tea.View {
-    // Composite layers bottom-up
-    // Tab bar from topmost non-empty Status()
+    // Collect lipgloss.Layer from each layer, composite
+    // Stamp topmost Status() + branding onto top-right of row 0
 }
 ```
 
