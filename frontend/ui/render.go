@@ -18,7 +18,7 @@ var (
 			Padding(0, 1)
 )
 
-func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatusRed bool) string {
+func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatusRed, hideCursor bool) string {
 	if s.err != "" {
 		return "error: " + s.err + "\n"
 	}
@@ -34,9 +34,7 @@ func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatu
 
 	var sb strings.Builder
 
-	// Right side of tab bar: connection info, or mode indicator when active.
-	// layerStatus overrides session's own status when non-empty (from
-	// CommandLayer, HintLayer, or future overlay layers).
+	// Right side of tab bar: status from layer stack or session state.
 	rightInfo := s.endpoint
 	rightBold := false
 	rightRed := false
@@ -46,10 +44,7 @@ func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatu
 	if s.status != "" {
 		rightInfo = s.status
 	}
-	if s.overlay != nil {
-		rightInfo = s.overlay.Label()
-		rightBold = true
-	} else if s.term != nil && s.term.ScrollbackActive() {
+	if s.term != nil && s.term.ScrollbackActive() {
 		text, _, _ := s.term.Status()
 		rightInfo = text
 		rightBold = true
@@ -64,7 +59,7 @@ func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatu
 		rightRed = true
 	}
 	suffix := "termd-tui"
-	if s.version != "" && (layerStatus != "" || s.overlay != nil) {
+	if s.version != "" && layerStatus != "" {
 		suffix = "termd-tui " + s.version
 	}
 	sb.WriteString(renderTabBar(s.regionName, rightInfo, suffix, rightBold, rightRed, width))
@@ -75,7 +70,7 @@ func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatu
 		contentHeight = 1
 	}
 	scrollbackActive := s.term != nil && s.term.ScrollbackActive()
-	showCursor := s.overlay == nil && !scrollbackActive
+	showCursor := !hideCursor && !scrollbackActive
 	disconnected := s.connStatus == "reconnecting"
 
 	if s.term != nil {
@@ -92,12 +87,7 @@ func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatu
 		}
 	}
 
-	base := sb.String()
-
-	if s.overlay != nil {
-		return s.overlay.View(base, width, height)
-	}
-	return base
+	return sb.String()
 }
 
 func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow, cursorCol int, showCursor bool, disconnected bool) {

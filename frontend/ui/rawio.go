@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"io"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,34 +30,40 @@ func InputLoop(stdin *os.File, p *tea.Program) {
 
 const prefixKey = 0x02 // ctrl+b
 
+// handleFocusModeInput processes raw input during focus mode (overlay or
+// scrollback active). Mouse sequences are extracted and re-sent as MouseMsg;
+// remaining bytes go to pipeW for bubbletea key event parsing.
+func handleFocusModeInput(chunk []byte, pipeW io.Writer) tea.Cmd {
+	if bytes.Contains(chunk, sgrMousePrefix) {
+		mice, rest := extractSGRMouseSequences(chunk)
+		var cmds []tea.Cmd
+		if len(rest) > 0 {
+			cmds = append(cmds, func() tea.Msg {
+				pipeW.Write(rest)
+				return nil
+			})
+		}
+		for _, mouse := range mice {
+			saved := mouse
+			cmds = append(cmds, func() tea.Msg { return saved })
+		}
+		return tea.Batch(cmds...)
+	}
+	data := make([]byte, len(chunk))
+	copy(data, chunk)
+	return func() tea.Msg {
+		pipeW.Write(data)
+		return nil
+	}
+}
+
 // handleRawInput processes raw bytes from the terminal input goroutine.
 // Returns (response, cmd) where response may be DetachMsg if detaching.
 func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
-	// Focus mode: write to bubbletea's input pipe for key event parsing.
-	if s.overlay != nil || (s.term != nil && s.term.ScrollbackActive()) {
-		if bytes.Contains(chunk, sgrMousePrefix) {
-			mice, rest := extractSGRMouseSequences(chunk)
-			var cmds []tea.Cmd
-			if len(rest) > 0 {
-				pipeW := s.pipeW
-				cmds = append(cmds, func() tea.Msg {
-					pipeW.Write(rest)
-					return nil
-				})
-			}
-			for _, mouse := range mice {
-				saved := mouse
-				cmds = append(cmds, func() tea.Msg { return saved })
-			}
-			return nil, tea.Batch(cmds...)
-		}
-		pipeW := s.pipeW
-		data := make([]byte, len(chunk))
-		copy(data, chunk)
-		return nil, func() tea.Msg {
-			pipeW.Write(data)
-			return nil
-		}
+	// Scrollback focus mode: write to pipeW for key event parsing.
+	// (Overlay focus mode is handled by overlay layers above session.)
+	if s.term != nil && s.term.ScrollbackActive() {
+		return nil, handleFocusModeInput(chunk, s.pipeW)
 	}
 
 	// Scan for prefix key (ctrl+b)

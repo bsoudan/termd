@@ -172,19 +172,9 @@ func extractSGRMouseSequences(buf []byte) (mice []tea.MouseMsg, rest []byte) {
 	return
 }
 
-// handleMouse processes mouse events. If an overlay is active, route to it.
-// If the child app has mouse mode enabled, forward to the server.
+// handleMouse processes mouse events.
+// Overlay mouse handling is done by overlay layers above session.
 func (s *SessionLayer) handleMouse(msg tea.MouseMsg) tea.Cmd {
-	// Overlays get scroll wheel events while they're visible
-	if s.overlay != nil {
-		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-			var cmd tea.Cmd
-			s.overlay, cmd = s.overlay.HandleWheel(wheel)
-			return cmd
-		}
-		return nil
-	}
-
 	if s.term == nil {
 		return nil
 	}

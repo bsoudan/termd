@@ -1,38 +1,27 @@
 package ui
 
 import (
+	"io"
+
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	termlog "termd/frontend/log"
 	"termd/frontend/protocol"
 )
 
-// Overlay is the interface for all overlay dialogs.
-type Overlay interface {
-	// Update handles a key press. Returns the updated overlay (nil to close),
-	// an optional action to execute on the session, and an optional tea.Cmd.
-	// The action returns (response tea.Msg, cmd tea.Cmd) to allow signaling
-	// DetachMsg or other responses back through the layer stack.
-	Update(tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd)
+// ── Scrollable layer (log viewer, release notes) ────────────────────────────
 
-	// HandleWheel handles scroll wheel events.
-	HandleWheel(tea.MouseWheelMsg) (Overlay, tea.Cmd)
-
-	// View renders the overlay composited over the base screen.
-	View(base string, width, height int) string
-
-	// Label returns the tab bar label.
-	Label() string
-}
-
-// ── Scrollable overlay (log viewer, changelog) ──────────────────────────────
-
-type ScrollableOverlay struct {
+// ScrollableLayer is a layer that displays scrollable content in a centered
+// dialog. Used for the log viewer (with live logRing updates) and release notes.
+type ScrollableLayer struct {
 	label   string
 	vp      viewport.Model
 	hScroll int
+	pipeW   io.Writer
+	logRing *termlog.LogRingBuffer // non-nil for logviewer (live content)
 }
 
-func NewScrollableOverlay(label, content string, gotoBottom bool, termWidth, termHeight int) *ScrollableOverlay {
+func NewScrollableLayer(label, content string, gotoBottom bool, pipeW io.Writer, logRing *termlog.LogRingBuffer, termWidth, termHeight int) *ScrollableLayer {
 	h := termHeight * 80 / 100
 	if h < 5 {
 		h = 5
@@ -42,58 +31,72 @@ func NewScrollableOverlay(label, content string, gotoBottom bool, termWidth, ter
 	if gotoBottom {
 		vp.GotoBottom()
 	}
-	return &ScrollableOverlay{label: label, vp: vp}
+	return &ScrollableLayer{label: label, vp: vp, pipeW: pipeW, logRing: logRing}
 }
 
-func (o *ScrollableOverlay) Label() string { return o.label }
+func (l *ScrollableLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case RawInputMsg:
+		return nil, handleFocusModeInput([]byte(msg), l.pipeW), true
+	case tea.KeyPressMsg:
+		return l.handleKey(msg)
+	case tea.MouseMsg:
+		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+			var cmd tea.Cmd
+			l.vp, cmd = l.vp.Update(wheel)
+			return nil, cmd, true
+		}
+		return nil, nil, true
+	}
+	return nil, nil, false // pass through
+}
 
-func (o *ScrollableOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
+func (l *ScrollableLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
 	switch msg.String() {
 	case "q", "esc":
-		return nil, nil, nil
+		return QuitLayerMsg{}, nil, true
 	case "left":
-		if o.hScroll > 0 {
-			o.hScroll--
+		if l.hScroll > 0 {
+			l.hScroll--
 		}
-		return o, nil, nil
+		return nil, nil, true
 	case "right":
-		o.hScroll++
-		return o, nil, nil
+		l.hScroll++
+		return nil, nil, true
 	case "home":
-		o.hScroll = 0
-		o.vp.GotoTop()
-		return o, nil, nil
+		l.hScroll = 0
+		l.vp.GotoTop()
+		return nil, nil, true
 	default:
 		var cmd tea.Cmd
-		o.vp, cmd = o.vp.Update(msg)
-		return o, nil, cmd
+		l.vp, cmd = l.vp.Update(msg)
+		return nil, cmd, true
 	}
 }
 
-func (o *ScrollableOverlay) HandleWheel(msg tea.MouseWheelMsg) (Overlay, tea.Cmd) {
-	var cmd tea.Cmd
-	o.vp, cmd = o.vp.Update(msg)
-	return o, cmd
-}
+func (l *ScrollableLayer) View(width, height int) string { return "" }
 
-func (o *ScrollableOverlay) View(base string, width, height int) string {
-	return renderScrollableOverlay(o.vp.View(), o.hScroll, base, width, height)
-}
-
-// RefreshContent updates the viewport content (for live log updates).
-func (o *ScrollableOverlay) RefreshContent(content string) {
-	atBottom := o.vp.AtBottom()
-	o.vp.SetContent(content)
-	if atBottom {
-		o.vp.GotoBottom()
+func (l *ScrollableLayer) ViewOverlay(base string, width, height int) string {
+	// For logviewer, refresh content from logRing on each render
+	if l.logRing != nil {
+		atBottom := l.vp.AtBottom()
+		l.vp.SetContent(l.logRing.String())
+		if atBottom {
+			l.vp.GotoBottom()
+		}
 	}
+	return renderScrollableOverlay(l.vp.View(), l.hScroll, base, width, height)
 }
 
-// ── Status overlay ──────────────────────────────────────────────────────────
+func (l *ScrollableLayer) Status() (string, bool, bool) { return l.label, true, false }
 
-type StatusOverlay struct {
+// ── Status layer ────────────────────────────────────────────────────────────
+
+// StatusLayer displays server and terminal status in a centered dialog.
+type StatusLayer struct {
 	status *protocol.StatusResponse
 	caps   StatusCaps
+	pipeW  io.Writer
 }
 
 // StatusCaps captures terminal capability data at open time.
@@ -108,76 +111,103 @@ type StatusCaps struct {
 	MouseModes    string
 }
 
-func NewStatusOverlay(caps StatusCaps) *StatusOverlay {
-	return &StatusOverlay{caps: caps}
+func NewStatusLayer(caps StatusCaps, pipeW io.Writer) *StatusLayer {
+	return &StatusLayer{caps: caps, pipeW: pipeW}
 }
 
-func (o *StatusOverlay) SetStatus(resp *protocol.StatusResponse) {
-	o.status = resp
+func (s *StatusLayer) SetStatus(resp *protocol.StatusResponse) {
+	s.status = resp
 }
 
-func (o *StatusOverlay) Label() string { return "status" }
-
-func (o *StatusOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc", "s":
-		return nil, nil, nil
+func (s *StatusLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case RawInputMsg:
+		return nil, handleFocusModeInput([]byte(msg), s.pipeW), true
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "q", "esc", "s":
+			return QuitLayerMsg{}, nil, true
+		}
+		return nil, nil, true
+	case tea.MouseMsg:
+		return nil, nil, true // absorb mouse events
 	}
-	return o, nil, nil
+	return nil, nil, false
 }
 
-func (o *StatusOverlay) HandleWheel(tea.MouseWheelMsg) (Overlay, tea.Cmd) {
-	return o, nil
+func (s *StatusLayer) View(width, height int) string { return "" }
+
+func (s *StatusLayer) ViewOverlay(base string, width, height int) string {
+	return renderStatusOverlay(base, s.caps, s.status, width, height)
 }
 
-func (o *StatusOverlay) View(base string, width, height int) string {
-	return renderStatusOverlay(base, o.caps, o.status, width, height)
+func (s *StatusLayer) Status() (string, bool, bool) { return "status", true, false }
+
+// ── Help layer ──────────────────────────────────────────────────────────────
+
+// HelpLayer shows available ctrl+b commands and dispatches selections.
+type HelpLayer struct {
+	cursor  int
+	items   []helpItem
+	session *SessionLayer
+	pipeW   io.Writer
 }
 
-// ── Help overlay ────────────────────────────────────────────────────────────
-
-type HelpOverlay struct {
-	cursor int
-	items  []helpItem
+func NewHelpLayer(items []helpItem, session *SessionLayer, pipeW io.Writer) *HelpLayer {
+	return &HelpLayer{items: items, session: session, pipeW: pipeW}
 }
 
-func NewHelpOverlay(items []helpItem) *HelpOverlay {
-	return &HelpOverlay{items: items}
+func (h *HelpLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case RawInputMsg:
+		return nil, handleFocusModeInput([]byte(msg), h.pipeW), true
+	case tea.KeyPressMsg:
+		return h.handleKey(msg)
+	case tea.MouseMsg:
+		return nil, nil, true // absorb mouse events
+	}
+	return nil, nil, false
 }
 
-func (o *HelpOverlay) Label() string { return "help" }
-
-func (o *HelpOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
+func (h *HelpLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
 	switch msg.String() {
 	case "q", "esc", "?":
-		return nil, nil, nil
+		return QuitLayerMsg{}, nil, true
 	case "up", "k":
-		if o.cursor > 0 {
-			o.cursor--
+		if h.cursor > 0 {
+			h.cursor--
 		}
-		return o, nil, nil
+		return nil, nil, true
 	case "down", "j":
-		if o.cursor < len(o.items)-1 {
-			o.cursor++
+		if h.cursor < len(h.items)-1 {
+			h.cursor++
 		}
-		return o, nil, nil
+		return nil, nil, true
 	case "enter":
-		action := o.items[o.cursor].action
-		return nil, action, nil
+		action := h.items[h.cursor].action
+		resp, cmd := action(h.session)
+		if resp == nil {
+			resp = QuitLayerMsg{}
+		}
+		return resp, cmd, true
 	default:
-		for _, item := range o.items {
+		for _, item := range h.items {
 			if msg.String() == item.key {
-				return nil, item.action, nil
+				resp, cmd := item.action(h.session)
+				if resp == nil {
+					resp = QuitLayerMsg{}
+				}
+				return resp, cmd, true
 			}
 		}
-		return o, nil, nil
+		return nil, nil, true
 	}
 }
 
-func (o *HelpOverlay) HandleWheel(tea.MouseWheelMsg) (Overlay, tea.Cmd) {
-	return o, nil
+func (h *HelpLayer) View(width, height int) string { return "" }
+
+func (h *HelpLayer) ViewOverlay(base string, width, height int) string {
+	return renderHelpOverlay(base, h.cursor, h.items, width, height)
 }
 
-func (o *HelpOverlay) View(base string, width, height int) string {
-	return renderHelpOverlay(base, o.cursor, o.items, width, height)
-}
+func (h *HelpLayer) Status() (string, bool, bool) { return "help", true, false }

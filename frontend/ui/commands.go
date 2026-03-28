@@ -27,23 +27,22 @@ func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
 		s.sendRawToServer([]byte{prefixKey})
 		return nil, nil
 	case 'l':
-		s.overlay = NewScrollableOverlay("logviewer", s.logRing.String(), true, s.termWidth, s.termHeight)
-		return nil, nil
+		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.pipeW, s.logRing, s.termWidth, s.termHeight)
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case '?':
-		s.overlay = NewHelpOverlay(helpItems)
-		return nil, nil
+		layer := NewHelpLayer(helpItems, s, s.pipeW)
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case 's':
-		so := NewStatusOverlay(s.buildStatusCaps())
-		s.overlay = so
-		s.request(protocol.StatusRequest{}, func(payload any) {
+		layer := NewStatusLayer(s.buildStatusCaps(), s.pipeW)
+		s.requestFn(protocol.StatusRequest{}, func(payload any) {
 			if resp, ok := payload.(*protocol.StatusResponse); ok {
-				so.SetStatus(resp)
+				layer.SetStatus(resp)
 			}
 		})
-		return nil, nil
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case 'n':
-		s.overlay = NewScrollableOverlay("release notes", strings.TrimRight(s.changelog, "\n"), false, s.termWidth, s.termHeight)
-		return nil, nil
+		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, s.pipeW, nil, s.termWidth, s.termHeight)
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case '[':
 		if s.term != nil {
 			s.term.EnterScrollback(0)
@@ -73,22 +72,21 @@ var helpItems = []helpItem{
 		return s.detach()
 	}},
 	{"l", "log viewer", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		s.overlay = NewScrollableOverlay("logviewer", s.logRing.String(), true, s.termWidth, s.termHeight)
-		return nil, nil
+		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.pipeW, s.logRing, s.termWidth, s.termHeight)
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"s", "status", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		so := NewStatusOverlay(s.buildStatusCaps())
-		s.overlay = so
-		s.request(protocol.StatusRequest{}, func(payload any) {
+		layer := NewStatusLayer(s.buildStatusCaps(), s.pipeW)
+		s.requestFn(protocol.StatusRequest{}, func(payload any) {
 			if resp, ok := payload.(*protocol.StatusResponse); ok {
-				so.SetStatus(resp)
+				layer.SetStatus(resp)
 			}
 		})
-		return nil, nil
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"n", "release notes", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		s.overlay = NewScrollableOverlay("release notes", strings.TrimRight(s.changelog, "\n"), false, s.termWidth, s.termHeight)
-		return nil, nil
+		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, s.pipeW, nil, s.termWidth, s.termHeight)
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"r", "refresh screen", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
 		if s.term != nil {

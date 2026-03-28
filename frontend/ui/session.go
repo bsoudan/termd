@@ -9,22 +9,17 @@ import (
 	"termd/frontend/protocol"
 )
 
-// ReplyFunc is called when a server response matches a pending request.
-type ReplyFunc func(payload any)
-
 // SessionLayer is the root layer — it owns server communication, region
 // lifecycle, terminal children, and connection state.
 type SessionLayer struct {
 	server    *Server
 	pipeW     io.Writer
-	nextReqID uint64
-	pending   map[uint64]ReplyFunc
+	requestFn RequestFunc
 
 	cmd     string
 	cmdArgs []string
 
-	term    *TerminalChild // nil until subscribe succeeds
-	overlay Overlay
+	term *TerminalChild // nil until subscribe succeeds
 
 	regionID   string
 	regionName string
@@ -46,7 +41,7 @@ type SessionLayer struct {
 
 // NewSessionLayer creates a session layer with the given dependencies.
 func NewSessionLayer(
-	server *Server, pipeW io.Writer,
+	server *Server, pipeW io.Writer, requestFn RequestFunc,
 	cmd string, args []string,
 	logRing *termlog.LogRingBuffer,
 	endpoint, version, changelog, hostname string,
@@ -54,6 +49,7 @@ func NewSessionLayer(
 	return &SessionLayer{
 		server:        server,
 		pipeW:         pipeW,
+		requestFn:     requestFn,
 		cmd:           cmd,
 		cmdArgs:       args,
 		endpoint:      endpoint,
@@ -61,7 +57,6 @@ func NewSessionLayer(
 		changelog:     changelog,
 		localHostname: hostname,
 		logRing:       logRing,
-		pending:       make(map[uint64]ReplyFunc),
 		connStatus:    "connected",
 		status:        "connecting...",
 	}
@@ -81,13 +76,6 @@ func (s *SessionLayer) contentHeight() int {
 	return h
 }
 
-// request sends a message to the server with a req_id and registers a reply handler.
-func (s *SessionLayer) request(msg any, reply ReplyFunc) {
-	s.nextReqID++
-	s.pending[s.nextReqID] = reply
-	s.server.Send(protocol.TaggedWithReqID(msg, s.nextReqID))
-}
-
 func (s *SessionLayer) quit() (tea.Msg, tea.Cmd) {
 	if s.regionID != "" {
 		s.server.Send(protocol.UnsubscribeRequest{RegionID: s.regionID})
@@ -105,7 +93,6 @@ func (s *SessionLayer) detach() (tea.Msg, tea.Cmd) {
 }
 
 // ensureTerminal creates the terminal if it doesn't exist yet.
-// ScreenUpdate/TerminalEvents may arrive before SubscribeResponse.
 func (s *SessionLayer) ensureTerminal() {
 	if s.term == nil {
 		s.term = NewTerminalChild(s.server, s.regionID, s.regionName, s.termWidth, s.termHeight)
@@ -114,18 +101,6 @@ func (s *SessionLayer) ensureTerminal() {
 
 // Update implements the Layer interface.
 func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
-	// Unwrap protocol.Message: check for reply handler, then dispatch on payload.
-	if pmsg, ok := msg.(protocol.Message); ok {
-		if pmsg.ReqID > 0 {
-			if reply, ok := s.pending[pmsg.ReqID]; ok {
-				delete(s.pending, pmsg.ReqID)
-				reply(pmsg.Payload)
-				return nil, nil, true
-			}
-		}
-		msg = pmsg.Payload
-	}
-
 	switch msg := msg.(type) {
 	case RawInputMsg:
 		resp, cmd := s.handleRawInput([]byte(msg))
@@ -190,8 +165,6 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		s.status = ""
 		s.ensureTerminal()
-		// Terminal sends initial resize in its Update via WindowSizeMsg,
-		// but we may already have dimensions — send resize now.
 		if s.termWidth > 0 && s.termHeight > 2 {
 			s.server.Send(protocol.ResizeRequest{
 				RegionID: s.regionID,
@@ -201,29 +174,18 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		return nil, nil, true
 
-	// Terminal messages — delegate to TerminalChild.
-	// ScreenUpdate may arrive before SubscribeResponse (the server sends it
-	// as soon as the client subscribes), so ensure the terminal exists.
+	// Terminal messages — delegate to TerminalChild
 	case protocol.ScreenUpdate:
 		s.ensureTerminal()
 		cmd := s.term.Update(msg)
-		if s.overlay != nil {
-			s.refreshLogOverlay()
-		}
 		return nil, cmd, true
 	case protocol.GetScreenResponse:
 		s.ensureTerminal()
 		cmd := s.term.Update(msg)
-		if s.overlay != nil {
-			s.refreshLogOverlay()
-		}
 		return nil, cmd, true
 	case protocol.TerminalEvents:
 		s.ensureTerminal()
 		cmd := s.term.Update(msg)
-		if s.overlay != nil {
-			s.refreshLogOverlay()
-		}
 		return nil, cmd, true
 	case protocol.GetScrollbackResponse:
 		if s.term != nil {
@@ -279,21 +241,12 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		return nil, nil, true
 
-	case protocol.StatusResponse:
-		if so, ok := s.overlay.(*StatusOverlay); ok {
-			so.SetStatus(&msg)
-		}
-		return nil, nil, true
-
 	case ServerErrorMsg:
 		s.err = msg.Context + ": " + msg.Message
 		resp, cmd := s.quit()
 		return resp, cmd, true
 
 	case LogEntryMsg:
-		if s.overlay != nil {
-			s.refreshLogOverlay()
-		}
 		return nil, nil, true
 
 	case showHintMsg:
@@ -312,36 +265,14 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		return nil, cmd, true
 
 	case tea.KeyPressMsg:
-		if s.overlay != nil {
-			resp, cmd := s.updateOverlay(msg)
-			return resp, cmd, true
-		}
 		if s.term != nil && s.term.ScrollbackActive() {
 			s.term.HandleScrollbackKey(msg)
 			return nil, nil, true
 		}
-		// KeyPressMsg only arrives from bubbletea's pipe during focus mode.
-		// If no viewer is active, ignore it.
 		return nil, nil, true
 
 	default:
 		return nil, nil, true
-	}
-}
-
-func (s *SessionLayer) updateOverlay(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd) {
-	updated, action, cmd := s.overlay.Update(msg)
-	s.overlay = updated
-	if action != nil {
-		resp, cmd2 := action(s)
-		return resp, tea.Batch(cmd, cmd2)
-	}
-	return nil, cmd
-}
-
-func (s *SessionLayer) refreshLogOverlay() {
-	if so, ok := s.overlay.(*ScrollableOverlay); ok && so.Label() == "logviewer" {
-		so.RefreshContent(s.logRing.String())
 	}
 }
 
@@ -363,12 +294,12 @@ func (s *SessionLayer) buildStatusCaps() StatusCaps {
 
 // View implements the Layer interface.
 func (s *SessionLayer) View(width, height int) string {
-	return renderView(s, "", false, false)
+	return renderView(s, "", false, false, false)
 }
 
 // ViewWithStatus renders the session with a status override from the layer stack.
-func (s *SessionLayer) ViewWithStatus(layerStatus string, layerStatusBold, layerStatusRed bool) string {
-	return renderView(s, layerStatus, layerStatusBold, layerStatusRed)
+func (s *SessionLayer) ViewWithStatus(layerStatus string, layerStatusBold, layerStatusRed, hideCursor bool) string {
+	return renderView(s, layerStatus, layerStatusBold, layerStatusRed, hideCursor)
 }
 
 // Status implements the Layer interface.
