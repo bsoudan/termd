@@ -118,7 +118,6 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("connect %s: %w", endpoint, err)
 	}
 	c := client.New(conn, dialFn, "termd-tui")
-	defer c.Close()
 
 	restore, err := ui.SetupRawTerminal()
 	if err != nil {
@@ -128,7 +127,8 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 
 	pipeR, pipeW := io.Pipe()
 
-	model := ui.NewModel(c, shell, shellArgs, logRing, endpoint, version, changelog)
+	server := ui.NewServer(64)
+	model := ui.NewModel(server, shell, shellArgs, logRing, endpoint, version, changelog)
 	p := tea.NewProgram(model,
 		tea.WithInput(pipeR),
 		tea.WithColorProfile(colorprofile.TrueColor),
@@ -140,9 +140,11 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	}
 
 	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
+	go server.Run(c, p)
 	go ui.RawInputLoop(stdinDup, c, model.RegionReady, pipeW, p, model.FocusCh, model.ChildWantsMouse)
 
 	finalModel, err := p.Run()
+	server.Close()
 	stdinDup.Close()
 
 	if err != nil {

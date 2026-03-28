@@ -14,8 +14,6 @@ import (
 	"termd/frontend/protocol"
 )
 
-type prefixStartedMsg struct{}
-
 const prefixKey = 0x02 // ctrl+b
 
 // RawInputLoop reads raw bytes from stdin and forwards them to the server.
