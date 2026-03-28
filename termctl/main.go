@@ -70,11 +70,30 @@ func main() {
 				Action: cmdStatus,
 			},
 			{
+				Name:  "session",
+				Usage: "manage sessions",
+				Commands: []*cli.Command{
+					{Name: "list", Usage: "list sessions", Action: cmdSessionList},
+				},
+			},
+			{
 				Name:  "region",
 				Usage: "manage regions",
 				Commands: []*cli.Command{
-					{Name: "list", Usage: "list regions", Action: cmdRegionList},
-					{Name: "spawn", Usage: "spawn a new region", ArgsUsage: "<cmd> [args...]", SkipFlagParsing: true, Action: cmdRegionSpawn},
+					{
+						Name: "list", Usage: "list regions",
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "session", Aliases: []string{"S"}, Usage: "filter by session name"},
+						},
+						Action: cmdRegionList,
+					},
+					{
+						Name: "spawn", Usage: "spawn a new region", ArgsUsage: "<cmd> [args...]",
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "session", Aliases: []string{"S"}, Usage: "session to spawn into"},
+						},
+						Action: cmdRegionSpawn,
+					},
 					{
 						Name: "view", Usage: "view region screen", ArgsUsage: "<region_id>",
 						Flags: []cli.Flag{
@@ -158,6 +177,35 @@ func cmdStatus(_ context.Context, cmd *cli.Command) error {
 	fmt.Printf("Listeners: %s\n", resp.SocketPath)
 	fmt.Printf("Clients:   %d\n", resp.NumClients)
 	fmt.Printf("Regions:   %d\n", resp.NumRegions)
+	fmt.Printf("Sessions:  %d\n", resp.NumSessions)
+	return nil
+}
+
+func cmdSessionList(_ context.Context, cmd *cli.Command) error {
+	cl, err := connect(cmd)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	_ = cl.Send(protocol.ListSessionsRequest{})
+	resp, err := recvType[protocol.ListSessionsResponse](cl)
+	if err != nil {
+		return err
+	}
+	if resp.Error {
+		return fmt.Errorf("%s", resp.Message)
+	}
+
+	if len(resp.Sessions) == 0 {
+		fmt.Println("no sessions")
+		return nil
+	}
+
+	fmt.Printf("%-20s  %s\n", "NAME", "REGIONS")
+	for _, s := range resp.Sessions {
+		fmt.Printf("%-20s  %d\n", s.Name, s.NumRegions)
+	}
 	return nil
 }
 
@@ -168,7 +216,7 @@ func cmdRegionList(_ context.Context, cmd *cli.Command) error {
 	}
 	defer cl.Close()
 
-	_ = cl.Send(protocol.ListRegionsRequest{})
+	_ = cl.Send(protocol.ListRegionsRequest{Session: cmd.String("session")})
 	resp, err := recvType[protocol.ListRegionsResponse](cl)
 	if err != nil {
 		return err
@@ -182,9 +230,9 @@ func cmdRegionList(_ context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
-	fmt.Printf("%-36s  %-10s  %-30s  %s\n", "ID", "NAME", "CMD", "PID")
+	fmt.Printf("%-36s  %-10s  %-10s  %-30s  %s\n", "ID", "SESSION", "NAME", "CMD", "PID")
 	for _, r := range resp.Regions {
-		fmt.Printf("%-36s  %-10s  %-30s  %d\n", r.RegionID, r.Name, r.Cmd, r.Pid)
+		fmt.Printf("%-36s  %-10s  %-10s  %-30s  %d\n", r.RegionID, r.Session, r.Name, r.Cmd, r.Pid)
 	}
 	return nil
 }
@@ -202,7 +250,7 @@ func cmdRegionSpawn(_ context.Context, cmd *cli.Command) error {
 	}
 	defer cl.Close()
 
-	_ = cl.Send(protocol.SpawnRequest{Cmd: spawnCmd, Args: args})
+	_ = cl.Send(protocol.SpawnRequest{Session: cmd.String("session"), Cmd: spawnCmd, Args: args})
 	resp, err := recvType[protocol.SpawnResponse](cl)
 	if err != nil {
 		return err
@@ -370,14 +418,18 @@ func cmdClientList(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("%s", resp.Message)
 	}
 
-	fmt.Printf("%-4s  %-15s  %-10s  %-6s  %-18s  %s\n", "ID", "HOSTNAME", "USERNAME", "PID", "PROCESS", "REGION")
+	fmt.Printf("%-4s  %-15s  %-10s  %-6s  %-18s  %-10s  %s\n", "ID", "HOSTNAME", "USERNAME", "PID", "PROCESS", "SESSION", "REGION")
 	for _, cl := range resp.Clients {
 		region := cl.SubscribedRegionID
 		if region == "" {
 			region = "(none)"
 		}
-		fmt.Printf("%-4d  %-15s  %-10s  %-6d  %-18s  %s\n",
-			cl.ClientID, cl.Hostname, cl.Username, cl.Pid, cl.Process, region)
+		session := cl.Session
+		if session == "" {
+			session = "(none)"
+		}
+		fmt.Printf("%-4d  %-15s  %-10s  %-6d  %-18s  %-10s  %s\n",
+			cl.ClientID, cl.Hostname, cl.Username, cl.Pid, cl.Process, session, region)
 	}
 	return nil
 }

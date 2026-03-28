@@ -62,19 +62,51 @@ Identify the connecting client to the server. Fire-and-forget; no response.
 
 ---
 
-### spawn_request
+### session_connect_request
 
-Spawn a new program in a new region.
+Connect to a named session. If the session does not exist, the server creates it and spawns
+default regions (configurable, falls back to the server user's shell). If `session` is empty,
+the server's default session name is used (typically `"main"`).
 
 ```json
-{ "type": "spawn_request", "cmd": "/bin/bash", "args": [] }
+{ "type": "session_connect_request", "session": "main" }
 ```
 
-| Field | Type     | Description                  |
-|-------|----------|------------------------------|
-| type  | string   | `"spawn_request"`            |
-| cmd   | string   | Executable path              |
-| args  | []string | Arguments (may be empty)     |
+| Field   | Type   | Description                                    |
+|---------|--------|------------------------------------------------|
+| type    | string | `"session_connect_request"`                    |
+| session | string | Session name (empty = server default)          |
+
+### session_connect_response
+
+```json
+{ "type": "session_connect_response", "session": "main", "regions": [...], "error": false, "message": "" }
+```
+
+| Field   | Type         | Description                                           |
+|---------|--------------|-------------------------------------------------------|
+| type    | string       | `"session_connect_response"`                          |
+| session | string       | Resolved session name                                 |
+| regions | []RegionInfo | Regions in this session                               |
+| error   | bool         | True if session creation failed                       |
+| message | string       | Error description, or `""`                            |
+
+---
+
+### spawn_request
+
+Spawn a new program in a new region within a session.
+
+```json
+{ "type": "spawn_request", "session": "main", "cmd": "/bin/bash", "args": [] }
+```
+
+| Field   | Type     | Description                                         |
+|---------|----------|-----------------------------------------------------|
+| type    | string   | `"spawn_request"`                                   |
+| session | string   | Session to add the region to (empty = client's session) |
+| cmd     | string   | Executable path                                     |
+| args    | []string | Arguments (may be empty)                            |
 
 ### spawn_response
 
@@ -178,38 +210,39 @@ Note: the frontend subtracts 1 from the terminal height to account for the tab b
 
 ### list_regions_request
 
-List all existing regions on the server. Used by the frontend on startup to check for sessions
-to resume.
+List regions on the server. Optionally filter by session name.
 
 ```json
-{ "type": "list_regions_request" }
+{ "type": "list_regions_request", "session": "" }
 ```
 
-| Field | Type   | Description            |
-|-------|--------|------------------------|
-| type  | string | `"list_regions_request"` |
+| Field   | Type   | Description                                     |
+|---------|--------|-------------------------------------------------|
+| type    | string | `"list_regions_request"`                        |
+| session | string | Filter by session name (empty = all regions)    |
 
 ### list_regions_response
 
 ```json
-{ "type": "list_regions_response", "regions": [{"region_id": "abc123", "name": "bash", "cmd": "/bin/bash", "pid": 42}], "error": false, "message": "" }
+{ "type": "list_regions_response", "regions": [{"region_id": "abc123", "name": "bash", "cmd": "/bin/bash", "pid": 42, "session": "main"}], "error": false, "message": "" }
 ```
 
-| Field   | Type           | Description                                                    |
-|---------|----------------|----------------------------------------------------------------|
-| type    | string         | `"list_regions_response"`                                      |
-| regions | []RegionInfo   | Array of `{region_id, name, cmd, pid}` for each live region   |
-| error   | bool           | True on failure                                                |
-| message | string         | Error description, or `""`                                     |
+| Field   | Type           | Description                                                         |
+|---------|----------------|---------------------------------------------------------------------|
+| type    | string         | `"list_regions_response"`                                           |
+| regions | []RegionInfo   | Array of `{region_id, name, cmd, pid, session}` for each region    |
+| error   | bool           | True on failure                                                     |
+| message | string         | Error description, or `""`                                          |
 
 RegionInfo fields:
 
-| Field     | Type   | Description                |
-|-----------|--------|----------------------------|
-| region_id | string | Region ID                  |
-| name      | string | Human-readable region name |
-| cmd       | string | Command that was spawned   |
-| pid       | int32  | Child process ID           |
+| Field     | Type   | Description                    |
+|-----------|--------|--------------------------------|
+| region_id | string | Region ID                      |
+| name      | string | Human-readable region name     |
+| cmd       | string | Command that was spawned       |
+| pid       | int32  | Child process ID               |
+| session   | string | Session this region belongs to |
 
 ---
 
@@ -239,6 +272,7 @@ Query the server's status.
 | socket_path    | string | Path to the Unix socket            |
 | num_clients    | uint32 | Number of connected clients        |
 | num_regions    | uint32 | Number of active regions           |
+| num_sessions   | uint32 | Number of active sessions          |
 | error          | bool   | True on failure                    |
 | message        | string | Error description, or `""`         |
 
@@ -331,13 +365,14 @@ List all connected clients.
 
 ClientInfo fields:
 
-| Field                | Type   | Description                              |
-|----------------------|--------|------------------------------------------|
-| client_id            | uint32 | Client ID                                |
-| hostname             | string | Client hostname                          |
-| username             | string | Client username                          |
-| pid                  | int32  | Client process ID                        |
-| process              | string | Client process name                      |
+| Field                | Type   | Description                                 |
+|----------------------|--------|---------------------------------------------|
+| client_id            | uint32 | Client ID                                   |
+| hostname             | string | Client hostname                             |
+| username             | string | Client username                             |
+| pid                  | int32  | Client process ID                           |
+| process              | string | Client process name                         |
+| session              | string | Session the client is connected to, or `""` |
 | subscribed_region_id | string | Region the client is subscribed to, or `""` |
 
 ---
@@ -370,6 +405,40 @@ Disconnect a client by ID.
 
 ---
 
+### list_sessions_request
+
+List all active sessions on the server.
+
+```json
+{ "type": "list_sessions_request" }
+```
+
+| Field | Type   | Description              |
+|-------|--------|--------------------------|
+| type  | string | `"list_sessions_request"` |
+
+### list_sessions_response
+
+```json
+{ "type": "list_sessions_response", "sessions": [{"name": "main", "num_regions": 2}], "error": false, "message": "" }
+```
+
+| Field    | Type           | Description                               |
+|----------|----------------|-------------------------------------------|
+| type     | string         | `"list_sessions_response"`                |
+| sessions | []SessionInfo  | Array of session info objects             |
+| error    | bool           | True on failure                           |
+| message  | string         | Error description, or `""`                |
+
+SessionInfo fields:
+
+| Field       | Type   | Description                     |
+|-------------|--------|---------------------------------|
+| name        | string | Session name                    |
+| num_regions | int    | Number of regions in session    |
+
+---
+
 ## Server → Frontend
 
 ### region_created
@@ -377,14 +446,15 @@ Disconnect a client by ID.
 Broadcast to all connected clients when a new region is spawned. Sent after `spawn_response`.
 
 ```json
-{ "type": "region_created", "region_id": "abc123", "name": "bash" }
+{ "type": "region_created", "region_id": "abc123", "name": "bash", "session": "main" }
 ```
 
-| Field     | Type   | Description        |
-|-----------|--------|--------------------|
-| type      | string | `"region_created"` |
-| region_id | string | New region ID      |
-| name      | string | Region name        |
+| Field     | Type   | Description                    |
+|-----------|--------|--------------------------------|
+| type      | string | `"region_created"`             |
+| region_id | string | New region ID                  |
+| name      | string | Region name                    |
+| session   | string | Session this region belongs to |
 
 ---
 

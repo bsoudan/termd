@@ -22,7 +22,7 @@ type Model struct {
 	Detached bool
 }
 
-func NewModel(s *Server, pipeW io.Writer, cmd string, args []string, ring *termlog.LogRingBuffer, endpoint, version, changelog string) Model {
+func NewModel(s *Server, pipeW io.Writer, cmd string, args []string, ring *termlog.LogRingBuffer, endpoint, version, changelog, sessionName string) Model {
 	hostname, _ := os.Hostname()
 	req := &requestState{pending: make(map[uint64]ReplyFunc)}
 	requestFn := func(msg any, reply ReplyFunc) {
@@ -30,7 +30,7 @@ func NewModel(s *Server, pipeW io.Writer, cmd string, args []string, ring *terml
 		req.pending[req.nextReqID] = reply
 		s.Send(protocol.TaggedWithReqID(msg, req.nextReqID))
 	}
-	session := NewSessionLayer(s, pipeW, requestFn, cmd, args, ring, endpoint, version, changelog, hostname)
+	session := NewSessionLayer(s, pipeW, requestFn, cmd, args, ring, endpoint, version, changelog, hostname, sessionName)
 	return Model{
 		layers: []Layer{session},
 		req:    req,

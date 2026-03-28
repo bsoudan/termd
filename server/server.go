@@ -4,11 +4,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"termd/config"
 	"termd/frontend/protocol"
 )
 
@@ -17,27 +19,35 @@ type Server struct {
 	listeners    []net.Listener
 	startTime    time.Time
 	nextClientID atomic.Uint32
+	sessionsCfg  config.SessionsConfig
 
-	mu      sync.Mutex
-	regions map[string]*Region
-	clients map[uint32]*Client
+	mu       sync.Mutex
+	regions  map[string]*Region
+	clients  map[uint32]*Client
+	sessions map[string]*Session
 
 	done     chan struct{}
 	shutdown atomic.Bool
 }
 
-func NewServer(listeners []net.Listener, version string) *Server {
+func NewServer(listeners []net.Listener, version string, sessionsCfg config.SessionsConfig) *Server {
 	for _, ln := range listeners {
 		slog.Info("listening", "addr", ln.Addr().String())
 	}
 
+	if sessionsCfg.DefaultName == "" {
+		sessionsCfg.DefaultName = "main"
+	}
+
 	s := &Server{
-		version:   version,
-		listeners: listeners,
-		startTime: time.Now(),
-		regions:   make(map[string]*Region),
-		clients:   make(map[uint32]*Client),
-		done:      make(chan struct{}),
+		version:     version,
+		listeners:   listeners,
+		startTime:   time.Now(),
+		sessionsCfg: sessionsCfg,
+		regions:     make(map[string]*Region),
+		clients:     make(map[uint32]*Client),
+		sessions:    make(map[string]*Session),
+		done:        make(chan struct{}),
 	}
 	s.nextClientID.Store(1)
 	return s
@@ -109,7 +119,7 @@ func (s *Server) acceptClient(conn net.Conn) {
 	go client.ReadLoop()
 }
 
-func (s *Server) SpawnRegion(cmd string, args []string) (*Region, error) {
+func (s *Server) SpawnRegion(sessionName, cmd string, args []string) (*Region, error) {
 	region, err := NewRegion(cmd, args, 80, 24)
 	if err != nil {
 		return nil, err
@@ -117,9 +127,16 @@ func (s *Server) SpawnRegion(cmd string, args []string) (*Region, error) {
 
 	s.mu.Lock()
 	s.regions[region.id] = region
+	sess := s.sessions[sessionName]
+	if sess == nil {
+		sess = NewSession(sessionName)
+		s.sessions[sessionName] = sess
+	}
+	sess.regions[region.id] = region
+	region.session = sessionName
 	s.mu.Unlock()
 
-	slog.Info("spawned region", "region_id", region.id, "cmd", cmd)
+	slog.Info("spawned region", "region_id", region.id, "cmd", cmd, "session", sessionName)
 
 	go s.watchRegion(region)
 	return region, nil
@@ -145,6 +162,15 @@ func (s *Server) destroyRegion(regionID string) {
 	}
 	delete(s.regions, regionID)
 
+	// Remove from session; delete session if empty.
+	if sess := s.sessions[region.session]; sess != nil {
+		delete(sess.regions, regionID)
+		if len(sess.regions) == 0 {
+			delete(s.sessions, region.session)
+			slog.Info("removed empty session", "session", region.session)
+		}
+	}
+
 	var toNotify []*Client
 	for _, c := range s.clients {
 		if c.GetSubscribedRegionID() == regionID {
@@ -161,7 +187,7 @@ func (s *Server) destroyRegion(regionID string) {
 		})
 	}
 
-	slog.Info("destroyed region", "region_id", regionID)
+	slog.Info("destroyed region", "region_id", regionID, "session", region.session)
 	region.Close()
 }
 
@@ -266,6 +292,7 @@ func (s *Server) getStatus() protocol.StatusResponse {
 	s.mu.Lock()
 	numClients := len(s.clients)
 	numRegions := len(s.regions)
+	numSessions := len(s.sessions)
 	s.mu.Unlock()
 
 	hostname, _ := os.Hostname()
@@ -278,6 +305,7 @@ func (s *Server) getStatus() protocol.StatusResponse {
 		SocketPath:    s.listenerAddrs(),
 		NumClients:    numClients,
 		NumRegions:    numRegions,
+		NumSessions:   numSessions,
 		Error:         false,
 		Message:       "",
 	}
@@ -291,9 +319,89 @@ func (s *Server) listenerAddrs() string {
 	return strings.Join(addrs, ", ")
 }
 
-func (s *Server) getRegionInfos() []protocol.RegionInfo {
+// findOrCreateSession returns an existing session or creates a new one with
+// default regions. The caller must NOT hold s.mu.
+func (s *Server) findOrCreateSession(name string) (*Session, []protocol.RegionInfo, error) {
+	if name == "" {
+		name = s.sessionsCfg.DefaultName
+	}
+
+	s.mu.Lock()
+	sess, exists := s.sessions[name]
+	if exists {
+		infos := s.sessionRegionInfos(sess)
+		s.mu.Unlock()
+		return sess, infos, nil
+	}
+	s.mu.Unlock()
+
+	// Spawn default regions outside the lock.
+	regions := s.sessionsCfg.DefaultRegions
+	if len(regions) == 0 {
+		shell := serverShell()
+		regions = []config.RegionConfig{{Cmd: shell}}
+	}
+
+	var infos []protocol.RegionInfo
+	for _, rc := range regions {
+		region, err := s.SpawnRegion(name, rc.Cmd, rc.Args)
+		if err != nil {
+			return nil, nil, err
+		}
+		infos = append(infos, protocol.RegionInfo{
+			RegionID: region.id,
+			Name:     region.name,
+			Cmd:      region.cmd,
+			Pid:      region.pid,
+			Session:  name,
+		})
+	}
+
+	s.mu.Lock()
+	sess = s.sessions[name]
+	s.mu.Unlock()
+
+	return sess, infos, nil
+}
+
+// sessionRegionInfos returns RegionInfo for all regions in a session.
+// Caller must hold s.mu.
+func (s *Server) sessionRegionInfos(sess *Session) []protocol.RegionInfo {
+	infos := make([]protocol.RegionInfo, 0, len(sess.regions))
+	for _, r := range sess.regions {
+		infos = append(infos, protocol.RegionInfo{
+			RegionID: r.id,
+			Name:     r.name,
+			Cmd:      r.cmd,
+			Pid:      r.pid,
+			Session:  sess.name,
+		})
+	}
+	return infos
+}
+
+// serverShell returns the server user's shell.
+func serverShell() string {
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return shell
+	}
+	if p, err := exec.LookPath("bash"); err == nil {
+		return p
+	}
+	return "sh"
+}
+
+func (s *Server) getRegionInfos(sessionFilter string) []protocol.RegionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if sessionFilter != "" {
+		sess := s.sessions[sessionFilter]
+		if sess == nil {
+			return nil
+		}
+		return s.sessionRegionInfos(sess)
+	}
 
 	infos := make([]protocol.RegionInfo, 0, len(s.regions))
 	for _, r := range s.regions {
@@ -302,6 +410,7 @@ func (s *Server) getRegionInfos() []protocol.RegionInfo {
 			Name:     r.name,
 			Cmd:      r.cmd,
 			Pid:      r.pid,
+			Session:  r.session,
 		})
 	}
 	return infos
@@ -319,7 +428,22 @@ func (s *Server) getClientInfos() []protocol.ClientInfoData {
 			Username:           c.GetUsername(),
 			Pid:                c.GetPid(),
 			Process:            c.GetProcess(),
+			Session:            c.GetSessionName(),
 			SubscribedRegionID: c.GetSubscribedRegionID(),
+		})
+	}
+	return infos
+}
+
+func (s *Server) getSessionInfos() []protocol.SessionInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	infos := make([]protocol.SessionInfo, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		infos = append(infos, protocol.SessionInfo{
+			Name:       sess.name,
+			NumRegions: len(sess.regions),
 		})
 	}
 	return infos

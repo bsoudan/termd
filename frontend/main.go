@@ -49,6 +49,12 @@ func main() {
 				Usage:   "command to run (default: $SHELL or bash)",
 				Sources: cli.EnvVars("TERMD_COMMAND"),
 			},
+			&cli.StringFlag{
+				Name:    "session",
+				Aliases: []string{"S"},
+				Usage:   "session name (default: server's default, typically 'main')",
+				Sources: cli.EnvVars("TERMD_SESSION"),
+			},
 			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
@@ -127,8 +133,10 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 
 	pipeR, pipeW := io.Pipe()
 
+	sessionName := cmd.String("session")
+
 	server := ui.NewServer(64, "termd-tui")
-	model := ui.NewModel(server, pipeW, shell, shellArgs, logRing, endpoint, version, changelog)
+	model := ui.NewModel(server, pipeW, shell, shellArgs, logRing, endpoint, version, changelog, sessionName)
 	p := tea.NewProgram(model,
 		tea.WithInput(pipeR),
 		tea.WithColorProfile(colorprofile.TrueColor),

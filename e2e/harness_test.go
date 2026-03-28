@@ -36,9 +36,12 @@ func testEnv(t *testing.T) []string {
 func startServer(t *testing.T) (string, func()) {
 	t.Helper()
 
+	env := testEnv(t)
+	writeTestServerConfig(t, env)
+
 	socketPath := filepath.Join(t.TempDir(), "termd.sock")
 	cmd := exec.Command("termd", "unix:"+socketPath)
-	cmd.Env = testEnv(t)
+	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v (is termd in PATH?)", err)
@@ -62,17 +65,45 @@ func startServer(t *testing.T) (string, func()) {
 	}
 }
 
+// writeTestServerConfig creates a server.toml in the XDG config dir that
+// configures bash --norc as the default session region so .bashrc doesn't
+// override PS1.
+func writeTestServerConfig(t *testing.T, env []string) {
+	t.Helper()
+	var xdg string
+	for _, e := range env {
+		if strings.HasPrefix(e, "XDG_CONFIG_HOME=") {
+			xdg = e[len("XDG_CONFIG_HOME="):]
+			break
+		}
+	}
+	if xdg == "" {
+		return
+	}
+	shell, _ := exec.LookPath("bash")
+	if shell == "" {
+		shell = "bash"
+	}
+	cfgDir := filepath.Join(xdg, "termd")
+	os.MkdirAll(cfgDir, 0o755)
+	cfgContent := fmt.Sprintf("[sessions]\n\n[[sessions.default-regions]]\ncmd = %q\nargs = [\"--norc\"]\n", shell)
+	os.WriteFile(filepath.Join(cfgDir, "server.toml"), []byte(cfgContent), 0o644)
+}
+
 // startServerWithListeners starts a server with the Unix socket plus extra --listen specs.
 // It parses the assigned addresses from server stderr.
 // Returns the socket path, a map of scheme→address for each extra listener, and a cleanup func.
 func startServerWithListeners(t *testing.T, extraListens ...string) (socketPath string, addrs map[string]string, cleanup func()) {
 	t.Helper()
 
+	env := testEnv(t)
+	writeTestServerConfig(t, env)
+
 	socketPath = filepath.Join(t.TempDir(), "termd.sock")
 	args := []string{"unix:" + socketPath}
 	args = append(args, extraListens...)
 	cmd := exec.Command("termd", args...)
-	cmd.Env = testEnv(t)
+	cmd.Env = env
 
 	// Capture stderr to extract listen addresses
 	stderrR, stderrW, _ := os.Pipe()
@@ -352,7 +383,7 @@ func runTermctl(t *testing.T, socketPath string, args ...string) string {
 // Passes --norc so bash doesn't source .bashrc (which would override PS1).
 func spawnRegion(t *testing.T, socketPath string, shellCmd string) string {
 	t.Helper()
-	out := runTermctl(t, socketPath, "region", "spawn", shellCmd, "--norc")
+	out := runTermctl(t, socketPath, "region", "spawn", "--", shellCmd, "--norc")
 	id := strings.TrimSpace(out)
 	if len(id) != 36 {
 		t.Fatalf("expected 36-char region ID, got %q", id)

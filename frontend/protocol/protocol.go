@@ -16,9 +16,10 @@ type Identify struct {
 }
 
 type SpawnRequest struct {
-	Type string   `json:"type,omitempty"`
-	Cmd  string   `json:"cmd"`
-	Args []string `json:"args"`
+	Type    string   `json:"type,omitempty"`
+	Session string   `json:"session"`
+	Cmd     string   `json:"cmd"`
+	Args    []string `json:"args"`
 }
 
 type SubscribeRequest struct {
@@ -40,6 +41,16 @@ type ResizeRequest struct {
 }
 
 type ListRegionsRequest struct {
+	Type    string `json:"type,omitempty"`
+	Session string `json:"session,omitempty"`
+}
+
+type SessionConnectRequest struct {
+	Type    string `json:"type,omitempty"`
+	Session string `json:"session,omitempty"`
+}
+
+type ListSessionsRequest struct {
 	Type string `json:"type,omitempty"`
 }
 
@@ -108,6 +119,7 @@ type RegionCreated struct {
 	Type     string `json:"type,omitempty"`
 	RegionID string `json:"region_id"`
 	Name     string `json:"name"`
+	Session  string `json:"session"`
 }
 
 // ScreenCell carries per-cell color and attribute data for initial sync.
@@ -137,6 +149,7 @@ type RegionInfo struct {
 	Name     string `json:"name"`
 	Cmd      string `json:"cmd"`
 	Pid      int    `json:"pid"`
+	Session  string `json:"session"`
 }
 
 type ListRegionsResponse struct {
@@ -155,6 +168,7 @@ type StatusResponse struct {
 	SocketPath    string `json:"socket_path"`
 	NumClients    int    `json:"num_clients"`
 	NumRegions    int    `json:"num_regions"`
+	NumSessions   int    `json:"num_sessions"`
 	Error         bool   `json:"error"`
 	Message       string `json:"message"`
 }
@@ -183,6 +197,7 @@ type ClientInfoData struct {
 	Username           string `json:"username"`
 	Pid                int    `json:"pid"`
 	Process            string `json:"process"`
+	Session            string `json:"session"`
 	SubscribedRegionID string `json:"subscribed_region_id"`
 }
 
@@ -213,6 +228,26 @@ type UnsubscribeResponse struct {
 	RegionID string `json:"region_id"`
 	Error    bool   `json:"error"`
 	Message  string `json:"message"`
+}
+
+type SessionConnectResponse struct {
+	Type    string       `json:"type"`
+	Session string       `json:"session"`
+	Regions []RegionInfo `json:"regions"`
+	Error   bool         `json:"error"`
+	Message string       `json:"message"`
+}
+
+type SessionInfo struct {
+	Name       string `json:"name"`
+	NumRegions int    `json:"num_regions"`
+}
+
+type ListSessionsResponse struct {
+	Type     string        `json:"type"`
+	Sessions []SessionInfo `json:"sessions"`
+	Error    bool          `json:"error"`
+	Message  string        `json:"message"`
 }
 
 type TerminalEvent struct {
@@ -305,6 +340,12 @@ func parsePayload(typ string, line []byte) (any, error) {
 	case "unsubscribe_response":
 		var msg UnsubscribeResponse
 		return msg, json.Unmarshal(line, &msg)
+	case "session_connect_response":
+		var msg SessionConnectResponse
+		return msg, json.Unmarshal(line, &msg)
+	case "list_sessions_response":
+		var msg ListSessionsResponse
+		return msg, json.Unmarshal(line, &msg)
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", typ)
 	}
@@ -386,6 +427,10 @@ func typeTag(msg any) string {
 		return "get_scrollback_request"
 	case UnsubscribeRequest:
 		return "unsubscribe_request"
+	case SessionConnectRequest:
+		return "session_connect_request"
+	case ListSessionsRequest:
+		return "list_sessions_request"
 	case Disconnect:
 		return "disconnect"
 	default:

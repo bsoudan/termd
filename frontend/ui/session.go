@@ -43,6 +43,7 @@ type SessionLayer struct {
 	endpoint      string
 	version       string
 	changelog     string
+	sessionName   string
 
 	// Pre-terminal dimensions (stored until terminal is created).
 	termWidth  int
@@ -132,7 +133,7 @@ func NewSessionLayer(
 	server *Server, pipeW io.Writer, requestFn RequestFunc,
 	cmd string, args []string,
 	logRing *termlog.LogRingBuffer,
-	endpoint, version, changelog, hostname string,
+	endpoint, version, changelog, hostname, sessionName string,
 ) *SessionLayer {
 	return &SessionLayer{
 		server:        server,
@@ -145,14 +146,15 @@ func NewSessionLayer(
 		changelog:     changelog,
 		localHostname: hostname,
 		logRing:       logRing,
+		sessionName:   sessionName,
 		connStatus:    "connected",
 		status:        "connecting...",
 	}
 }
 
-// Init sends the initial ListRegionsRequest and returns a cmd to show the hint.
+// Init sends the initial SessionConnectRequest and returns a cmd to show the hint.
 func (s *SessionLayer) Init() tea.Cmd {
-	s.server.Send(protocol.ListRegionsRequest{})
+	s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} })
 }
 
@@ -265,8 +267,9 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case SpawnRegionMsg:
 		s.status = "spawning..."
 		s.server.Send(protocol.SpawnRequest{
-			Cmd:  s.cmd,
-			Args: s.cmdArgs,
+			Session: s.sessionName,
+			Cmd:     s.cmd,
+			Args:    s.cmdArgs,
 		})
 		return nil, nil, true
 
@@ -296,21 +299,23 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		return nil, nil, true
 
+	case protocol.SessionConnectResponse:
+		if msg.Error {
+			s.err = "session connect failed: " + msg.Message
+			resp, cmd := s.quit()
+			return resp, cmd, true
+		}
+		s.sessionName = msg.Session
+		s.syncTabs(msg.Regions)
+		return nil, nil, true
+
 	case protocol.ListRegionsResponse:
 		if msg.Error {
 			s.err = "list regions failed: " + msg.Message
 			resp, cmd := s.quit()
 			return resp, cmd, true
 		}
-		if len(msg.Regions) > 0 {
-			s.syncTabs(msg.Regions)
-			return nil, nil, true
-		}
-		s.status = "spawning..."
-		s.server.Send(protocol.SpawnRequest{
-			Cmd:  s.cmd,
-			Args: s.cmdArgs,
-		})
+		s.syncTabs(msg.Regions)
 		return nil, nil, true
 
 	case protocol.SpawnResponse:
@@ -446,8 +451,8 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case ReconnectedMsg:
 		s.connStatus = "connected"
 		s.retryAt = time.Time{}
-		// Re-enumerate regions to restore all tabs.
-		s.server.Send(protocol.ListRegionsRequest{})
+		// Re-connect to session to restore all tabs.
+		s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
 		return nil, nil, true
 
 	case ServerErrorMsg:
@@ -511,10 +516,11 @@ func (s *SessionLayer) openOverlay(name string) tea.Cmd {
 
 func (s *SessionLayer) buildStatusCaps() StatusCaps {
 	caps := StatusCaps{
-		Hostname:   s.localHostname,
-		Endpoint:   s.endpoint,
-		Version:    s.version,
-		ConnStatus: s.connStatus,
+		Hostname:    s.localHostname,
+		Endpoint:    s.endpoint,
+		SessionName: s.sessionName,
+		Version:     s.version,
+		ConnStatus:  s.connStatus,
 	}
 	if t := s.activeTerm(); t != nil {
 		caps.KeyboardFlags = t.KeyboardFlags()
@@ -617,8 +623,11 @@ func (s *SessionLayer) Status() (string, lipgloss.Style) {
 		return fmt.Sprintf("reconnecting to %s in %ds...", s.endpoint, secs), statusBoldRed
 	}
 	name := s.endpoint
-	if len(name) > 20 {
-		name = name[len(name)-20:]
+	if s.sessionName != "" {
+		name = s.sessionName + "@" + s.endpoint
+	}
+	if len(name) > 30 {
+		name = name[len(name)-30:]
 	}
 	return name, statusFaint
 }

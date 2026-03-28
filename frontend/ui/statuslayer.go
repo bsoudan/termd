@@ -20,6 +20,7 @@ type StatusLayer struct {
 type StatusCaps struct {
 	Hostname      string
 	Endpoint      string
+	SessionName   string
 	Version       string
 	ConnStatus    string
 	KeyboardFlags int
@@ -58,6 +59,9 @@ func (s *StatusLayer) View(width, height int, active bool) *lipgloss.Layer {
 	lines = append(lines, fmt.Sprintf("  Hostname:  %s", s.caps.Hostname))
 	lines = append(lines, fmt.Sprintf("  Version:   %s", s.caps.Version))
 	endpointStr := s.caps.Endpoint
+	if s.caps.SessionName != "" {
+		endpointStr = s.caps.SessionName + "@" + endpointStr
+	}
 	if s.caps.ConnStatus == "reconnecting" {
 		endpointStr += " (disconnected)"
 	}

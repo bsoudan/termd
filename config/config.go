@@ -12,12 +12,25 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// RegionConfig describes a region to spawn for new sessions.
+type RegionConfig struct {
+	Cmd  string   `toml:"cmd"`
+	Args []string `toml:"args"`
+}
+
+// SessionsConfig holds session-related server settings.
+type SessionsConfig struct {
+	DefaultName    string         `toml:"default-name"`
+	DefaultRegions []RegionConfig `toml:"default-regions"`
+}
+
 // ServerConfig represents termd/server.toml.
 type ServerConfig struct {
-	Listen  []string      `toml:"listen"`
-	Debug   bool          `toml:"debug"`
-	SSH     SSHConfig     `toml:"ssh"`
-	Termctl TermctlConfig `toml:"termctl"`
+	Listen   []string       `toml:"listen"`
+	Debug    bool           `toml:"debug"`
+	SSH      SSHConfig      `toml:"ssh"`
+	Termctl  TermctlConfig  `toml:"termctl"`
+	Sessions SessionsConfig `toml:"sessions"`
 }
 
 // SSHConfig holds SSH-specific server settings.

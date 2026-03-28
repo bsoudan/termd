@@ -29,10 +29,11 @@ type Snapshot struct {
 const scrollbackSize = 10000
 
 type Region struct {
-	id   string
-	name string
-	cmd  string
-	pid  int
+	id      string
+	name    string
+	cmd     string
+	pid     int
+	session string
 
 	width  int
 	height int

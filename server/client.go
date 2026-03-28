@@ -23,6 +23,7 @@ type Client struct {
 	username           string
 	pid                int
 	process            string
+	sessionName        string
 	subscribedRegionID string
 	closed             bool
 }
@@ -142,6 +143,18 @@ func (c *Client) GetProcess() string {
 	return c.process
 }
 
+func (c *Client) GetSessionName() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionName
+}
+
+func (c *Client) SetSessionName(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionName = name
+}
+
 type envelope struct {
 	Type  string `json:"type"`
 	ReqID uint64 `json:"req_id,omitempty"`
@@ -183,7 +196,10 @@ func (c *Client) handleMessage(line []byte) {
 			c.handleResize(msg, reply)
 		}
 	case "list_regions_request":
-		c.handleListRegions(reply)
+		var msg protocol.ListRegionsRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleListRegions(msg, reply)
+		}
 	case "status_request":
 		c.handleStatus(reply)
 	case "get_screen_request":
@@ -213,6 +229,13 @@ func (c *Client) handleMessage(line []byte) {
 		if json.Unmarshal(line, &msg) == nil {
 			c.handleUnsubscribe(msg, reply)
 		}
+	case "session_connect_request":
+		var msg protocol.SessionConnectRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleSessionConnect(msg, reply)
+		}
+	case "list_sessions_request":
+		c.handleListSessions(reply)
 	case "disconnect":
 		slog.Info("client disconnecting gracefully", "client_id", c.id)
 		c.Close()
@@ -245,7 +268,15 @@ func (c *Client) handleIdentify(msg protocol.Identify) {
 }
 
 func (c *Client) handleSpawn(msg protocol.SpawnRequest, reply func(any)) {
-	region, err := c.server.SpawnRegion(msg.Cmd, msg.Args)
+	sessionName := msg.Session
+	if sessionName == "" {
+		sessionName = c.GetSessionName()
+	}
+	if sessionName == "" {
+		sessionName = c.server.sessionsCfg.DefaultName
+	}
+
+	region, err := c.server.SpawnRegion(sessionName, msg.Cmd, msg.Args)
 	if err != nil {
 		reply(protocol.SpawnResponse{
 			Type:     "spawn_response",
@@ -269,6 +300,7 @@ func (c *Client) handleSpawn(msg protocol.SpawnRequest, reply func(any)) {
 		Type:     "region_created",
 		RegionID: region.id,
 		Name:     region.name,
+		Session:  sessionName,
 	})
 }
 
@@ -368,8 +400,8 @@ func (c *Client) handleResize(msg protocol.ResizeRequest, reply func(any)) {
 	})
 }
 
-func (c *Client) handleListRegions(reply func(any)) {
-	infos := c.server.getRegionInfos()
+func (c *Client) handleListRegions(msg protocol.ListRegionsRequest, reply func(any)) {
+	infos := c.server.getRegionInfos(msg.Session)
 	reply(protocol.ListRegionsResponse{
 		Type:    "list_regions_response",
 		Regions: infos,
@@ -482,4 +514,44 @@ func (c *Client) handleKillClient(msg protocol.KillClientRequest, reply func(any
 			Message:  "client not found",
 		})
 	}
+}
+
+func (c *Client) handleSessionConnect(msg protocol.SessionConnectRequest, reply func(any)) {
+	sessionName := msg.Session
+	if sessionName == "" {
+		sessionName = c.server.sessionsCfg.DefaultName
+	}
+
+	sess, infos, err := c.server.findOrCreateSession(sessionName)
+	if err != nil {
+		reply(protocol.SessionConnectResponse{
+			Type:    "session_connect_response",
+			Session: sessionName,
+			Error:   true,
+			Message: fmt.Sprintf("session connect: %v", err),
+		})
+		return
+	}
+
+	c.SetSessionName(sess.name)
+
+	reply(protocol.SessionConnectResponse{
+		Type:    "session_connect_response",
+		Session: sess.name,
+		Regions: infos,
+		Error:   false,
+		Message: "",
+	})
+
+	slog.Debug("client connected to session", "client_id", c.id, "session", sess.name)
+}
+
+func (c *Client) handleListSessions(reply func(any)) {
+	infos := c.server.getSessionInfos()
+	reply(protocol.ListSessionsResponse{
+		Type:     "list_sessions_response",
+		Sessions: infos,
+		Error:    false,
+		Message:  "",
+	})
 }

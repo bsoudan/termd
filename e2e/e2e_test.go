@@ -725,7 +725,7 @@ func TestTCPTransport(t *testing.T) {
 	defer serverCleanup()
 
 	// Spawn a region via the Unix socket (termctl)
-	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
 
 	// Connect frontend via TCP
 	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
@@ -993,7 +993,7 @@ func TestWebSocketTransport(t *testing.T) {
 	}
 
 	// Spawn a region via Unix socket
-	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
 
 	// Connect frontend via WebSocket
 	cmd := exec.Command("termd-tui", "--socket", "ws://"+wsAddr, "--command", "bash --norc")
@@ -1067,7 +1067,7 @@ func TestSSHTransport(t *testing.T) {
 	}
 
 	// Spawn a region via Unix socket
-	_ = runTermctl(t, socketPath, "region", "spawn", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
 
 	// Connect frontend via SSH
 	feCmd := exec.Command("termd-tui", "--socket", "ssh://"+sshAddr, "--command", "bash --norc")
