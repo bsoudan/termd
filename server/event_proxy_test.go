@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	te "github.com/rcarmo/go-te/pkg/te"
 	"termd/frontend/protocol"
-	"termd/frontend/ui"
+	"termd/frontend/terminal"
 )
 
 // roundTripEvents serializes events to JSON and back, simulating the network.
@@ -85,7 +85,7 @@ func TestEventProxyReplay(t *testing.T) {
 
 	// "Frontend" screen: replay events
 	frontendScreen := te.NewScreen(cols, rows)
-	ui.ReplayEvents(frontendScreen, allEvents)
+	terminal.ReplayEvents(frontendScreen, allEvents)
 
 	// Compare
 	serverDisplay := serverScreen.Display()
@@ -155,7 +155,7 @@ func TestEventProxyReplayWithAltScreen(t *testing.T) {
 	allEvents = roundTripEvents(allEvents)
 
 	frontendScreen := te.NewScreen(cols, rows)
-	ui.ReplayEvents(frontendScreen, allEvents)
+	terminal.ReplayEvents(frontendScreen, allEvents)
 
 	serverDisplay := serverScreen.Display()
 	frontendDisplay := frontendScreen.Display()
@@ -205,7 +205,7 @@ func TestEventProxyReplayColors(t *testing.T) {
 	allEvents = roundTripEvents(allEvents)
 
 	frontendScreen := te.NewScreen(cols, rows)
-	ui.ReplayEvents(frontendScreen, allEvents)
+	terminal.ReplayEvents(frontendScreen, allEvents)
 
 	fc := frontendScreen.LinesCells()[0]
 

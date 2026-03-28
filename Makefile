@@ -1,4 +1,4 @@
-.PHONY: all build-server changelog build-tui build-tui-windows build-termctl check-windows test test-e2e clean
+.PHONY: all build-server changelog build-tui build-tui-windows build-gui build-termctl check-windows test test-e2e test-gui clean
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/-g[0-9a-f]*//;s/-dirty/*/' || echo "dev")
 LDFLAGS := -X main.version=$(VERSION)
@@ -28,6 +28,10 @@ build-tui: changelog
 build-tui-windows: changelog
 	cd frontend && GOOS=windows GOARCH=amd64 go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o ../.local/bin/termd-tui.exe .
 
+build-gui: changelog
+	cp frontend/changelog.txt gui/changelog.txt
+	cd gui && go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o ../.local/bin/termd-gui .
+
 build-termctl:
 	cd termctl && go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o ../.local/bin/termctl .
 
@@ -35,10 +39,13 @@ check-windows:
 	cd frontend && GOOS=windows GOARCH=amd64 go build -o /dev/null .
 	cd transport && GOOS=windows GOARCH=amd64 go build -o /dev/null .
 
-test: test-e2e
+test: test-e2e test-gui
 
 test-e2e: all
 	cd e2e && PATH="$(CURDIR)/.local/bin:$(PATH)" go test -v -timeout 120s
+
+test-gui:
+	cd gui && go test -v -timeout 60s ./...
 
 clean:
 	rm -rf .local/bin

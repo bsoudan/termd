@@ -26,6 +26,19 @@
             delve    # Go debugger
             gcc      # C/C++ compiler for cgo
 
+            # GUI frontend (Fyne) dependencies
+            pkg-config
+            libGL
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXinerama
+            xorg.libXi
+            xorg.libXxf86vm
+            xorg.libXfixes
+            wayland
+            libxkbcommon
+
             # Protocol debugging: NDJSON over a Unix socket
             jq
             netcat-gnu  # nc for manual socket interaction

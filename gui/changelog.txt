@@ -1,0 +1,72 @@
+           0.9.1*:  M Makefile  M flake.nix  M frontend/changelog.txt  M frontend/ui/model.go  M server/event_proxy_test.go ?? frontend/terminal/ ?? gui/ ?? server/server 
+            0.9.1: milestone 9 step 1: replace all escape sequences with ansi constants
+ 0.8.5-9-g00a9c06: changelog: right-justify version column, use * for dirty, colon separator
+ 0.8.5-8-g777c842: add ctrl+b n release notes dialog, refactor overlay system
+ 0.8.5-7-g2eae6f1: add ctrl+b r refresh command, request screen snapshot from server
+ 0.8.5-6-g3b19884: synchronized output (mode 2026): atomic snapshots instead of event replay
+ 0.8.5-5-g6c405e9: reconnect UX: countdown timer, red status, disconnected cursor, terminal caps
+ 0.8.5-4-gd6fa27a: add ctrl+b s status dialog, hostname/version to status, termd restart
+ 0.8.5-3-g4850746: rename termd-frontend to termd-tui, dot-style overlay help text
+ 0.8.5-2-g43750b1: termd: positional listen specs, require schemes, tail command, status fixes
+ 0.8.5-1-g82245cc: termd start/stop: log unit file path on write and remove
+            0.8.5: milestone 8 steps 2-5: TOML config file support
+ 0.8.1-3-ga17909b: termd: reject unknown positional arguments with help text
+ 0.8.1-2-g4a58cf3: add termd start/stop/status commands for systemd user service
+ 0.8.1-1-g9d24e04: embed version from git describe --tags in all binaries
+            0.8.1: milestone 8 step 1: migrate all tools to urfave/cli v3
+0.7.1-20-gb182f61: server sends identify to client; show hostname in status for remote connections
+0.7.1-19-ga8416e8: frontend: add Windows support via platform-specific build tags
+0.7.1-18-gaf4cdc2: m8 plan: simplify step 2 tests, add frontend config test to step 3
+0.7.1-17-ge53f770: m8 plan: add step 1 to migrate all tools to urfave/cli v3
+0.7.1-16-ga3adb4d: milestone 8 plan: config files in 5 steps
+0.7.1-15-g7a35741: m8 goals: split config files (termd/server.toml + termd-tui/config.toml)
+0.7.1-14-g75d2c0b: milestone 8 goals: configuration file support
+0.7.1-13-g8b827c2: fix: propagate errors from loadAuthorizedKeys
+0.7.1-12-g7a50e8a: fix: require SSH authentication by default
+0.7.1-11-g528ae04: milestone 7 steps 6-7: multi-transport integration test and protocol docs
+0.7.1-10-gcfec836: milestone 7 step 5: SSH transport
+ 0.7.1-9-ga1a5ffb: milestone 7 step 4: WebSocket transport
+ 0.7.1-8-g0066435: milestone 7 step 3: automatic reconnect with exponential backoff
+ 0.7.1-7-g5401e13: UI polish: help dialog, startup hint, tab bar restyling
+ 0.7.1-6-g19c8635: restyle tab bar: remove bottom status bar, bullet/dot chrome
+ 0.7.1-5-gbf49e7f: fix chrome bars: all content dim, fix trailing dash clipped
+ 0.7.1-4-gab1e6a7: add SIGUSR1 goroutine stack dump to all three processes
+ 0.7.1-3-gf2d13b4: restyle tab bar and status bar as chrome lines
+ 0.7.1-2-g818c02e: fix: print connection errors to stderr, support URL-style transport specs
+ 0.7.1-1-g9d5ed56: milestone 7 step 2: transport abstraction and TCP support
+            0.7.1: milestone 7 step 1: bottom status bar showing connection state and endpoint
+0.6.0-14-gbba7349: m7 plan: reconnect test uses termctl client kill, not server kill
+0.6.0-13-g85a34a4: m7: add status bar, auto-reconnect; reorder plan to 7 steps
+0.6.0-12-g8b6da93: milestone 7 plan: transport layer in 4 steps
+0.6.0-11-g94b4ccc: m7 goals: use Go SSH library on both sides, no jumphost support initially
+0.6.0-10-g1d121f6: milestone 7 goals: transport layer (TCP, WebSocket, SSH)
+ 0.6.0-9-gbfc7b25: update TODO & move top level docs to doc directory
+ 0.6.0-8-ge99633b: update CLAUDE.md with testing and code quality guidelines
+ 0.6.0-7-g2a68e9c: clean .gitignore
+ 0.6.0-6-g3eb98e6: improve test coverage and remove render.go spec indirection
+ 0.6.0-5-ga639820: fix review issues: races, dropped messages, dead code, correctness
+ 0.6.0-4-ga74d1b7: milestone 6 step 5: termctl color view, protocol spec, consolidate color code
+ 0.6.0-3-g3bf4490: milestone 6 step 4: colored rendering and cell-data snapshot
+ 0.6.0-2-g47a70f6: milestone 6 step 3: event-based protocol with slice aliasing fix
+ 0.6.0-1-g716030a: milestone 6 step 2: upgrade to bubbletea v2
+            0.6.0: milestone 6 step 1: e2e test harness with go-te Screen
+            0.5.0: milestone 5: rewrite server in Go, remove all Zig
+ 0.4.1-4-gc087999: fix review issues: races, protocol spec, shutdown, correctness
+ 0.4.1-3-gfdc21f2: milestone 4 step 3: log viewer overlay and test speedup
+ 0.4.1-2-geec9669: milestone 4 step 2: structured logging format
+ 0.4.1-1-gc2b0315: new claude instructions
+            0.4.1: milestone 4 step 1: build output, PATH, and consistent CLI
+            0.3.0: milestone 3: termctl CLI and expanded protocol
+ 0.2.1-6-g0682c05: more instructions for claude
+ 0.2.1-5-gcf2aa75: milestone 2: prefix key via bubbletea with status indicator
+ 0.2.1-4-gd6bbc6f: milestone 2 step 5: session persistence
+ 0.2.1-3-ga8e1ebf: milestone 2 step 4: prefix key (ctrl+b) for frontend commands
+ 0.2.1-2-g6b578de: milestone 2 step 3: raw input passthrough
+ 0.2.1-1-gdad1b0b: milestone 2 step 2: cursor position in screen updates
+            0.2.1: milestone 2 step 1: suppress debug logging, add m2 plan and goals
+ 0.1.0-4-gce03d5e: milestone 1 phase 4: end-to-end tests
+ 0.1.0-3-g7f715ec: milestone 1 phase 3: integration testing and pollfds index fix
+ 0.1.0-2-g4d69029: milestone 1 phase 2: go frontend implementation
+ 0.1.0-1-g572fdc0: milestone 1 phase 1: zig server implementation
+            0.1.0: milestone 1 phase 0: scaffolding, protocol spec, and build system
+          0cc5d2e: initial repository & nix development environment
