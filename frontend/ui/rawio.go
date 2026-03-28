@@ -30,14 +30,15 @@ func InputLoop(stdin *os.File, p *tea.Program) {
 const prefixKey = 0x02 // ctrl+b
 
 // handleRawInput processes raw bytes from the terminal input goroutine.
-func (m Model) handleRawInput(chunk []byte) (tea.Model, tea.Cmd) {
+// Returns (response, cmd) where response may be DetachMsg if detaching.
+func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 	// Focus mode: write to bubbletea's input pipe for key event parsing.
-	if m.overlay != nil || m.scrollback.Active() {
+	if s.overlay != nil || s.scrollback.Active() {
 		if bytes.Contains(chunk, sgrMousePrefix) {
 			mice, rest := extractSGRMouseSequences(chunk)
 			var cmds []tea.Cmd
 			if len(rest) > 0 {
-				pipeW := m.pipeW
+				pipeW := s.pipeW
 				cmds = append(cmds, func() tea.Msg {
 					pipeW.Write(rest)
 					return nil
@@ -47,80 +48,75 @@ func (m Model) handleRawInput(chunk []byte) (tea.Model, tea.Cmd) {
 				saved := mouse
 				cmds = append(cmds, func() tea.Msg { return saved })
 			}
-			return m, tea.Batch(cmds...)
+			return nil, tea.Batch(cmds...)
 		}
-		pipeW := m.pipeW
+		pipeW := s.pipeW
 		data := make([]byte, len(chunk))
 		copy(data, chunk)
-		return m, func() tea.Msg {
+		return nil, func() tea.Msg {
 			pipeW.Write(data)
 			return nil
 		}
 	}
 
 	// Prefix active: next byte is the command
-	if m.prefixMode {
-		m.prefixMode = false
+	if s.prefixMode {
+		s.prefixMode = false
 		key := chunk[0]
 		chunk = chunk[1:]
-		model, cmd := m.handlePrefixKey(key)
+		resp, cmd := s.handlePrefixKey(key)
 		if len(chunk) > 0 {
-			m2 := model.(Model)
-			m2.sendRawToServer(chunk)
-			return m2, cmd
+			s.sendRawToServer(chunk)
 		}
-		return model, cmd
+		return resp, cmd
 	}
 
 	// Scan for prefix key (ctrl+b)
 	if idx := bytes.IndexByte(chunk, prefixKey); idx >= 0 {
 		if idx > 0 {
-			m.sendRawToServer(chunk[:idx])
+			s.sendRawToServer(chunk[:idx])
 		}
-		m.prefixMode = true
+		s.prefixMode = true
 		rest := chunk[idx+1:]
 		if len(rest) > 0 {
-			m.prefixMode = false
+			s.prefixMode = false
 			key := rest[0]
-			model, cmd := m.handlePrefixKey(key)
+			resp, cmd := s.handlePrefixKey(key)
 			if len(rest) > 1 {
-				m2 := model.(Model)
-				m2.sendRawToServer(rest[1:])
-				return m2, cmd
+				s.sendRawToServer(rest[1:])
 			}
-			return model, cmd
+			return resp, cmd
 		}
-		return m, nil
+		return nil, nil
 	}
 
 	// Parse and route mouse sequences
 	if bytes.Contains(chunk, sgrMousePrefix) {
 		mice, rest := extractSGRMouseSequences(chunk)
 		if len(rest) > 0 {
-			m.sendRawToServer(rest)
+			s.sendRawToServer(rest)
 		}
 		var cmds []tea.Cmd
 		for _, mouse := range mice {
-			if m.terminal.ChildWantsMouse() {
+			if s.terminal.ChildWantsMouse() {
 				seq := encodeSGRMouse(mouse, mouse.Mouse().X, mouse.Mouse().Y-chromeRows)
 				if seq != "" {
-					m.server.Send(InputMsg{
-						RegionID: m.regionID,
+					s.server.Send(InputMsg{
+						RegionID: s.regionID,
 						Data:     []byte(seq),
 					})
 				}
 			} else {
-				m2, cmd := m.handleMouse(mouse)
-				m = m2.(Model)
+				cmd := s.handleMouse(mouse)
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
 		}
-		return m, tea.Batch(cmds...)
+		return nil, tea.Batch(cmds...)
 	}
 
 	// Regular input — forward to server
-	m.sendRawToServer(chunk)
-	return m, nil
+	s.sendRawToServer(chunk)
+	return nil, nil
 }

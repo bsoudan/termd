@@ -1,7 +1,5 @@
 package ui
 
-// ── Tea messages (UI-only, not from the server) ─────────────────────────────
-
 // LogEntryMsg is sent by the log handler to trigger a re-render when new
 // log entries arrive (throttled to 100ms).
 type LogEntryMsg struct{}

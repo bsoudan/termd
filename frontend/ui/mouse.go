@@ -2,11 +2,13 @@ package ui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"termd/frontend/protocol"
 )
 
 // sgrMousePrefix is the byte sequence that starts an SGR mouse event.
@@ -170,4 +172,53 @@ func extractSGRMouseSequences(buf []byte) (mice []tea.MouseMsg, rest []byte) {
 		buf = buf[end+1:]
 	}
 	return
+}
+
+// handleMouse processes mouse events. If an overlay is active, route to it.
+// If the child app has mouse mode enabled, forward to the server.
+func (s *SessionLayer) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	// Overlays get scroll wheel events while they're visible
+	if s.overlay != nil {
+		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+			var cmd tea.Cmd
+			s.overlay, cmd = s.overlay.HandleWheel(wheel)
+			return cmd
+		}
+		return nil
+	}
+
+	mouse := msg.Mouse()
+
+	if s.terminal.ChildWantsMouse() && s.regionID != "" {
+		seq := encodeSGRMouse(msg, mouse.X, mouse.Y-1)
+		if seq != "" {
+			data := base64.StdEncoding.EncodeToString([]byte(seq))
+			s.server.Send(protocol.InputMsg{
+				RegionID: s.regionID, Data: data,
+			})
+		}
+		return nil
+	}
+
+	// Child doesn't want mouse — scroll wheel enters/navigates scrollback
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		if s.scrollback.Active() {
+			var exited bool
+			s.scrollback, exited = s.scrollback.HandleWheel(wheel.Button)
+			if exited {
+				s.scrollback = s.scrollback.Exit()
+			}
+			return nil
+		}
+		if wheel.Button == tea.MouseWheelUp && s.regionID != "" {
+			s.scrollback = s.scrollback.Enter(3)
+			server := s.server
+			regionID := s.regionID
+			return func() tea.Msg {
+				server.Send(protocol.GetScrollbackRequest{RegionID: regionID})
+				return nil
+			}
+		}
+	}
+	return nil
 }

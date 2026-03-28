@@ -18,16 +18,16 @@ var (
 			Padding(0, 1)
 )
 
-func renderView(m Model) string {
-	if m.err != "" {
-		return "error: " + m.err + "\n"
+func renderView(s *SessionLayer) string {
+	if s.err != "" {
+		return "error: " + s.err + "\n"
 	}
 
-	width := m.termWidth
+	width := s.termWidth
 	if width <= 0 {
 		width = 80
 	}
-	height := m.termHeight
+	height := s.termHeight
 	if height <= 0 {
 		height = 24
 	}
@@ -35,57 +35,57 @@ func renderView(m Model) string {
 	var sb strings.Builder
 
 	// Right side of tab bar: connection info, or mode indicator when active
-	rightInfo := m.Endpoint
+	rightInfo := s.endpoint
 	rightBold := false
 	rightRed := false
-	if m.connStatus != "connected" && m.connStatus != "" {
-		rightInfo = m.connStatus
+	if s.connStatus != "connected" && s.connStatus != "" {
+		rightInfo = s.connStatus
 	}
-	if m.status != "" {
-		rightInfo = m.status
+	if s.status != "" {
+		rightInfo = s.status
 	}
-	if m.overlay != nil {
-		rightInfo = m.overlay.Label()
+	if s.overlay != nil {
+		rightInfo = s.overlay.Label()
 		rightBold = true
-	} else if m.scrollback.Active() {
-		rightInfo = m.scrollback.StatusText()
+	} else if s.scrollback.Active() {
+		rightInfo = s.scrollback.StatusText()
 		rightBold = true
-	} else if m.prefixMode {
+	} else if s.prefixMode {
 		rightInfo = "?"
 		rightBold = true
-	} else if m.showHint {
+	} else if s.showHint {
 		rightInfo = "ctrl+b ? for help"
 		rightBold = true
-	} else if m.connStatus == "reconnecting" {
-		secs := int(time.Until(m.retryAt).Seconds()) + 1
-		rightInfo = fmt.Sprintf("reconnecting to %s in %ds...", m.Endpoint, secs)
+	} else if s.connStatus == "reconnecting" {
+		secs := int(time.Until(s.retryAt).Seconds()) + 1
+		rightInfo = fmt.Sprintf("reconnecting to %s in %ds...", s.endpoint, secs)
 		rightBold = true
 		rightRed = true
 	}
 	suffix := "termd-tui"
-	if m.Version != "" && (m.showHint || m.overlay != nil) {
-		suffix = "termd-tui " + m.Version
+	if s.version != "" && (s.showHint || s.overlay != nil) {
+		suffix = "termd-tui " + s.version
 	}
-	sb.WriteString(renderTabBar(m.regionName, rightInfo, suffix, rightBold, rightRed, width))
+	sb.WriteString(renderTabBar(s.regionName, rightInfo, suffix, rightBold, rightRed, width))
 	sb.WriteByte('\n')
 
 	contentHeight := height - 1 // tab bar only
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	showCursor := m.overlay == nil && !m.scrollback.Active()
-	disconnected := m.connStatus == "reconnecting"
+	showCursor := s.overlay == nil && !s.scrollback.Active()
+	disconnected := s.connStatus == "reconnecting"
 
-	if m.scrollback.Active() && m.terminal.Screen != nil {
-		m.scrollback.View(&sb, m.terminal.ScreenCells(), width, contentHeight)
+	if s.scrollback.Active() && s.terminal.Screen != nil {
+		s.scrollback.View(&sb, s.terminal.ScreenCells(), width, contentHeight)
 	} else {
-		m.terminal.View(&sb, width, contentHeight, showCursor, disconnected)
+		s.terminal.View(&sb, width, contentHeight, showCursor, disconnected)
 	}
 
 	base := sb.String()
 
-	if m.overlay != nil {
-		return m.overlay.View(base, width, height)
+	if s.overlay != nil {
+		return s.overlay.View(base, width, height)
 	}
 	return base
 }
@@ -519,4 +519,3 @@ func renderChromeBar(left, right, suffix string, rightBold, rightRed bool, width
 func renderTabBar(regionName, status, suffix string, rightBold, rightRed bool, width int) string {
 	return renderChromeBar(regionName, status, suffix, rightBold, rightRed, width)
 }
-

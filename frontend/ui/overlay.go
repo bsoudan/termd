@@ -9,8 +9,10 @@ import (
 // Overlay is the interface for all overlay dialogs.
 type Overlay interface {
 	// Update handles a key press. Returns the updated overlay (nil to close),
-	// an optional action to execute on the parent, and an optional tea.Cmd.
-	Update(tea.KeyPressMsg) (Overlay, func(Model) (Model, tea.Cmd), tea.Cmd)
+	// an optional action to execute on the session, and an optional tea.Cmd.
+	// The action returns (response tea.Msg, cmd tea.Cmd) to allow signaling
+	// DetachMsg or other responses back through the layer stack.
+	Update(tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd)
 
 	// HandleWheel handles scroll wheel events.
 	HandleWheel(tea.MouseWheelMsg) (Overlay, tea.Cmd)
@@ -45,7 +47,7 @@ func NewScrollableOverlay(label, content string, gotoBottom bool, termWidth, ter
 
 func (o *ScrollableOverlay) Label() string { return o.label }
 
-func (o *ScrollableOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(Model) (Model, tea.Cmd), tea.Cmd) {
+func (o *ScrollableOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc":
 		return nil, nil, nil
@@ -116,7 +118,7 @@ func (o *StatusOverlay) SetStatus(resp *protocol.StatusResponse) {
 
 func (o *StatusOverlay) Label() string { return "status" }
 
-func (o *StatusOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(Model) (Model, tea.Cmd), tea.Cmd) {
+func (o *StatusOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "s":
 		return nil, nil, nil
@@ -145,7 +147,7 @@ func NewHelpOverlay(items []helpItem) *HelpOverlay {
 
 func (o *HelpOverlay) Label() string { return "help" }
 
-func (o *HelpOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(Model) (Model, tea.Cmd), tea.Cmd) {
+func (o *HelpOverlay) Update(msg tea.KeyPressMsg) (Overlay, func(*SessionLayer) (tea.Msg, tea.Cmd), tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "?":
 		return nil, nil, nil
