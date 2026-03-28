@@ -508,24 +508,17 @@ func TestPrefixKeyDetach(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	pio, frontendCleanup := startFrontend(t, socketPath)
-	defer frontendCleanup()
+	fe := startFrontendFull(t, socketPath)
+	defer fe.Kill()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
+	fe.WaitFor(t, "bash", 10*time.Second)
 
-	pio.Write([]byte{0x02})
-	pio.Write([]byte("d"))
+	fe.Write([]byte{0x02})
+	fe.Write([]byte("d"))
 
-	deadline := time.After(10 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for frontend to exit after ctrl+b d")
-		case _, ok := <-pio.ch:
-			if !ok {
-				return
-			}
-		}
+	// Process should exit cleanly with code 0, no panic
+	if err := fe.Wait(5 * time.Second); err != nil {
+		t.Fatalf("frontend exited with error: %v", err)
 	}
 }
 

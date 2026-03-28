@@ -71,6 +71,15 @@ type GetScrollbackRequest struct {
 	RegionID string `json:"region_id"`
 }
 
+type UnsubscribeRequest struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+}
+
+type Disconnect struct {
+	Type string `json:"type,omitempty"`
+}
+
 // ── Inbound (server → frontend/termctl) ─────────────────────────────────────
 
 type SpawnResponse struct {
@@ -199,6 +208,13 @@ type GetScrollbackResponse struct {
 	Message  string         `json:"message"`
 }
 
+type UnsubscribeResponse struct {
+	Type     string `json:"type"`
+	RegionID string `json:"region_id"`
+	Error    bool   `json:"error"`
+	Message  string `json:"message"`
+}
+
 type TerminalEvent struct {
 	Op      string `json:"op"`
 	Data    string `json:"data,omitempty"`
@@ -272,6 +288,9 @@ func ParseInbound(line []byte) (any, error) {
 	case "terminal_events":
 		var msg TerminalEvents
 		return msg, json.Unmarshal(line, &msg)
+	case "unsubscribe_response":
+		var msg UnsubscribeResponse
+		return msg, json.Unmarshal(line, &msg)
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", env.Type)
 	}
@@ -341,6 +360,10 @@ func typeTag(msg any) string {
 		return "kill_client_request"
 	case GetScrollbackRequest:
 		return "get_scrollback_request"
+	case UnsubscribeRequest:
+		return "unsubscribe_request"
+	case Disconnect:
+		return "disconnect"
 	default:
 		return ""
 	}

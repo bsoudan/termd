@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +145,41 @@ func startServerWithTCP(t *testing.T) (socketPath, tcpAddr string, cleanup func(
 	return sock, tcpAddr, cl
 }
 
+// frontend holds the state of a running termd-tui process in a PTY.
+type frontend struct {
+	*ptyIO
+	cmd  *exec.Cmd
+	ptmx *os.File
+}
+
+// Kill forcibly terminates the frontend process.
+func (f *frontend) Kill() {
+	f.cmd.Process.Kill()
+	f.cmd.Wait()
+	f.ptmx.Close()
+}
+
+// Wait waits for the frontend process to exit and returns any error.
+// The caller should close the PTY first or ensure the process will exit.
+func (f *frontend) Wait(timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- f.cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		f.cmd.Process.Kill()
+		return fmt.Errorf("frontend did not exit within %v", timeout)
+	}
+}
+
 func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
+	t.Helper()
+	fe := startFrontendFull(t, socketPath)
+	return fe.ptyIO, fe.Kill
+}
+
+func startFrontendFull(t *testing.T, socketPath string) *frontend {
 	t.Helper()
 
 	cmd := exec.Command("termd-tui", "--socket", socketPath, "--command", "bash --norc")
@@ -158,12 +193,10 @@ func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 		t.Fatalf("start frontend in pty: %v (is termd-tui in PATH?)", err)
 	}
 
-	io := newPtyIO(ptmx, 80, 24)
-
-	return io, func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-		ptmx.Close()
+	return &frontend{
+		ptyIO: newPtyIO(ptmx, 80, 24),
+		cmd:   cmd,
+		ptmx:  ptmx,
 	}
 }
 

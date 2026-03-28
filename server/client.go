@@ -180,6 +180,14 @@ func (c *Client) handleMessage(line []byte) {
 		if json.Unmarshal(line, &msg) == nil {
 			c.handleKillClient(msg)
 		}
+	case "unsubscribe_request":
+		var msg protocol.UnsubscribeRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleUnsubscribe(msg)
+		}
+	case "disconnect":
+		slog.Info("client disconnecting gracefully", "client_id", c.id)
+		c.Close()
 	default:
 		slog.Debug("unknown message type", "client_id", c.id, "type", env.Type)
 	}
@@ -278,6 +286,15 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest) {
 	})
 
 	slog.Debug("client subscribed", "client_id", c.id, "region_id", region.id)
+}
+
+func (c *Client) handleUnsubscribe(msg protocol.UnsubscribeRequest) {
+	c.SetSubscribedRegionID("")
+	c.SendMessage(protocol.UnsubscribeResponse{
+		Type:     "unsubscribe_response",
+		RegionID: msg.RegionID,
+	})
+	slog.Debug("client unsubscribed", "client_id", c.id, "region_id", msg.RegionID)
 }
 
 func (c *Client) handleInput(msg protocol.InputMsg) {

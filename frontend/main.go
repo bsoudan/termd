@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -138,12 +140,29 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	}
 
 	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
-	go server.Run(conn, dialFn, p)
-	go ui.InputLoop(stdinDup, p)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); server.Run(conn, dialFn, p) }()
+	go func() { defer wg.Done(); ui.InputLoop(stdinDup, p) }()
 
 	finalModel, err := p.Run()
+
+	// Ordered shutdown:
+	// 1. Close server (unsubscribe+disconnect already sent by model.quit())
 	server.Close()
+	// 2. Close stdin dup → unblocks InputLoop
 	stdinDup.Close()
+	// 3. Close pipe writer → bubbletea's input reader exits
+	pipeW.Close()
+	// 4. Wait for goroutines (timeout in case stdin close doesn't unblock)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		slog.Debug("shutdown: goroutines did not exit in time")
+	}
 
 	if err != nil {
 		return fmt.Errorf("program error: %w", err)

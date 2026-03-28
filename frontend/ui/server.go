@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -30,28 +31,40 @@ type ReconnectedMsg struct{}
 // Bubbletea and the input loop communicate with it via Send().
 type Server struct {
 	ch          chan any
+	done        chan struct{} // closed by Close() to prevent Send() panic
+	closeOnce   sync.Once
 	processName string
 }
 
 func NewServer(bufSize int, processName string) *Server {
 	return &Server{
 		ch:          make(chan any, bufSize),
+		done:        make(chan struct{}),
 		processName: processName,
 	}
 }
 
 // Send enqueues a message for the server goroutine. Non-blocking — drops
-// if the channel is full.
+// if the channel is full or the server is shut down.
 func (s *Server) Send(msg any) {
 	select {
+	case <-s.done:
+		return
+	default:
+	}
+	select {
 	case s.ch <- msg:
+	case <-s.done:
 	default:
 	}
 }
 
-// Close signals the server goroutine to exit.
+// Close signals the server goroutine to exit. Safe to call multiple times.
 func (s *Server) Close() {
-	close(s.ch)
+	s.closeOnce.Do(func() {
+		close(s.done)
+		close(s.ch)
+	})
 }
 
 // Run connects to the server, processes messages, and handles reconnection.

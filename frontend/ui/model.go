@@ -73,6 +73,15 @@ type Model struct {
 
 // contentHeight returns the number of rows available for terminal content
 // (total height minus tab bar and status bar).
+// quit sends unsubscribe and disconnect to the server, then returns tea.Quit.
+func (m Model) quit() (tea.Model, tea.Cmd) {
+	if m.regionID != "" {
+		m.server.Send(protocol.UnsubscribeRequest{RegionID: m.regionID})
+	}
+	m.server.Send(protocol.Disconnect{})
+	return m, tea.Quit
+}
+
 func (m Model) contentHeight() int {
 	h := m.termHeight - 1 // tab bar only
 	if h < 1 {
@@ -129,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case protocol.ListRegionsResponse:
 		if msg.Error {
 			m.err = "list regions failed: " + msg.Message
-			return m, tea.Quit
+			return m.quit()
 		}
 		if len(msg.Regions) > 0 {
 			m.regionID = msg.Regions[0].RegionID
@@ -150,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case protocol.SpawnResponse:
 		if msg.Error {
 			m.err = "spawn failed: " + msg.Message
-			return m, tea.Quit
+			return m.quit()
 		}
 		m.regionID = msg.RegionID
 		m.regionName = msg.Name
@@ -163,7 +172,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case protocol.SubscribeResponse:
 		if msg.Error {
 			m.err = "subscribe failed: " + msg.Message
-			return m, tea.Quit
+			return m.quit()
 		}
 		m.status = ""
 		if m.termWidth > 0 && m.termHeight > 2 {
@@ -206,7 +215,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case protocol.RegionDestroyed:
 		m.err = "region destroyed"
-		return m, tea.Quit
+		return m.quit()
 
 	case DisconnectedMsg:
 		m.connStatus = "reconnecting"
@@ -233,7 +242,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ServerErrorMsg:
 		m.err = msg.Context + ": " + msg.Message
-		return m, tea.Quit
+		return m.quit()
 
 	case LogEntryMsg:
 		if m.overlayMode == "log" {
@@ -464,7 +473,7 @@ func (m Model) handlePrefixCommand(key byte) (tea.Model, tea.Cmd) {
 	switch key {
 	case 'd':
 		m.Detached = true
-		return m, tea.Quit
+		return m.quit()
 	case prefixKey: // ctrl+b ctrl+b → send literal ctrl+b
 		m.sendRawToServer([]byte{prefixKey})
 		return m, nil
@@ -515,7 +524,8 @@ type helpItem struct {
 var helpItems = []helpItem{
 	{"d", "detach", func(m Model) (Model, tea.Cmd) {
 		m.Detached = true
-		return m, tea.Quit
+		model, cmd := m.quit()
+		return model.(Model), cmd
 	}},
 	{"l", "log viewer", func(m Model) (Model, tea.Cmd) {
 		m.overlayMode = "log"
