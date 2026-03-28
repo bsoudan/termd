@@ -18,7 +18,7 @@ var (
 			Padding(0, 1)
 )
 
-func renderView(s *SessionLayer) string {
+func renderView(s *SessionLayer, layerStatus string, layerStatusBold, layerStatusRed bool) string {
 	if s.err != "" {
 		return "error: " + s.err + "\n"
 	}
@@ -34,7 +34,9 @@ func renderView(s *SessionLayer) string {
 
 	var sb strings.Builder
 
-	// Right side of tab bar: connection info, or mode indicator when active
+	// Right side of tab bar: connection info, or mode indicator when active.
+	// layerStatus overrides session's own status when non-empty (from
+	// CommandLayer, HintLayer, or future overlay layers).
 	rightInfo := s.endpoint
 	rightBold := false
 	rightRed := false
@@ -51,12 +53,10 @@ func renderView(s *SessionLayer) string {
 		text, _, _ := s.term.Status()
 		rightInfo = text
 		rightBold = true
-	} else if s.prefixMode {
-		rightInfo = "?"
-		rightBold = true
-	} else if s.showHint {
-		rightInfo = "ctrl+b ? for help"
-		rightBold = true
+	} else if layerStatus != "" {
+		rightInfo = layerStatus
+		rightBold = layerStatusBold
+		rightRed = layerStatusRed
 	} else if s.connStatus == "reconnecting" {
 		secs := int(time.Until(s.retryAt).Seconds()) + 1
 		rightInfo = fmt.Sprintf("reconnecting to %s in %ds...", s.endpoint, secs)
@@ -64,7 +64,7 @@ func renderView(s *SessionLayer) string {
 		rightRed = true
 	}
 	suffix := "termd-tui"
-	if s.version != "" && (s.showHint || s.overlay != nil) {
+	if s.version != "" && (layerStatus != "" || s.overlay != nil) {
 		suffix = "termd-tui " + s.version
 	}
 	sb.WriteString(renderTabBar(s.regionName, rightInfo, suffix, rightBold, rightRed, width))

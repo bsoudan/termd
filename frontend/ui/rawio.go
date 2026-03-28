@@ -59,35 +59,23 @@ func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 		}
 	}
 
-	// Prefix active: next byte is the command
-	if s.prefixMode {
-		s.prefixMode = false
-		key := chunk[0]
-		chunk = chunk[1:]
-		resp, cmd := s.handlePrefixKey(key)
-		if len(chunk) > 0 {
-			s.sendRawToServer(chunk)
-		}
-		return resp, cmd
-	}
-
 	// Scan for prefix key (ctrl+b)
 	if idx := bytes.IndexByte(chunk, prefixKey); idx >= 0 {
 		if idx > 0 {
 			s.sendRawToServer(chunk[:idx])
 		}
-		s.prefixMode = true
 		rest := chunk[idx+1:]
 		if len(rest) > 0 {
-			s.prefixMode = false
+			// Command byte in same chunk — dispatch inline
 			key := rest[0]
-			resp, cmd := s.handlePrefixKey(key)
+			resp, cmd := s.handlePrefixCommand(key)
 			if len(rest) > 1 {
 				s.sendRawToServer(rest[1:])
 			}
 			return resp, cmd
 		}
-		return nil, nil
+		// ctrl+b alone — push CommandLayer for next input
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: NewCommandLayer(s)} }
 	}
 
 	// Parse and route mouse sequences

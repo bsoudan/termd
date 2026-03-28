@@ -8,11 +8,6 @@ import (
 	"termd/frontend/protocol"
 )
 
-// handlePrefixKey handles a single key byte after ctrl+b.
-func (s *SessionLayer) handlePrefixKey(key byte) (tea.Msg, tea.Cmd) {
-	return s.handlePrefixCommand(key)
-}
-
 // sendRawToServer forwards raw bytes as input to the active region.
 func (s *SessionLayer) sendRawToServer(raw []byte) {
 	if s.regionID == "" || len(raw) == 0 {
@@ -25,7 +20,6 @@ func (s *SessionLayer) sendRawToServer(raw []byte) {
 }
 
 func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
-	s.prefixMode = false
 	switch key {
 	case 'd':
 		return s.detach()

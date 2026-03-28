@@ -23,10 +23,8 @@ type SessionLayer struct {
 	cmd     string
 	cmdArgs []string
 
-	term       *TerminalChild // nil until subscribe succeeds
-	overlay    Overlay
-	prefixMode bool
-	showHint   bool
+	term    *TerminalChild // nil until subscribe succeeds
+	overlay Overlay
 
 	regionID   string
 	regionName string
@@ -299,12 +297,9 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		return nil, nil, true
 
 	case showHintMsg:
-		s.showHint = true
-		return nil, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hideHintMsg{} }), true
-
-	case hideHintMsg:
-		s.showHint = false
-		return nil, nil, true
+		pushCmd := func() tea.Msg { return PushLayerMsg{Layer: &HintLayer{}} }
+		hideCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hideHintMsg{} })
+		return nil, tea.Batch(pushCmd, hideCmd), true
 
 	case reconnectTickMsg:
 		if s.connStatus == "reconnecting" {
@@ -368,7 +363,12 @@ func (s *SessionLayer) buildStatusCaps() StatusCaps {
 
 // View implements the Layer interface.
 func (s *SessionLayer) View(width, height int) string {
-	return renderView(s)
+	return renderView(s, "", false, false)
+}
+
+// ViewWithStatus renders the session with a status override from the layer stack.
+func (s *SessionLayer) ViewWithStatus(layerStatus string, layerStatusBold, layerStatusRed bool) string {
+	return renderView(s, layerStatus, layerStatusBold, layerStatusRed)
 }
 
 // Status implements the Layer interface.

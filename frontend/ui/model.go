@@ -56,7 +56,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() tea.View {
 	session := m.layers[0].(*SessionLayer)
-	v := tea.NewView(session.View(session.termWidth, session.termHeight))
+
+	// Collect topmost non-empty Status from layers above session.
+	layerStatus, layerBold, layerRed := "", false, false
+	for i := len(m.layers) - 1; i > 0; i-- {
+		t, b, r := m.layers[i].Status()
+		if t != "" {
+			layerStatus, layerBold, layerRed = t, b, r
+			break
+		}
+	}
+
+	v := tea.NewView(session.ViewWithStatus(layerStatus, layerBold, layerRed))
 	v.AltScreen = true
 
 	if session.term != nil {
