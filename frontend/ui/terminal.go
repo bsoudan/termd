@@ -9,6 +9,15 @@ import (
 	"termd/frontend/protocol"
 )
 
+// modeAltScreenLegacy is the original xterm alternate screen mode (DEC private 47).
+const modeAltScreenLegacy = 47
+
+// privateModeKey converts a DEC private mode number to the key used
+// by go-te's Screen.Mode map, which shifts private modes left by 5 bits.
+func privateModeKey(mode int) int {
+	return mode << 5
+}
+
 // Terminal manages the virtual screen state replicated from the server.
 type Terminal struct {
 	Screen     *te.Screen
