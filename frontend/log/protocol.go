@@ -14,7 +14,7 @@ func LogProtocolMsg(direction string, msg any) {
 	case protocol.Identify:
 		slog.Debug(direction, "type", "identify", "hostname", m.Hostname, "username", m.Username, "pid", m.Pid, "process", m.Process)
 	case protocol.SpawnRequest:
-		slog.Debug(direction, "type", "spawn_request", "cmd", m.Cmd, "args", fmt.Sprintf("%v", m.Args))
+		slog.Debug(direction, "type", "spawn_request", "program", m.Program, "session", m.Session)
 	case protocol.SpawnResponse:
 		slog.Debug(direction, "type", "spawn_response", "region_id", m.RegionID, "name", m.Name, "error", m.Error, "message", m.Message)
 	case protocol.SubscribeRequest:

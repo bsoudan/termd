@@ -16,10 +16,9 @@ type Identify struct {
 }
 
 type SpawnRequest struct {
-	Type    string   `json:"type,omitempty"`
-	Session string   `json:"session"`
-	Cmd     string   `json:"cmd"`
-	Args    []string `json:"args"`
+	Type    string `json:"type,omitempty"`
+	Session string `json:"session"`
+	Program string `json:"program"`
 }
 
 type SubscribeRequest struct {
@@ -89,6 +88,23 @@ type UnsubscribeRequest struct {
 
 type Disconnect struct {
 	Type string `json:"type,omitempty"`
+}
+
+type ListProgramsRequest struct {
+	Type string `json:"type,omitempty"`
+}
+
+type AddProgramRequest struct {
+	Type string            `json:"type,omitempty"`
+	Name string            `json:"name"`
+	Cmd  string            `json:"cmd"`
+	Args []string          `json:"args"`
+	Env  map[string]string `json:"env,omitempty"`
+}
+
+type RemoveProgramRequest struct {
+	Type string `json:"type,omitempty"`
+	Name string `json:"name"`
 }
 
 // ── Inbound (server → frontend/termctl) ─────────────────────────────────────
@@ -231,11 +247,12 @@ type UnsubscribeResponse struct {
 }
 
 type SessionConnectResponse struct {
-	Type    string       `json:"type"`
-	Session string       `json:"session"`
-	Regions []RegionInfo `json:"regions"`
-	Error   bool         `json:"error"`
-	Message string       `json:"message"`
+	Type     string        `json:"type"`
+	Session  string        `json:"session"`
+	Regions  []RegionInfo  `json:"regions"`
+	Programs []ProgramInfo `json:"programs"`
+	Error    bool          `json:"error"`
+	Message  string        `json:"message"`
 }
 
 type SessionInfo struct {
@@ -248,6 +265,32 @@ type ListSessionsResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
 	Error    bool          `json:"error"`
 	Message  string        `json:"message"`
+}
+
+type ProgramInfo struct {
+	Name string `json:"name"`
+	Cmd  string `json:"cmd"`
+}
+
+type ListProgramsResponse struct {
+	Type     string        `json:"type"`
+	Programs []ProgramInfo `json:"programs"`
+	Error    bool          `json:"error"`
+	Message  string        `json:"message"`
+}
+
+type AddProgramResponse struct {
+	Type    string `json:"type,omitempty"`
+	Name    string `json:"name"`
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
+}
+
+type RemoveProgramResponse struct {
+	Type    string `json:"type,omitempty"`
+	Name    string `json:"name"`
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
 }
 
 type TerminalEvent struct {
@@ -346,6 +389,15 @@ func parsePayload(typ string, line []byte) (any, error) {
 	case "list_sessions_response":
 		var msg ListSessionsResponse
 		return msg, json.Unmarshal(line, &msg)
+	case "list_programs_response":
+		var msg ListProgramsResponse
+		return msg, json.Unmarshal(line, &msg)
+	case "add_program_response":
+		var msg AddProgramResponse
+		return msg, json.Unmarshal(line, &msg)
+	case "remove_program_response":
+		var msg RemoveProgramResponse
+		return msg, json.Unmarshal(line, &msg)
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", typ)
 	}
@@ -431,6 +483,12 @@ func typeTag(msg any) string {
 		return "session_connect_request"
 	case ListSessionsRequest:
 		return "list_sessions_request"
+	case ListProgramsRequest:
+		return "list_programs_request"
+	case AddProgramRequest:
+		return "add_program_request"
+	case RemoveProgramRequest:
+		return "remove_program_request"
 	case Disconnect:
 		return "disconnect"
 	default:

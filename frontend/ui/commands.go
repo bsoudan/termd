@@ -9,7 +9,8 @@ type (
 	OpenOverlayMsg       struct{ Name string } // open named overlay
 	EnterScrollbackMsg   struct{}              // enter terminal scrollback mode
 	RefreshScreenMsg     struct{}              // refresh terminal screen
-	SpawnRegionMsg       struct{}              // spawn a new region
+	SpawnRegionMsg       struct{}              // spawn a new region (triggers picker if >1 program)
+	SpawnProgramMsg      struct{ Name string } // spawn a specific program by name
 	SwitchTabMsg         struct{ Index int }   // switch to tab by 0-based index
 	CloseTabMsg          struct{}              // kill the active tab's region
 )

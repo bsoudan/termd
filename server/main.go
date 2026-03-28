@@ -181,7 +181,7 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 		listeners = append(listeners, ln)
 	}
 
-	srv := NewServer(listeners, version, cfg.Sessions)
+	srv := NewServer(listeners, version, cfg)
 	defer srv.Shutdown()
 
 	sigCh := make(chan os.Signal, 1)

@@ -51,12 +51,15 @@ type Region struct {
 	readerDone chan struct{}
 }
 
-func NewRegion(cmdStr string, args []string, width, height int) (*Region, error) {
+func NewRegion(cmdStr string, args []string, env map[string]string, width, height int) (*Region, error) {
 	id := generateUUID()
 	name := extractName(cmdStr)
 
 	cmdObj := exec.Command(cmdStr, args...)
 	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=termd$ ")
+	for k, v := range env {
+		cmdObj.Env = append(cmdObj.Env, k+"="+v)
+	}
 
 	ptmx, err := pty.StartWithSize(cmdObj, &pty.Winsize{
 		Rows: uint16(height),

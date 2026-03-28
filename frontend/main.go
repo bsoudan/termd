@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -42,12 +41,6 @@ func main() {
 				Value:   defaultSocket,
 				Usage:   "server address (unix path or transport spec)",
 				Sources: cli.EnvVars("TERMD_SOCKET"),
-			},
-			&cli.StringFlag{
-				Name:    "command",
-				Aliases: []string{"c"},
-				Usage:   "command to run (default: $SHELL or bash)",
-				Sources: cli.EnvVars("TERMD_COMMAND"),
 			},
 			&cli.StringFlag{
 				Name:    "session",
@@ -95,21 +88,6 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	logHandler := termlog.NewHandler(logW, level, logRing)
 	slog.SetDefault(slog.New(logHandler))
 
-	// Resolve the command to spawn
-	var shell string
-	var shellArgs []string
-	if c := cmd.String("command"); c != "" {
-		parts := strings.Fields(c)
-		shell = parts[0]
-		shellArgs = parts[1:]
-	} else if cfg.Command != "" {
-		parts := strings.Fields(cfg.Command)
-		shell = parts[0]
-		shellArgs = parts[1:]
-	} else {
-		shell, shellArgs = defaultShell()
-	}
-
 	transport.InstallStackDump("termd-tui")
 
 	// CLI --socket > config connect > platform default
@@ -136,7 +114,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	sessionName := cmd.String("session")
 
 	server := ui.NewServer(64, "termd-tui")
-	model := ui.NewModel(server, pipeW, shell, shellArgs, logRing, endpoint, version, changelog, sessionName)
+	model := ui.NewModel(server, pipeW, logRing, endpoint, version, changelog, sessionName)
 	p := tea.NewProgram(model,
 		tea.WithInput(pipeR),
 		tea.WithColorProfile(colorprofile.TrueColor),

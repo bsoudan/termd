@@ -14,7 +14,7 @@ import (
 func startFrontendWithSession(t *testing.T, socketPath, session string) *frontend {
 	t.Helper()
 
-	args := []string{"--socket", socketPath, "--command", "bash --norc"}
+	args := []string{"--socket", socketPath}
 	if session != "" {
 		args = append(args, "--session", session)
 	}
@@ -182,8 +182,7 @@ func TestSessionCleanup(t *testing.T) {
 	defer serverCleanup()
 
 	// Create a session by spawning a region directly
-	shell := findShell(t)
-	id := runTermctl(t, socketPath, "region", "spawn", "--session", "temp", "--", shell, "--norc")
+	id := runTermctl(t, socketPath, "region", "spawn", "--session", "temp", "shell")
 	id = strings.TrimSpace(id)
 
 	// Verify session exists
@@ -216,8 +215,7 @@ func TestSessionSpawnIntoSession(t *testing.T) {
 	fe.WaitFor(t, "bash", 10*time.Second)
 
 	// Spawn another region into "main" session via termctl
-	shell := findShell(t)
-	id := runTermctl(t, socketPath, "region", "spawn", "--session", "main", "--", shell, "--norc")
+	id := runTermctl(t, socketPath, "region", "spawn", "--session", "main", "shell")
 	id = strings.TrimSpace(id)
 
 	// Verify it's in "main"

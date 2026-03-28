@@ -66,17 +66,10 @@ func startServer(t *testing.T) (string, func()) {
 }
 
 // writeTestServerConfig creates a server.toml in the XDG config dir that
-// configures bash --norc as the default session region so .bashrc doesn't
-// override PS1.
+// configures a "shell" program (bash --norc) as the default.
 func writeTestServerConfig(t *testing.T, env []string) {
 	t.Helper()
-	var xdg string
-	for _, e := range env {
-		if strings.HasPrefix(e, "XDG_CONFIG_HOME=") {
-			xdg = e[len("XDG_CONFIG_HOME="):]
-			break
-		}
-	}
+	xdg := xdgFromEnv(env)
 	if xdg == "" {
 		return
 	}
@@ -86,8 +79,62 @@ func writeTestServerConfig(t *testing.T, env []string) {
 	}
 	cfgDir := filepath.Join(xdg, "termd")
 	os.MkdirAll(cfgDir, 0o755)
-	cfgContent := fmt.Sprintf("[sessions]\n\n[[sessions.default-regions]]\ncmd = %q\nargs = [\"--norc\"]\n", shell)
+	cfgContent := fmt.Sprintf("[[programs]]\nname = \"shell\"\ncmd = %q\nargs = [\"--norc\"]\n\n[sessions]\ndefault-programs = [\"shell\"]\n", shell)
 	os.WriteFile(filepath.Join(cfgDir, "server.toml"), []byte(cfgContent), 0o644)
+}
+
+// writeTestServerConfigCustom creates a server.toml with the given raw TOML content.
+func writeTestServerConfigCustom(t *testing.T, env []string, content string) {
+	t.Helper()
+	xdg := xdgFromEnv(env)
+	if xdg == "" {
+		return
+	}
+	cfgDir := filepath.Join(xdg, "termd")
+	os.MkdirAll(cfgDir, 0o755)
+	os.WriteFile(filepath.Join(cfgDir, "server.toml"), []byte(content), 0o644)
+}
+
+func xdgFromEnv(env []string) string {
+	for _, e := range env {
+		if strings.HasPrefix(e, "XDG_CONFIG_HOME=") {
+			return e[len("XDG_CONFIG_HOME="):]
+		}
+	}
+	return ""
+}
+
+// startServerCustom starts a server with custom config content.
+func startServerCustom(t *testing.T, configContent string) (string, func()) {
+	t.Helper()
+
+	env := testEnv(t)
+	writeTestServerConfigCustom(t, env, configContent)
+
+	socketPath := filepath.Join(t.TempDir(), "termd.sock")
+	cmd := exec.Command("termd", "unix:"+socketPath)
+	cmd.Env = env
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v (is termd in PATH?)", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		runtime.Gosched()
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		cmd.Process.Kill()
+		t.Fatalf("server socket never appeared at %s", socketPath)
+	}
+
+	return socketPath, func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}
 }
 
 // startServerWithListeners starts a server with the Unix socket plus extra --listen specs.
@@ -213,7 +260,7 @@ func startFrontend(t *testing.T, socketPath string) (*ptyIO, func()) {
 func startFrontendFull(t *testing.T, socketPath string) *frontend {
 	t.Helper()
 
-	cmd := exec.Command("termd-tui", "--socket", socketPath, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", socketPath)
 	// TERM=dumb prevents bubbletea's package init() from sending an OSC
 	// terminal query that times out after 5 seconds in a raw PTY with no
 	// terminal emulator behind it.
@@ -379,11 +426,11 @@ func runTermctl(t *testing.T, socketPath string, args ...string) string {
 	return string(out)
 }
 
-// spawnRegion uses termctl to spawn a region and returns the region ID.
-// Passes --norc so bash doesn't source .bashrc (which would override PS1).
-func spawnRegion(t *testing.T, socketPath string, shellCmd string) string {
+// spawnRegion uses termctl to spawn a region using the named program
+// and returns the region ID.
+func spawnRegion(t *testing.T, socketPath string, programName string) string {
 	t.Helper()
-	out := runTermctl(t, socketPath, "region", "spawn", "--", shellCmd, "--norc")
+	out := runTermctl(t, socketPath, "region", "spawn", programName)
 	id := strings.TrimSpace(out)
 	if len(id) != 36 {
 		t.Fatalf("expected 36-char region ID, got %q", id)

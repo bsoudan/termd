@@ -12,25 +12,28 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// RegionConfig describes a region to spawn for new sessions.
-type RegionConfig struct {
-	Cmd  string   `toml:"cmd"`
-	Args []string `toml:"args"`
+// ProgramConfig describes a named program that can be spawned.
+type ProgramConfig struct {
+	Name string            `toml:"name"`
+	Cmd  string            `toml:"cmd"`
+	Args []string          `toml:"args"`
+	Env  map[string]string `toml:"env"`
 }
 
 // SessionsConfig holds session-related server settings.
 type SessionsConfig struct {
-	DefaultName    string         `toml:"default-name"`
-	DefaultRegions []RegionConfig `toml:"default-regions"`
+	DefaultName     string   `toml:"default-name"`
+	DefaultPrograms []string `toml:"default-programs"`
 }
 
 // ServerConfig represents termd/server.toml.
 type ServerConfig struct {
-	Listen   []string       `toml:"listen"`
-	Debug    bool           `toml:"debug"`
-	SSH      SSHConfig      `toml:"ssh"`
-	Termctl  TermctlConfig  `toml:"termctl"`
-	Sessions SessionsConfig `toml:"sessions"`
+	Listen   []string        `toml:"listen"`
+	Debug    bool            `toml:"debug"`
+	Programs []ProgramConfig `toml:"programs"`
+	SSH      SSHConfig       `toml:"ssh"`
+	Termctl  TermctlConfig   `toml:"termctl"`
+	Sessions SessionsConfig  `toml:"sessions"`
 }
 
 // SSHConfig holds SSH-specific server settings.
@@ -49,7 +52,6 @@ type TermctlConfig struct {
 // FrontendConfig represents termd-tui/config.toml.
 type FrontendConfig struct {
 	Connect string `toml:"connect"`
-	Command string `toml:"command"`
 	Debug   bool   `toml:"debug"`
 }
 

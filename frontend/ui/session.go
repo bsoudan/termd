@@ -27,8 +27,7 @@ type SessionLayer struct {
 	pipeW     io.Writer
 	requestFn RequestFunc
 
-	cmd     string
-	cmdArgs []string
+	programs []protocol.ProgramInfo
 
 	tabs      []tab
 	activeTab int
@@ -131,7 +130,6 @@ func (s *SessionLayer) syncTabs(regions []protocol.RegionInfo) {
 // NewSessionLayer creates a session layer with the given dependencies.
 func NewSessionLayer(
 	server *Server, pipeW io.Writer, requestFn RequestFunc,
-	cmd string, args []string,
 	logRing *termlog.LogRingBuffer,
 	endpoint, version, changelog, hostname, sessionName string,
 ) *SessionLayer {
@@ -139,8 +137,6 @@ func NewSessionLayer(
 		server:        server,
 		pipeW:         pipeW,
 		requestFn:     requestFn,
-		cmd:           cmd,
-		cmdArgs:       args,
 		endpoint:      endpoint,
 		version:       version,
 		changelog:     changelog,
@@ -265,11 +261,23 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		return nil, nil, true
 
 	case SpawnRegionMsg:
+		if len(s.programs) == 1 {
+			s.status = "spawning..."
+			s.server.Send(protocol.SpawnRequest{
+				Session: s.sessionName,
+				Program: s.programs[0].Name,
+			})
+		} else if len(s.programs) > 1 {
+			picker := NewProgramPickerLayer(s.programs)
+			return nil, func() tea.Msg { return PushLayerMsg{Layer: picker} }, true
+		}
+		return nil, nil, true
+
+	case SpawnProgramMsg:
 		s.status = "spawning..."
 		s.server.Send(protocol.SpawnRequest{
 			Session: s.sessionName,
-			Cmd:     s.cmd,
-			Args:    s.cmdArgs,
+			Program: msg.Name,
 		})
 		return nil, nil, true
 
@@ -306,6 +314,7 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			return resp, cmd, true
 		}
 		s.sessionName = msg.Session
+		s.programs = msg.Programs
 		s.syncTabs(msg.Regions)
 		return nil, nil, true
 

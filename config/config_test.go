@@ -46,7 +46,6 @@ listen = ["tcp:127.0.0.1:9090"]
 	os.MkdirAll(frontendDir, 0755)
 	os.WriteFile(filepath.Join(frontendDir, "config.toml"), []byte(`
 connect = "unix:/tmp/my-termd.sock"
-command = "zsh"
 `), 0644)
 
 	old := os.Getenv("XDG_CONFIG_HOME")
@@ -61,9 +60,6 @@ command = "zsh"
 	// Frontend config wins over server fallback
 	if cfg.Connect != "unix:/tmp/my-termd.sock" {
 		t.Errorf("expected connect=%q, got %q", "unix:/tmp/my-termd.sock", cfg.Connect)
-	}
-	if cfg.Command != "zsh" {
-		t.Errorf("expected command=%q, got %q", "zsh", cfg.Command)
 	}
 }
 

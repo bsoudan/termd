@@ -8,6 +8,34 @@
 # Enable debug logging
 # debug = false
 
+# Programs define named commands that can be spawned.
+# If no programs are configured, a "default" program is created
+# using the server user's shell.
+#
+# [[programs]]
+# name = "shell"
+# cmd = "/bin/bash"
+# args = ["--norc"]
+#
+# [[programs]]
+# name = "htop"
+# cmd = "/usr/bin/htop"
+#
+# # Programs can include extra environment variables:
+# [[programs]]
+# name = "dev"
+# cmd = "/bin/bash"
+# [programs.env]
+# EDITOR = "vim"
+
+[sessions]
+# Session name for new connections (default: "main")
+# default-name = "main"
+
+# Programs to spawn when creating a new session.
+# If empty, spawns the "default" program.
+# default-programs = ["shell"]
+
 [ssh]
 # SSH host key file (auto-generated if missing)
 # host-key = "~/.config/termd/host_key"

@@ -22,7 +22,7 @@ type Model struct {
 	Detached bool
 }
 
-func NewModel(s *Server, pipeW io.Writer, cmd string, args []string, ring *termlog.LogRingBuffer, endpoint, version, changelog, sessionName string) Model {
+func NewModel(s *Server, pipeW io.Writer, ring *termlog.LogRingBuffer, endpoint, version, changelog, sessionName string) Model {
 	hostname, _ := os.Hostname()
 	req := &requestState{pending: make(map[uint64]ReplyFunc)}
 	requestFn := func(msg any, reply ReplyFunc) {
@@ -30,7 +30,7 @@ func NewModel(s *Server, pipeW io.Writer, cmd string, args []string, ring *terml
 		req.pending[req.nextReqID] = reply
 		s.Send(protocol.TaggedWithReqID(msg, req.nextReqID))
 	}
-	session := NewSessionLayer(s, pipeW, requestFn, cmd, args, ring, endpoint, version, changelog, hostname, sessionName)
+	session := NewSessionLayer(s, pipeW, requestFn, ring, endpoint, version, changelog, hostname, sessionName)
 	return Model{
 		layers: []Layer{session},
 		req:    req,
@@ -102,7 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) hasFocusLayer(session *SessionLayer) bool {
 	for i := 1; i < len(m.layers); i++ {
 		switch m.layers[i].(type) {
-		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer:
+		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer:
 			return true
 		}
 	}
@@ -185,7 +185,7 @@ func (m Model) View() tea.View {
 			}
 		}
 		switch m.layers[i].(type) {
-		case *ScrollableLayer, *StatusLayer, *HelpLayer:
+		case *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer:
 			hasOverlay = true
 		}
 	}

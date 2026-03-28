@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,8 +27,7 @@ func TestTermctlRegionSpawnAndList(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	shell := findShell(t)
-	id := spawnRegion(t, socketPath, shell)
+	id := spawnRegion(t, socketPath, "shell")
 
 	out := runTermctl(t, socketPath, "region", "list")
 	if !strings.Contains(out, id) {
@@ -44,8 +42,7 @@ func TestTermctlRegionView(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	shell := findShell(t)
-	id := spawnRegion(t, socketPath, shell)
+	id := spawnRegion(t, socketPath, "shell")
 
 	// Send a command and wait a moment for bash to process it
 	runTermctl(t, socketPath, "region", "send", "-e", id, `echo viewtest_marker\r`)
@@ -65,8 +62,7 @@ func TestTermctlRegionKill(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	shell := findShell(t)
-	id := spawnRegion(t, socketPath, shell)
+	id := spawnRegion(t, socketPath, "shell")
 
 	out := runTermctl(t, socketPath, "region", "kill", id)
 	if !strings.Contains(out, "killed") {
@@ -89,8 +85,7 @@ func TestTermctlRegionSend(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	shell := findShell(t)
-	id := spawnRegion(t, socketPath, shell)
+	id := spawnRegion(t, socketPath, "shell")
 
 	// -e interprets \n as newline (acts as Enter)
 	runTermctl(t, socketPath, "region", "send", "-e", id, `echo sendtest_ok\r`)
@@ -160,13 +155,4 @@ func TestTermctlClientKill(t *testing.T) {
 	if strings.Contains(out, "termd-tui") {
 		t.Fatalf("frontend client still listed after kill:\n%s", out)
 	}
-}
-
-func findShell(t *testing.T) string {
-	t.Helper()
-	shell, err := exec.LookPath("bash")
-	if err != nil {
-		t.Fatalf("bash not found: %v", err)
-	}
-	return shell
 }

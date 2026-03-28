@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -25,18 +26,31 @@ type Server struct {
 	regions  map[string]*Region
 	clients  map[uint32]*Client
 	sessions map[string]*Session
+	programs map[string]config.ProgramConfig
 
 	done     chan struct{}
 	shutdown atomic.Bool
 }
 
-func NewServer(listeners []net.Listener, version string, sessionsCfg config.SessionsConfig) *Server {
+func NewServer(listeners []net.Listener, version string, cfg config.ServerConfig) *Server {
 	for _, ln := range listeners {
 		slog.Info("listening", "addr", ln.Addr().String())
 	}
 
+	sessionsCfg := cfg.Sessions
 	if sessionsCfg.DefaultName == "" {
 		sessionsCfg.DefaultName = "main"
+	}
+
+	programs := make(map[string]config.ProgramConfig)
+	for _, p := range cfg.Programs {
+		programs[p.Name] = p
+	}
+	if len(programs) == 0 {
+		programs["default"] = config.ProgramConfig{
+			Name: "default",
+			Cmd:  serverShell(),
+		}
 	}
 
 	s := &Server{
@@ -44,6 +58,7 @@ func NewServer(listeners []net.Listener, version string, sessionsCfg config.Sess
 		listeners:   listeners,
 		startTime:   time.Now(),
 		sessionsCfg: sessionsCfg,
+		programs:    programs,
 		regions:     make(map[string]*Region),
 		clients:     make(map[uint32]*Client),
 		sessions:    make(map[string]*Session),
@@ -119,8 +134,8 @@ func (s *Server) acceptClient(conn net.Conn) {
 	go client.ReadLoop()
 }
 
-func (s *Server) SpawnRegion(sessionName, cmd string, args []string) (*Region, error) {
-	region, err := NewRegion(cmd, args, 80, 24)
+func (s *Server) SpawnRegion(sessionName, cmd string, args []string, env map[string]string) (*Region, error) {
+	region, err := NewRegion(cmd, args, env, 80, 24)
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +334,19 @@ func (s *Server) listenerAddrs() string {
 	return strings.Join(addrs, ", ")
 }
 
+// SpawnProgram looks up a program by name and spawns it into the given session.
+func (s *Server) SpawnProgram(sessionName, programName string) (*Region, error) {
+	s.mu.Lock()
+	prog, ok := s.programs[programName]
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("unknown program: %s", programName)
+	}
+	return s.SpawnRegion(sessionName, prog.Cmd, prog.Args, prog.Env)
+}
+
 // findOrCreateSession returns an existing session or creates a new one with
-// default regions. The caller must NOT hold s.mu.
+// default programs. The caller must NOT hold s.mu.
 func (s *Server) findOrCreateSession(name string) (*Session, []protocol.RegionInfo, error) {
 	if name == "" {
 		name = s.sessionsCfg.DefaultName
@@ -335,16 +361,25 @@ func (s *Server) findOrCreateSession(name string) (*Session, []protocol.RegionIn
 	}
 	s.mu.Unlock()
 
-	// Spawn default regions outside the lock.
-	regions := s.sessionsCfg.DefaultRegions
-	if len(regions) == 0 {
-		shell := serverShell()
-		regions = []config.RegionConfig{{Cmd: shell}}
+	// Determine which programs to spawn.
+	programNames := s.sessionsCfg.DefaultPrograms
+	if len(programNames) == 0 {
+		// Spawn the first program (or "default" if it exists).
+		s.mu.Lock()
+		if _, ok := s.programs["default"]; ok {
+			programNames = []string{"default"}
+		} else {
+			for pname := range s.programs {
+				programNames = []string{pname}
+				break
+			}
+		}
+		s.mu.Unlock()
 	}
 
 	var infos []protocol.RegionInfo
-	for _, rc := range regions {
-		region, err := s.SpawnRegion(name, rc.Cmd, rc.Args)
+	for _, pname := range programNames {
+		region, err := s.SpawnProgram(name, pname)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -389,6 +424,36 @@ func serverShell() string {
 		return p
 	}
 	return "sh"
+}
+
+func (s *Server) listProgramInfos() []protocol.ProgramInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	infos := make([]protocol.ProgramInfo, 0, len(s.programs))
+	for _, p := range s.programs {
+		infos = append(infos, protocol.ProgramInfo{Name: p.Name, Cmd: p.Cmd})
+	}
+	return infos
+}
+
+func (s *Server) addProgram(p config.ProgramConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.programs[p.Name]; exists {
+		return fmt.Errorf("program %q already exists", p.Name)
+	}
+	s.programs[p.Name] = p
+	return nil
+}
+
+func (s *Server) removeProgram(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.programs[name]; !exists {
+		return fmt.Errorf("program %q not found", name)
+	}
+	delete(s.programs, name)
+	return nil
 }
 
 func (s *Server) getRegionInfos(sessionFilter string) []protocol.RegionInfo {

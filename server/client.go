@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 
+	"termd/config"
 	"termd/frontend/protocol"
 )
 
@@ -236,6 +237,18 @@ func (c *Client) handleMessage(line []byte) {
 		}
 	case "list_sessions_request":
 		c.handleListSessions(reply)
+	case "list_programs_request":
+		c.handleListPrograms(reply)
+	case "add_program_request":
+		var msg protocol.AddProgramRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleAddProgram(msg, reply)
+		}
+	case "remove_program_request":
+		var msg protocol.RemoveProgramRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleRemoveProgram(msg, reply)
+		}
 	case "disconnect":
 		slog.Info("client disconnecting gracefully", "client_id", c.id)
 		c.Close()
@@ -276,7 +289,12 @@ func (c *Client) handleSpawn(msg protocol.SpawnRequest, reply func(any)) {
 		sessionName = c.server.sessionsCfg.DefaultName
 	}
 
-	region, err := c.server.SpawnRegion(sessionName, msg.Cmd, msg.Args)
+	programName := msg.Program
+	if programName == "" {
+		programName = "default"
+	}
+
+	region, err := c.server.SpawnProgram(sessionName, programName)
 	if err != nil {
 		reply(protocol.SpawnResponse{
 			Type:     "spawn_response",
@@ -536,11 +554,12 @@ func (c *Client) handleSessionConnect(msg protocol.SessionConnectRequest, reply 
 	c.SetSessionName(sess.name)
 
 	reply(protocol.SessionConnectResponse{
-		Type:    "session_connect_response",
-		Session: sess.name,
-		Regions: infos,
-		Error:   false,
-		Message: "",
+		Type:     "session_connect_response",
+		Session:  sess.name,
+		Regions:  infos,
+		Programs: c.server.listProgramInfos(),
+		Error:    false,
+		Message:  "",
 	})
 
 	slog.Debug("client connected to session", "client_id", c.id, "session", sess.name)
@@ -553,5 +572,53 @@ func (c *Client) handleListSessions(reply func(any)) {
 		Sessions: infos,
 		Error:    false,
 		Message:  "",
+	})
+}
+
+func (c *Client) handleListPrograms(reply func(any)) {
+	infos := c.server.listProgramInfos()
+	reply(protocol.ListProgramsResponse{
+		Type:     "list_programs_response",
+		Programs: infos,
+		Error:    false,
+		Message:  "",
+	})
+}
+
+func (c *Client) handleAddProgram(msg protocol.AddProgramRequest, reply func(any)) {
+	p := config.ProgramConfig{
+		Name: msg.Name,
+		Cmd:  msg.Cmd,
+		Args: msg.Args,
+		Env:  msg.Env,
+	}
+	if err := c.server.addProgram(p); err != nil {
+		reply(protocol.AddProgramResponse{
+			Type:    "add_program_response",
+			Name:    msg.Name,
+			Error:   true,
+			Message: err.Error(),
+		})
+		return
+	}
+	reply(protocol.AddProgramResponse{
+		Type: "add_program_response",
+		Name: msg.Name,
+	})
+}
+
+func (c *Client) handleRemoveProgram(msg protocol.RemoveProgramRequest, reply func(any)) {
+	if err := c.server.removeProgram(msg.Name); err != nil {
+		reply(protocol.RemoveProgramResponse{
+			Type:    "remove_program_response",
+			Name:    msg.Name,
+			Error:   true,
+			Message: err.Error(),
+		})
+		return
+	}
+	reply(protocol.RemoveProgramResponse{
+		Type: "remove_program_response",
+		Name: msg.Name,
 	})
 }

@@ -139,8 +139,7 @@ func TestAltScreenRestore(t *testing.T) {
 
 	// Use termctl to verify server-side screen state (avoids bubbletea
 	// rendering diff issues in the test's go-te Screen).
-	shell := findShell(t)
-	id := spawnRegion(t, socketPath, shell)
+	id := spawnRegion(t, socketPath, "shell")
 
 	// Type a marker
 	runTermctl(t, socketPath, "region", "send", "-e", id, `echo alt_screen_marker\r`)
@@ -523,7 +522,7 @@ func TestLogViewerOverlay(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	cmd := exec.Command("termd-tui", "--socket", socketPath, "--debug", "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", socketPath, "--debug", )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -725,10 +724,10 @@ func TestTCPTransport(t *testing.T) {
 	defer serverCleanup()
 
 	// Spawn a region via the Unix socket (termctl)
-	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "shell")
 
 	// Connect frontend via TCP
-	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
@@ -831,7 +830,7 @@ func TestScrollbackBuffer(t *testing.T) {
 	defer serverCleanup()
 
 	// Spawn a region and generate enough output to fill scrollback
-	regionID := spawnRegion(t, socketPath, "bash")
+	regionID := spawnRegion(t, socketPath, "shell")
 
 	// Wait for shell prompt
 	pio, frontendCleanup := startFrontend(t, socketPath)
@@ -993,10 +992,10 @@ func TestWebSocketTransport(t *testing.T) {
 	}
 
 	// Spawn a region via Unix socket
-	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "shell")
 
 	// Connect frontend via WebSocket
-	cmd := exec.Command("termd-tui", "--socket", "ws://"+wsAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "ws://"+wsAddr, )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -1016,13 +1015,16 @@ func TestSSHTransport(t *testing.T) {
 	dir := t.TempDir()
 	hostKeyPath := filepath.Join(dir, "host_key")
 
+	env := testEnv(t)
+	writeTestServerConfig(t, env)
+
 	// Start server with Unix + SSH (no auth keys = accept all for test)
 	socketPath := filepath.Join(dir, "termd.sock")
 	cmd := exec.Command("termd",
 		"--ssh-host-key", hostKeyPath,
 		"--ssh-no-auth",
 		"unix:"+socketPath, "ssh://127.0.0.1:0")
-	cmd.Env = testEnv(t)
+	cmd.Env = env
 	stderrR, stderrW, _ := os.Pipe()
 	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
@@ -1067,10 +1069,10 @@ func TestSSHTransport(t *testing.T) {
 	}
 
 	// Spawn a region via Unix socket
-	_ = runTermctl(t, socketPath, "region", "spawn", "--", "bash", "--norc")
+	_ = runTermctl(t, socketPath, "region", "spawn", "shell")
 
 	// Connect frontend via SSH
-	feCmd := exec.Command("termd-tui", "--socket", "ssh://"+sshAddr, "--command", "bash --norc")
+	feCmd := exec.Command("termd-tui", "--socket", "ssh://"+sshAddr, )
 	feCmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(feCmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -1163,7 +1165,7 @@ func TestReconnectTCP(t *testing.T) {
 	defer serverCleanup()
 
 	// Connect frontend via TCP
-	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -1221,7 +1223,7 @@ func TestMultiTransportSharedRegion(t *testing.T) {
 	pio1.WaitFor(t, "multi_transport_marker", 10*time.Second)
 
 	// Start frontend 2 via TCP (subscribes to the same region)
-	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, "--command", "bash --norc")
+	cmd := exec.Command("termd-tui", "--socket", "tcp:"+tcpAddr, )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -1345,9 +1347,8 @@ func TestConnectPicksUpExistingRegions(t *testing.T) {
 	defer serverCleanup()
 
 	// Pre-create two regions via termctl before the frontend connects.
-	shell := findShell(t)
-	spawnRegion(t, socketPath, shell)
-	spawnRegion(t, socketPath, shell)
+	spawnRegion(t, socketPath, "shell")
+	spawnRegion(t, socketPath, "shell")
 
 	// Now start the frontend — it should enumerate both regions as tabs.
 	pio, frontendCleanup := startFrontend(t, socketPath)

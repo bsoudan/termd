@@ -88,7 +88,7 @@ func main() {
 						Action: cmdRegionList,
 					},
 					{
-						Name: "spawn", Usage: "spawn a new region", ArgsUsage: "<cmd> [args...]",
+						Name: "spawn", Usage: "spawn a new region", ArgsUsage: "[program-name]",
 						Flags: []cli.Flag{
 							&cli.StringFlag{Name: "session", Aliases: []string{"S"}, Usage: "session to spawn into"},
 						},
@@ -110,6 +110,21 @@ func main() {
 						},
 						Action: cmdRegionSend,
 					},
+				},
+			},
+			{
+				Name:  "program",
+				Usage: "manage programs",
+				Commands: []*cli.Command{
+					{Name: "list", Usage: "list configured programs", Action: cmdProgramList},
+					{
+						Name: "add", Usage: "add a program", ArgsUsage: "<name> <cmd> [args...]",
+						Flags: []cli.Flag{
+							&cli.StringSliceFlag{Name: "env", Aliases: []string{"e"}, Usage: "environment variable (KEY=VAL)"},
+						},
+						Action: cmdProgramAdd,
+					},
+					{Name: "remove", Usage: "remove a program", ArgsUsage: "<name>", Action: cmdProgramRemove},
 				},
 			},
 			{
@@ -238,11 +253,10 @@ func cmdRegionList(_ context.Context, cmd *cli.Command) error {
 }
 
 func cmdRegionSpawn(_ context.Context, cmd *cli.Command) error {
-	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl region spawn <cmd> [args...]")
+	programName := cmd.Args().First()
+	if programName == "" {
+		programName = "default"
 	}
-	spawnCmd := cmd.Args().First()
-	args := cmd.Args().Tail()
 
 	cl, err := connect(cmd)
 	if err != nil {
@@ -250,7 +264,7 @@ func cmdRegionSpawn(_ context.Context, cmd *cli.Command) error {
 	}
 	defer cl.Close()
 
-	_ = cl.Send(protocol.SpawnRequest{Session: cmd.String("session"), Cmd: spawnCmd, Args: args})
+	_ = cl.Send(protocol.SpawnRequest{Session: cmd.String("session"), Program: programName})
 	resp, err := recvType[protocol.SpawnResponse](cl)
 	if err != nil {
 		return err
@@ -459,6 +473,96 @@ func cmdClientKill(_ context.Context, cmd *cli.Command) error {
 	}
 
 	fmt.Println("killed")
+	return nil
+}
+
+func cmdProgramList(_ context.Context, cmd *cli.Command) error {
+	cl, err := connect(cmd)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	_ = cl.Send(protocol.ListProgramsRequest{})
+	resp, err := recvType[protocol.ListProgramsResponse](cl)
+	if err != nil {
+		return err
+	}
+	if resp.Error {
+		return fmt.Errorf("%s", resp.Message)
+	}
+
+	if len(resp.Programs) == 0 {
+		fmt.Println("no programs")
+		return nil
+	}
+
+	fmt.Printf("%-20s  %s\n", "NAME", "CMD")
+	for _, p := range resp.Programs {
+		fmt.Printf("%-20s  %s\n", p.Name, p.Cmd)
+	}
+	return nil
+}
+
+func cmdProgramAdd(_ context.Context, cmd *cli.Command) error {
+	if cmd.NArg() < 2 {
+		return fmt.Errorf("usage: termctl program add <name> <cmd> [args...]")
+	}
+	name := cmd.Args().Get(0)
+	progCmd := cmd.Args().Get(1)
+	args := cmd.Args().Slice()[2:]
+
+	var env map[string]string
+	if envSlice := cmd.StringSlice("env"); len(envSlice) > 0 {
+		env = make(map[string]string)
+		for _, e := range envSlice {
+			k, v, ok := strings.Cut(e, "=")
+			if !ok {
+				return fmt.Errorf("invalid env format %q (expected KEY=VAL)", e)
+			}
+			env[k] = v
+		}
+	}
+
+	cl, err := connect(cmd)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	_ = cl.Send(protocol.AddProgramRequest{Name: name, Cmd: progCmd, Args: args, Env: env})
+	resp, err := recvType[protocol.AddProgramResponse](cl)
+	if err != nil {
+		return err
+	}
+	if resp.Error {
+		return fmt.Errorf("%s", resp.Message)
+	}
+	fmt.Printf("added %s\n", name)
+	return nil
+}
+
+func cmdProgramRemove(_ context.Context, cmd *cli.Command) error {
+	if cmd.NArg() < 1 {
+		return fmt.Errorf("usage: termctl program remove <name>")
+	}
+	name := cmd.Args().First()
+
+	cl, err := connect(cmd)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	_ = cl.Send(protocol.RemoveProgramRequest{Name: name})
+	resp, err := recvType[protocol.RemoveProgramResponse](cl)
+	if err != nil {
+		return err
+	}
+	if resp.Error {
+		return fmt.Errorf("%s", resp.Message)
+	}
+	fmt.Printf("removed %s\n", name)
 	return nil
 }
 
