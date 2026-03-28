@@ -73,6 +73,10 @@ type Model struct {
 	pendingClear bool
 	status       string
 	err          string
+	// Scrollback navigation
+	scrollbackMode   bool
+	scrollbackOffset int                    // lines scrolled back from bottom (0 = live)
+	scrollbackCells  [][]protocol.ScreenCell // server-side scrollback buffer
 }
 
 // contentHeight returns the number of rows available for terminal content
@@ -390,6 +394,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.serverStatus = &msg
 		return m, waitForUpdate(m.client)
 
+	case ScrollbackResponseMsg:
+		m.scrollbackCells = msg.Lines
+		// Start at the bottom of scrollback (most recent history)
+		m.scrollbackOffset = 0
+		return m, waitForUpdate(m.client)
+
 	case tea.KeyboardEnhancementsMsg:
 		m.keyboardFlags = msg.Flags
 		return m, nil
@@ -424,6 +434,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.showHelp {
 			return m.updateHelpViewer(msg)
+		}
+		if m.scrollbackMode {
+			return m.updateScrollbackViewer(msg)
 		}
 		return m.updatePrefixCommand(msg)
 
@@ -487,6 +500,26 @@ func (m Model) updatePrefixCommand(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		select {
 		case m.FocusCh <- done:
 		default:
+		}
+		return m, nil
+	case "[":
+		// Enter scrollback mode — request scrollback from server
+		if m.regionID != "" {
+			m.scrollbackMode = true
+			m.scrollbackOffset = 0
+			done := make(chan struct{})
+			m.focusDone = done
+			select {
+			case m.FocusCh <- done:
+			default:
+			}
+			return m, func() tea.Msg {
+				_ = m.client.Send(protocol.GetScrollbackRequest{
+					Type:     "get_scrollback_request",
+					RegionID: m.regionID,
+				})
+				return nil
+			}
 		}
 		return m, nil
 	case "r":
@@ -567,6 +600,23 @@ var helpItems = []helpItem{
 		}
 		return m, nil
 	}},
+	{"[", "scrollback", func(m Model) (Model, tea.Cmd) {
+		if m.regionID != "" {
+			m.scrollbackMode = true
+			m.scrollbackOffset = 0
+			done := make(chan struct{})
+			m.focusDone = done
+			select {
+			case m.FocusCh <- done:
+			default:
+			}
+			_ = m.client.Send(protocol.GetScrollbackRequest{
+				Type:     "get_scrollback_request",
+				RegionID: m.regionID,
+			})
+		}
+		return m, nil
+	}},
 	{"b", "send literal ctrl+b", func(m Model) (Model, tea.Cmd) {
 		if m.regionID != "" {
 			data := base64.StdEncoding.EncodeToString([]byte{0x02})
@@ -589,6 +639,63 @@ func (m Model) closeHelp() Model {
 }
 
 
+
+func (m Model) exitScrollback() Model {
+	m.scrollbackMode = false
+	m.scrollbackOffset = 0
+	m.scrollbackCells = nil
+	if m.focusDone != nil {
+		close(m.focusDone)
+		m.focusDone = nil
+	}
+	return m
+}
+
+func (m Model) updateScrollbackViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	maxOffset := len(m.scrollbackCells)
+	halfPage := m.contentHeight() / 2
+	if halfPage < 1 {
+		halfPage = 1
+	}
+
+	switch msg.String() {
+	case "q", "esc":
+		m = m.exitScrollback()
+		return m, nil
+	case "up", "k":
+		if m.scrollbackOffset < maxOffset {
+			m.scrollbackOffset++
+		}
+		return m, nil
+	case "down", "j":
+		if m.scrollbackOffset > 0 {
+			m.scrollbackOffset--
+		}
+		return m, nil
+	case "pgup", "ctrl+u":
+		m.scrollbackOffset += halfPage
+		if m.scrollbackOffset > maxOffset {
+			m.scrollbackOffset = maxOffset
+		}
+		return m, nil
+	case "pgdown", "ctrl+d":
+		m.scrollbackOffset -= halfPage
+		if m.scrollbackOffset < 0 {
+			m.scrollbackOffset = 0
+		}
+		return m, nil
+	case "home", "g":
+		m.scrollbackOffset = maxOffset
+		return m, nil
+	case "end", "G":
+		m.scrollbackOffset = 0
+		return m, nil
+	default:
+		// Any other key exits scrollback and snaps to live
+		m = m.exitScrollback()
+		return m, nil
+	}
+}
 
 func (m Model) updateStatusViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -704,10 +811,40 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Child doesn't want mouse — handle scroll wheel for termd-tui
-	switch msg.(type) {
-	case tea.MouseWheelMsg:
-		// TODO: scrollback navigation (step 4)
+	// Child doesn't want mouse — scroll wheel enters/navigates scrollback
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		if m.scrollbackMode {
+			maxOffset := len(m.scrollbackCells)
+			switch wheel.Button {
+			case tea.MouseWheelUp:
+				m.scrollbackOffset += 3
+				if m.scrollbackOffset > maxOffset {
+					m.scrollbackOffset = maxOffset
+				}
+			case tea.MouseWheelDown:
+				m.scrollbackOffset -= 3
+				if m.scrollbackOffset < 0 {
+					m.scrollbackOffset = 0
+				}
+			}
+			return m, nil
+		}
+		// Scroll up activates scrollback mode
+		if wheel.Button == tea.MouseWheelUp && m.regionID != "" {
+			m.scrollbackMode = true
+			m.scrollbackOffset = 3
+			done := make(chan struct{})
+			m.focusDone = done
+			select {
+			case m.FocusCh <- done:
+			default:
+			}
+			_ = m.client.Send(protocol.GetScrollbackRequest{
+				Type:     "get_scrollback_request",
+				RegionID: m.regionID,
+			})
+			return m, nil
+		}
 	}
 	return m, nil
 }

@@ -53,6 +53,9 @@ func renderView(m Model) string {
 	} else if m.showHelp {
 		rightInfo = "help"
 		rightBold = true
+	} else if m.scrollbackMode {
+		rightInfo = fmt.Sprintf("scrollback [%d/%d]", m.scrollbackOffset, len(m.scrollbackCells))
+		rightBold = true
 	} else if m.overlayMode == "log" {
 		rightInfo = "logviewer"
 		rightBold = true
@@ -79,10 +82,12 @@ func renderView(m Model) string {
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	showCursor := m.overlayMode == ""
+	showCursor := m.overlayMode == "" && !m.scrollbackMode
 	disconnected := m.connStatus == "reconnecting"
 
-	if m.localScreen != nil {
+	if m.scrollbackMode && m.localScreen != nil {
+		renderScrollbackContent(&sb, m, width, contentHeight)
+	} else if m.localScreen != nil {
 		cells := m.localScreen.LinesCells()
 		for i := range contentHeight {
 			var row []te.Cell
@@ -138,6 +143,58 @@ func renderView(m Model) string {
 }
 
 // renderCellLine writes one row of cells with ANSI color/attribute sequences.
+// renderScrollbackContent renders the combined scrollback + screen buffer
+// with the given offset from the bottom. Scrollback cells are protocol cells
+// that need conversion to te.Cell for rendering.
+func renderScrollbackContent(sb *strings.Builder, m Model, width, contentHeight int) {
+	screenCells := m.localScreen.LinesCells()
+
+	// Build combined buffer: scrollback (oldest first) + screen
+	totalLines := len(m.scrollbackCells) + len(screenCells)
+
+	// The visible window starts at (totalLines - contentHeight - offset)
+	startIdx := totalLines - contentHeight - m.scrollbackOffset
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	for i := range contentHeight {
+		idx := startIdx + i
+		var row []te.Cell
+		if idx < len(m.scrollbackCells) {
+			// Render from scrollback (protocol cells → te.Cell)
+			row = protocolCellsToTe(m.scrollbackCells[idx])
+		} else {
+			screenIdx := idx - len(m.scrollbackCells)
+			if screenIdx >= 0 && screenIdx < len(screenCells) {
+				row = screenCells[screenIdx]
+			}
+		}
+		renderCellLine(sb, row, width, i, -1, -1, false, false)
+		if i < contentHeight-1 {
+			sb.WriteByte('\n')
+		}
+	}
+}
+
+// protocolCellsToTe converts protocol ScreenCell data to te.Cell for rendering.
+func protocolCellsToTe(cells []protocol.ScreenCell) []te.Cell {
+	row := make([]te.Cell, len(cells))
+	for i, c := range cells {
+		row[i].Data = c.Char
+		row[i].Attr.Fg = specToColor(c.Fg)
+		row[i].Attr.Bg = specToColor(c.Bg)
+		row[i].Attr.Bold = c.A&1 != 0
+		row[i].Attr.Italics = c.A&2 != 0
+		row[i].Attr.Underline = c.A&4 != 0
+		row[i].Attr.Strikethrough = c.A&8 != 0
+		row[i].Attr.Reverse = c.A&16 != 0
+		row[i].Attr.Blink = c.A&32 != 0
+		row[i].Attr.Conceal = c.A&64 != 0
+	}
+	return row
+}
+
 func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow, cursorCol int, showCursor bool, disconnected bool) {
 	var cur te.Attr // tracks current SGR state (zero = default)
 	for col := range width {

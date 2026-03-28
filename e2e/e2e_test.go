@@ -932,6 +932,63 @@ func TestScrollbackBuffer(t *testing.T) {
 	}
 }
 
+func TestScrollbackNavigation(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Generate enough output to fill scrollback
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Enter scrollback mode with ctrl+b [
+	pio.Write([]byte{0x02}) // ctrl+b
+	time.Sleep(50 * time.Millisecond)
+	pio.Write([]byte("["))
+
+	// Tab bar should show "scrollback"
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback indicator in tab bar", 5*time.Second)
+
+	// Page up several times to reach early numbers
+	for range 20 {
+		pio.Write([]byte{0x15}) // ctrl+u = page up
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	// Verify early numbers appear on screen
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines[1:] { // skip tab bar
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "1" || trimmed == "2" || trimmed == "3" {
+				return true
+			}
+		}
+		return false
+	}, "early numbers (1/2/3) visible on screen", 5*time.Second)
+
+	// Exit scrollback with q
+	pio.Write([]byte("q"))
+
+	// Tab bar should no longer show "scrollback" and prompt should be visible
+	pio.WaitForScreen(t, func(lines []string) bool {
+		if strings.Contains(lines[0], "scrollback") {
+			return false
+		}
+		for _, line := range lines {
+			if strings.Contains(line, "termd$ ") {
+				return true
+			}
+		}
+		return false
+	}, "prompt visible, scrollback gone from tab bar", 5*time.Second)
+}
+
 func TestWebSocketTransport(t *testing.T) {
 	socketPath, addrs, serverCleanup := startServerWithListeners(t, "ws://127.0.0.1:0")
 	defer serverCleanup()

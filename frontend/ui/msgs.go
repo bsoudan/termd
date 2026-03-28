@@ -59,6 +59,10 @@ type ListRegionsResponseMsg struct {
 	Message string
 }
 
+type ScrollbackResponseMsg struct {
+	Lines [][]protocol.ScreenCell
+}
+
 type ServerIdentifyMsg struct {
 	Hostname string
 }
@@ -111,6 +115,8 @@ func convertProtocolMsg(msg any) tea.Msg {
 		return ScreenUpdateMsg{RegionID: m.RegionID, CursorRow: m.CursorRow, CursorCol: m.CursorCol, Lines: m.Lines, Cells: m.Cells}
 	case protocol.StatusResponse:
 		return m
+	case protocol.GetScrollbackResponse:
+		return ScrollbackResponseMsg{Lines: m.Lines}
 	case client.DisconnectedMsg:
 		return DisconnectedMsg{RetryAt: m.RetryAt}
 	case client.ReconnectedMsg:
