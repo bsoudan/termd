@@ -19,50 +19,6 @@ func (s *SessionLayer) sendRawToServer(raw []byte) {
 	})
 }
 
-// handlePrefixCommand dispatches a command byte after ctrl+b.
-// Used for the inline case (ctrl+b + command in same raw input chunk).
-func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
-	switch key {
-	case 'd':
-		return s.detach()
-	case prefixKey: // ctrl+b ctrl+b → send literal ctrl+b
-		s.sendRawToServer([]byte{prefixKey})
-		return nil, nil
-	case 'l':
-		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.logRing, s.termWidth, s.termHeight)
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
-	case '?':
-		layer := NewHelpLayer(helpItems, s)
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
-	case 's':
-		layer := NewStatusLayer(s.buildStatusCaps())
-		s.requestFn(protocol.StatusRequest{}, func(payload any) {
-			if resp, ok := payload.(*protocol.StatusResponse); ok {
-				layer.SetStatus(resp)
-			}
-		})
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
-	case 'n':
-		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, nil, s.termWidth, s.termHeight)
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
-	case '[':
-		if s.term != nil {
-			s.term.EnterScrollback(0)
-		}
-		return nil, nil
-	case 'r':
-		if s.term != nil {
-			s.term.SetPendingClear()
-			s.server.Send(protocol.GetScreenRequest{
-				RegionID: s.term.RegionID(),
-			})
-		}
-		return nil, nil
-	default:
-		return nil, nil
-	}
-}
-
 type helpItem struct {
 	key    string
 	label  string

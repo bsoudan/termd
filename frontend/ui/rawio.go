@@ -73,17 +73,16 @@ func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 			s.sendRawToServer(chunk[:idx])
 		}
 		rest := chunk[idx+1:]
+		pushCmd := func() tea.Msg { return PushLayerMsg{Layer: NewCommandLayer(s)} }
 		if len(rest) > 0 {
-			// Command byte in same chunk — dispatch inline
-			key := rest[0]
-			resp, cmd := s.handlePrefixCommand(key)
-			if len(rest) > 1 {
-				s.sendRawToServer(rest[1:])
-			}
-			return resp, cmd
+			// Command byte in same chunk — push CommandLayer then re-send
+			// remaining bytes. Sequence guarantees push happens first.
+			restCopy := make([]byte, len(rest))
+			copy(restCopy, rest)
+			resendCmd := func() tea.Msg { return RawInputMsg(restCopy) }
+			return nil, tea.Sequence(pushCmd, resendCmd)
 		}
-		// ctrl+b alone — push CommandLayer for next input
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: NewCommandLayer(s)} }
+		return nil, pushCmd
 	}
 
 	// Parse and route mouse sequences
