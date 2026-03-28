@@ -90,47 +90,10 @@ func renderView(m Model) string {
 	showCursor := m.overlayMode == "" && !m.scrollbackMode
 	disconnected := m.connStatus == "reconnecting"
 
-	if m.scrollbackMode && m.localScreen != nil {
+	if m.scrollbackMode && m.terminal.Screen != nil {
 		renderScrollbackContent(&sb, m, width, contentHeight)
-	} else if m.localScreen != nil {
-		cells := m.localScreen.LinesCells()
-		for i := range contentHeight {
-			var row []te.Cell
-			if i < len(cells) {
-				row = cells[i]
-			}
-			renderCellLine(&sb, row, width, i, m.cursorRow, m.cursorCol, showCursor, disconnected)
-			if i < contentHeight-1 {
-				sb.WriteByte('\n')
-			}
-		}
 	} else {
-		for i := range contentHeight {
-			line := ""
-			if i < len(m.lines) {
-				line = m.lines[i]
-			}
-			runes := []rune(line)
-			if len(runes) > width {
-				runes = runes[:width]
-			}
-			for col := range width {
-				ch := ' '
-				if col < len(runes) {
-					ch = runes[col]
-				}
-				if showCursor && i == m.cursorRow && col == m.cursorCol {
-					sb.WriteString(ansi.SGR(ansi.AttrReverse))
-					sb.WriteRune(ch)
-					sb.WriteString(ansi.SGR(ansi.AttrNoReverse))
-				} else {
-					sb.WriteRune(ch)
-				}
-			}
-			if i < contentHeight-1 {
-				sb.WriteByte('\n')
-			}
-		}
+		m.terminal.View(&sb, width, contentHeight, showCursor, disconnected)
 	}
 
 	base := sb.String()
@@ -152,7 +115,7 @@ func renderView(m Model) string {
 // with the given offset from the bottom. Scrollback cells are protocol cells
 // that need conversion to te.Cell for rendering.
 func renderScrollbackContent(sb *strings.Builder, m Model, width, contentHeight int) {
-	screenCells := m.localScreen.LinesCells()
+	screenCells := m.terminal.ScreenCells()
 
 	// Clamp offset to available scrollback
 	offset := m.scrollbackOffset
@@ -470,18 +433,18 @@ func renderStatusOverlay(base string, m Model, width, height int) string {
 			lines = append(lines, "  Background: light")
 		}
 	}
-	if m.localScreen != nil {
+	if m.terminal.Screen != nil {
 		var mouseModes []string
-		if _, ok := m.localScreen.Mode[privateModeKey(ansi.ModeMouseNormal.Mode())]; ok {
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseNormal.Mode())]; ok {
 			mouseModes = append(mouseModes, "normal(1000)")
 		}
-		if _, ok := m.localScreen.Mode[privateModeKey(ansi.ModeMouseButtonEvent.Mode())]; ok {
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseButtonEvent.Mode())]; ok {
 			mouseModes = append(mouseModes, "button(1002)")
 		}
-		if _, ok := m.localScreen.Mode[privateModeKey(ansi.ModeMouseAnyEvent.Mode())]; ok {
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseAnyEvent.Mode())]; ok {
 			mouseModes = append(mouseModes, "any(1003)")
 		}
-		if _, ok := m.localScreen.Mode[privateModeKey(ansi.ModeMouseExtSgr.Mode())]; ok {
+		if _, ok := m.terminal.Screen.Mode[privateModeKey(ansi.ModeMouseExtSgr.Mode())]; ok {
 			mouseModes = append(mouseModes, "sgr(1006)")
 		}
 		if len(mouseModes) > 0 {
