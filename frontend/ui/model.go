@@ -58,10 +58,7 @@ type Model struct {
 	termHeight int
 	status       string
 	err          string
-	// Scrollback navigation
-	scrollbackMode   bool
-	scrollbackOffset int                    // lines scrolled back from bottom (0 = live)
-	scrollbackCells  [][]protocol.ScreenCell // server-side scrollback buffer
+	scrollback Scrollback
 }
 
 // contentHeight returns the number of rows available for terminal content
@@ -227,7 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case protocol.GetScrollbackResponse:
-		m.scrollbackCells = msg.Lines
+		m.scrollback = m.scrollback.SetData(msg.Lines)
 		return m, nil
 
 	case ServerErrorMsg:
@@ -286,8 +283,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showHelp {
 			return m.updateHelpViewer(msg)
 		}
-		if m.scrollbackMode {
-			return m.updateScrollbackViewer(msg)
+		if m.scrollback.Active() {
+			var exited bool
+			m.scrollback, exited = m.scrollback.Update(msg, m.contentHeight())
+			if exited {
+				m.scrollback = m.scrollback.Exit()
+			}
+			return m, nil
 		}
 		// KeyPressMsg only arrives from bubbletea's pipe during focus mode.
 		// If no viewer is active, ignore it.
@@ -322,7 +324,7 @@ const prefixKey = 0x02 // ctrl+b
 func (m Model) handleRawInput(chunk []byte) (tea.Model, tea.Cmd) {
 	// Focus mode (overlay/help/status with keyboard nav): write to bubbletea's
 	// input pipe so it parses as key events. Mouse still parsed here.
-	if m.overlayMode != "" || m.showStatus || m.showHelp || m.scrollbackMode {
+	if m.overlayMode != "" || m.showStatus || m.showHelp || m.scrollback.Active() {
 		if bytes.Contains(chunk, sgrMousePrefix) {
 			mice, rest := extractSGRMouseSequences(chunk)
 			if len(rest) > 0 {
@@ -457,11 +459,8 @@ func (m Model) handlePrefixCommand(key byte) (tea.Model, tea.Cmd) {
 		return m, nil
 	case '[':
 		if m.regionID != "" {
-			m.scrollbackMode = true
-			m.scrollbackOffset = 0
-			m.server.Send(protocol.GetScrollbackRequest{
-				RegionID: m.regionID,
-			})
+			m.scrollback = m.scrollback.Enter(0)
+			m.server.Send(protocol.GetScrollbackRequest{RegionID: m.regionID})
 		}
 		return m, nil
 	case 'r':
@@ -517,11 +516,8 @@ var helpItems = []helpItem{
 	}},
 	{"[", "scrollback", func(m Model) (Model, tea.Cmd) {
 		if m.regionID != "" {
-			m.scrollbackMode = true
-			m.scrollbackOffset = 0
-			m.server.Send(protocol.GetScrollbackRequest{
-				RegionID: m.regionID,
-			})
+			m.scrollback = m.scrollback.Enter(0)
+			m.server.Send(protocol.GetScrollbackRequest{RegionID: m.regionID})
 		}
 		return m, nil
 	}},
@@ -543,59 +539,6 @@ func (m Model) closeHelp() Model {
 }
 
 
-
-func (m Model) exitScrollback() Model {
-	m.scrollbackMode = false
-	m.scrollbackOffset = 0
-	m.scrollbackCells = nil
-	return m
-}
-
-func (m Model) updateScrollbackViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	maxOffset := len(m.scrollbackCells)
-	halfPage := m.contentHeight() / 2
-	if halfPage < 1 {
-		halfPage = 1
-	}
-
-	switch msg.String() {
-	case "q", "esc":
-		m = m.exitScrollback()
-		return m, nil
-	case "up", "k":
-		if m.scrollbackOffset < maxOffset {
-			m.scrollbackOffset++
-		}
-		return m, nil
-	case "down", "j":
-		if m.scrollbackOffset > 0 {
-			m.scrollbackOffset--
-		}
-		return m, nil
-	case "pgup", "ctrl+u":
-		m.scrollbackOffset += halfPage
-		if m.scrollbackOffset > maxOffset {
-			m.scrollbackOffset = maxOffset
-		}
-		return m, nil
-	case "pgdown", "ctrl+d":
-		m.scrollbackOffset -= halfPage
-		if m.scrollbackOffset < 0 {
-			m.scrollbackOffset = 0
-		}
-		return m, nil
-	case "home", "g":
-		m.scrollbackOffset = maxOffset
-		return m, nil
-	case "end", "G":
-		m.scrollbackOffset = 0
-		return m, nil
-	default:
-		// Any other key exits scrollback and snaps to live
-		m = m.exitScrollback()
-		return m, nil
-	}
-}
 
 func (m Model) updateStatusViewer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -700,29 +643,18 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	// Child doesn't want mouse — scroll wheel enters/navigates scrollback
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-		if m.scrollbackMode {
-			switch wheel.Button {
-			case tea.MouseWheelUp:
-				m.scrollbackOffset += 3
-			case tea.MouseWheelDown:
-				m.scrollbackOffset -= 3
-				if m.scrollbackOffset <= 0 {
-					// Scrolled back to live — exit scrollback
-					m = m.exitScrollback()
-					return m, nil
-				}
+		if m.scrollback.Active() {
+			var exited bool
+			m.scrollback, exited = m.scrollback.HandleWheel(wheel.Button)
+			if exited {
+				m.scrollback = m.scrollback.Exit()
 			}
 			return m, nil
 		}
-		// Scroll up activates scrollback mode (no focus mode —
-		// scroll wheel events always arrive via program.Send)
 		if wheel.Button == tea.MouseWheelUp && m.regionID != "" {
-			m.scrollbackMode = true
-			m.scrollbackOffset = 3
+			m.scrollback = m.scrollback.Enter(3)
 			return m, func() tea.Msg {
-				m.server.Send(protocol.GetScrollbackRequest{
-					RegionID: m.regionID,
-				})
+				m.server.Send(protocol.GetScrollbackRequest{RegionID: m.regionID})
 				return nil
 			}
 		}
