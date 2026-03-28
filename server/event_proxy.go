@@ -7,13 +7,13 @@ import (
 )
 
 type EventProxy struct {
-	screen       *te.Screen
+	screen       te.EventHandler
 	batch        []protocol.TerminalEvent
 	syncMode     bool // true when synchronized output mode (2026) is active
 	syncEndIndex int  // index in batch where sync mode ended (-1 = no sync completed)
 }
 
-func NewEventProxy(screen *te.Screen) *EventProxy {
+func NewEventProxy(screen te.EventHandler) *EventProxy {
 	return &EventProxy{screen: screen, syncEndIndex: -1}
 }
 
@@ -199,9 +199,25 @@ func (p *EventProxy) SetConformance(level int, sevenBit int) {
 	p.screen.SetConformance(level, sevenBit)
 	p.evParams("decscl", []int{level, sevenBit})
 }
-func (p *EventProxy) WindowOp(params []int)     { p.screen.WindowOp(params); p.evParams("winop", params) }
-func (p *EventProxy) SetCursorStyle(style int)   { p.screen.SetCursorStyle(style); p.evParams("decscusr", []int{style}) }
-func (p *EventProxy) SetActiveStatusDisplay(mode int) { p.screen.SetActiveStatusDisplay(mode); p.evParams("decsasd", []int{mode}) }
+func (p *EventProxy) WindowOp(params []int) { p.screen.WindowOp(params); p.evParams("winop", params) }
+
+// SetCursorStyle and SetActiveStatusDisplay are not part of EventHandler.
+// They exist on *te.Screen only, so we type-assert to reach them.
+type cursorStyler interface{ SetCursorStyle(int) }
+type statusDisplayer interface{ SetActiveStatusDisplay(int) }
+
+func (p *EventProxy) SetCursorStyle(style int) {
+	if s, ok := p.screen.(cursorStyler); ok {
+		s.SetCursorStyle(style)
+	}
+	p.evParams("decscusr", []int{style})
+}
+func (p *EventProxy) SetActiveStatusDisplay(mode int) {
+	if s, ok := p.screen.(statusDisplayer); ok {
+		s.SetActiveStatusDisplay(mode)
+	}
+	p.evParams("decsasd", []int{mode})
+}
 
 func (p *EventProxy) SetColor(index int, value string)        { p.screen.SetColor(index, value) }
 func (p *EventProxy) SetDynamicColor(index int, value string)  { p.screen.SetDynamicColor(index, value) }

@@ -83,6 +83,7 @@ func main() {
 						Action: cmdRegionView,
 					},
 					{Name: "kill", Usage: "kill a region", ArgsUsage: "<region_id>", Action: cmdRegionKill},
+					{Name: "scrollback", Usage: "view scrollback buffer", ArgsUsage: "<region_id>", Action: cmdRegionScrollback},
 					{
 						Name: "send", Usage: "send input to a region", ArgsUsage: "<region_id> <input>",
 						Flags: []cli.Flag{
@@ -291,6 +292,41 @@ func cmdRegionKill(_ context.Context, cmd *cli.Command) error {
 	}
 
 	fmt.Println("killed")
+	return nil
+}
+
+func cmdRegionScrollback(_ context.Context, cmd *cli.Command) error {
+	if cmd.NArg() < 1 {
+		return fmt.Errorf("usage: termctl region scrollback <region_id>")
+	}
+	regionID := cmd.Args().First()
+
+	cl, err := connect(cmd)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	_ = cl.Send(protocol.GetScrollbackRequest{Type: "get_scrollback_request", RegionID: regionID})
+	resp, err := recvType[protocol.GetScrollbackResponse](cl)
+	if err != nil {
+		return err
+	}
+	if resp.Error {
+		return fmt.Errorf("%s", resp.Message)
+	}
+
+	for _, row := range resp.Lines {
+		var line strings.Builder
+		for _, cell := range row {
+			ch := cell.Char
+			if ch == "" || ch == "\x00" {
+				ch = " "
+			}
+			line.WriteString(ch)
+		}
+		fmt.Println(strings.TrimRight(line.String(), " "))
+	}
 	return nil
 }
 

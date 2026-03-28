@@ -163,6 +163,11 @@ func (c *Client) handleMessage(line []byte) {
 		if json.Unmarshal(line, &msg) == nil {
 			c.handleGetScreen(msg)
 		}
+	case "get_scrollback_request":
+		var msg protocol.GetScrollbackRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleGetScrollback(msg)
+		}
 	case "kill_region_request":
 		var msg protocol.KillRegionRequest
 		if json.Unmarshal(line, &msg) == nil {
@@ -330,6 +335,26 @@ func (c *Client) handleListRegions() {
 
 func (c *Client) handleStatus() {
 	c.SendMessage(c.server.getStatus())
+}
+
+func (c *Client) handleGetScrollback(msg protocol.GetScrollbackRequest) {
+	region := c.server.FindRegion(msg.RegionID)
+	if region == nil {
+		c.SendMessage(protocol.GetScrollbackResponse{
+			Type:     "get_scrollback_response",
+			RegionID: msg.RegionID,
+			Error:    true,
+			Message:  "region not found",
+		})
+		return
+	}
+
+	lines := region.GetScrollback()
+	c.SendMessage(protocol.GetScrollbackResponse{
+		Type:     "get_scrollback_response",
+		RegionID: region.id,
+		Lines:    lines,
+	})
 }
 
 func (c *Client) handleGetScreen(msg protocol.GetScreenRequest) {

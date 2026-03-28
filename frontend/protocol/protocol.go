@@ -66,6 +66,11 @@ type KillClientRequest struct {
 	ClientID uint32 `json:"client_id"`
 }
 
+type GetScrollbackRequest struct {
+	Type     string `json:"type"`
+	RegionID string `json:"region_id"`
+}
+
 // ── Inbound (server → frontend/termctl) ─────────────────────────────────────
 
 type SpawnResponse struct {
@@ -186,6 +191,14 @@ type KillClientResponse struct {
 	Message  string `json:"message"`
 }
 
+type GetScrollbackResponse struct {
+	Type     string         `json:"type"`
+	RegionID string         `json:"region_id"`
+	Lines    [][]ScreenCell `json:"lines"`
+	Error    bool           `json:"error"`
+	Message  string         `json:"message"`
+}
+
 type TerminalEvent struct {
 	Op      string `json:"op"`
 	Data    string `json:"data,omitempty"`
@@ -252,6 +265,9 @@ func ParseInbound(line []byte) (any, error) {
 		return msg, json.Unmarshal(line, &msg)
 	case "kill_client_response":
 		var msg KillClientResponse
+		return msg, json.Unmarshal(line, &msg)
+	case "get_scrollback_response":
+		var msg GetScrollbackResponse
 		return msg, json.Unmarshal(line, &msg)
 	case "terminal_events":
 		var msg TerminalEvents

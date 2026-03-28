@@ -25,6 +25,9 @@ type Snapshot struct {
 	Cells     [][]protocol.ScreenCell
 }
 
+// scrollbackSize is the maximum number of lines kept in the scrollback buffer.
+const scrollbackSize = 10000
+
 type Region struct {
 	id   string
 	name string
@@ -34,12 +37,13 @@ type Region struct {
 	width  int
 	height int
 
-	ptmx   *os.File
-	cmdObj *exec.Cmd
-	screen *te.Screen
-	proxy  *EventProxy
-	stream *te.Stream
-	mu     sync.Mutex
+	ptmx    *os.File
+	cmdObj  *exec.Cmd
+	screen  *te.Screen
+	hscreen *te.HistoryScreen
+	proxy   *EventProxy
+	stream  *te.Stream
+	mu      sync.Mutex
 
 	notify     chan struct{}
 	done       chan struct{}
@@ -61,22 +65,23 @@ func NewRegion(cmdStr string, args []string, width, height int) (*Region, error)
 		return nil, err
 	}
 
-	screen := te.NewScreen(width, height)
-	proxy := NewEventProxy(screen)
+	hscreen := te.NewHistoryScreen(width, height, scrollbackSize)
+	proxy := NewEventProxy(hscreen)
 	stream := te.NewStream(proxy, false)
 
 	r := &Region{
-		id:     id,
-		name:   name,
-		cmd:    cmdStr,
-		pid:    cmdObj.Process.Pid,
-		width:  width,
-		height: height,
-		ptmx:   ptmx,
-		cmdObj: cmdObj,
-		screen: screen,
-		proxy:  proxy,
-		stream: stream,
+		id:      id,
+		name:    name,
+		cmd:     cmdStr,
+		pid:     cmdObj.Process.Pid,
+		width:   width,
+		height:  height,
+		ptmx:    ptmx,
+		cmdObj:  cmdObj,
+		screen:  hscreen.Screen,
+		hscreen: hscreen,
+		proxy:   proxy,
+		stream:  stream,
 		notify:     make(chan struct{}, 1),
 		done:       make(chan struct{}),
 		readerDone: make(chan struct{}),
@@ -223,6 +228,25 @@ func colorToSpec(c te.Color) string {
 		return "2;" + c.Name // Name is hex like "ff8700"
 	}
 	return ""
+}
+
+// GetScrollback returns the scrollback history as cell data.
+func (r *Region) GetScrollback() [][]protocol.ScreenCell {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	history := r.hscreen.History()
+	if len(history) == 0 {
+		return nil
+	}
+	cells := make([][]protocol.ScreenCell, len(history))
+	for i, row := range history {
+		cells[i] = make([]protocol.ScreenCell, len(row))
+		for j, c := range row {
+			cells[i][j] = cellToProtocol(c)
+		}
+	}
+	return cells
 }
 
 // FlushEvents returns accumulated events. If a synchronized output batch

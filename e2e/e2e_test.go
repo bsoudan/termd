@@ -896,6 +896,42 @@ func TestMousePassthrough(t *testing.T) {
 	pio.WaitFor(t, "termd$ ", 10*time.Second)
 }
 
+func TestScrollbackBuffer(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	// Spawn a region and generate enough output to fill scrollback
+	regionID := spawnRegion(t, socketPath, "bash")
+
+	// Wait for shell prompt
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Output 200 lines — in a 24-row terminal, early lines scroll off
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "termd$ ", 10*time.Second)
+
+	// Request scrollback via termctl
+	out := runTermctl(t, socketPath, "region", "scrollback", regionID)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+
+	// Verify early numbers are in the scrollback
+	found := make(map[string]bool)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "1" || trimmed == "2" || trimmed == "3" || trimmed == "10" || trimmed == "50" {
+			found[trimmed] = true
+		}
+	}
+
+	for _, want := range []string{"1", "2", "3", "10", "50"} {
+		if !found[want] {
+			t.Errorf("scrollback missing line %q (got %d lines total)", want, len(lines))
+		}
+	}
+}
+
 func TestWebSocketTransport(t *testing.T) {
 	socketPath, addrs, serverCleanup := startServerWithListeners(t, "ws://127.0.0.1:0")
 	defer serverCleanup()
