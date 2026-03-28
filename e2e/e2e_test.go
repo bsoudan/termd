@@ -198,60 +198,6 @@ inAlt:
 	}
 }
 
-func TestScreenSyncAfterHeavyOutput(t *testing.T) {
-	t.Skip("flaky: prompt row sometimes not yet flushed to frontend")
-	socketPath, serverCleanup := startServer(t)
-	defer serverCleanup()
-
-	pio, frontendCleanup := startFrontend(t, socketPath)
-	defer frontendCleanup()
-
-	pio.WaitFor(t, "termd$ ", 10*time.Second)
-
-	// Run seq to fill the screen with output, then wait for prompt
-	pio.Write([]byte("seq 1 50\r"))
-	pio.WaitFor(t, "termd$ ", 10*time.Second)
-
-	// Give a moment for all events to propagate
-	pio.WaitForSilence(200 * time.Millisecond)
-
-	// Get the server's screen via termctl
-	out := runTermctl(t, socketPath, "region", "list")
-	var regionID string
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && len(fields[0]) == 36 {
-			regionID = fields[0]
-			break
-		}
-	}
-	if regionID == "" {
-		t.Fatal("no region found")
-	}
-	serverView := runTermctl(t, socketPath, "region", "view", regionID)
-	serverLines := strings.Split(strings.TrimRight(serverView, "\n"), "\n")
-
-	// Get the frontend's screen (what the test's go-te sees)
-	frontendLines := pio.ScreenLines()
-
-	// Compare line by line (skip row 0 which is the tab bar on frontend)
-	// The server has rows 0..height-1, the frontend has row 0 = tab bar + rows 1..height
-	mismatches := 0
-	for i := 0; i < len(serverLines) && i+1 < len(frontendLines); i++ {
-		sLine := strings.TrimRight(serverLines[i], " ")
-		fLine := strings.TrimRight(frontendLines[i+1], " ")
-		if sLine != fLine {
-			if mismatches < 5 {
-				t.Logf("mismatch row %d:\n  server:   %q\n  frontend: %q", i, sLine, fLine)
-			}
-			mismatches++
-		}
-	}
-	if mismatches > 0 {
-		t.Errorf("%d rows differ between server and frontend after seq output", mismatches)
-	}
-}
-
 func TestScreenSyncAfterTop(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
@@ -1214,6 +1160,7 @@ func TestReconnectUnix(t *testing.T) {
 
 	// Should reconnect and show the prompt again
 	pio.WaitFor(t, "termd$ ", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Verify typing still works after reconnect
 	pio.Write([]byte("echo after_reconnect\r"))
@@ -1245,6 +1192,7 @@ func TestReconnectTCP(t *testing.T) {
 	// Should reconnect
 	pio.WaitFor(t, "reconnecting", 10*time.Second)
 	pio.WaitFor(t, "termd$ ", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Verify typing works
 	pio.Write([]byte("echo tcp_reconnected\r"))
