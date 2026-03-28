@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"io"
-
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	termlog "termd/frontend/log"
@@ -17,11 +15,10 @@ type ScrollableLayer struct {
 	label   string
 	vp      viewport.Model
 	hScroll int
-	pipeW   io.Writer
 	logRing *termlog.LogRingBuffer // non-nil for logviewer (live content)
 }
 
-func NewScrollableLayer(label, content string, gotoBottom bool, pipeW io.Writer, logRing *termlog.LogRingBuffer, termWidth, termHeight int) *ScrollableLayer {
+func NewScrollableLayer(label, content string, gotoBottom bool, logRing *termlog.LogRingBuffer, termWidth, termHeight int) *ScrollableLayer {
 	h := termHeight * 80 / 100
 	if h < 5 {
 		h = 5
@@ -31,13 +28,11 @@ func NewScrollableLayer(label, content string, gotoBottom bool, pipeW io.Writer,
 	if gotoBottom {
 		vp.GotoBottom()
 	}
-	return &ScrollableLayer{label: label, vp: vp, pipeW: pipeW, logRing: logRing}
+	return &ScrollableLayer{label: label, vp: vp, logRing: logRing}
 }
 
 func (l *ScrollableLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case RawInputMsg:
-		return nil, handleFocusModeInput([]byte(msg), l.pipeW), true
 	case tea.KeyPressMsg:
 		return l.handleKey(msg)
 	case tea.MouseMsg:
@@ -96,7 +91,6 @@ func (l *ScrollableLayer) Status() (string, bool, bool) { return l.label, true, 
 type StatusLayer struct {
 	status *protocol.StatusResponse
 	caps   StatusCaps
-	pipeW  io.Writer
 }
 
 // StatusCaps captures terminal capability data at open time.
@@ -111,8 +105,8 @@ type StatusCaps struct {
 	MouseModes    string
 }
 
-func NewStatusLayer(caps StatusCaps, pipeW io.Writer) *StatusLayer {
-	return &StatusLayer{caps: caps, pipeW: pipeW}
+func NewStatusLayer(caps StatusCaps) *StatusLayer {
+	return &StatusLayer{caps: caps}
 }
 
 func (s *StatusLayer) SetStatus(resp *protocol.StatusResponse) {
@@ -121,8 +115,6 @@ func (s *StatusLayer) SetStatus(resp *protocol.StatusResponse) {
 
 func (s *StatusLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case RawInputMsg:
-		return nil, handleFocusModeInput([]byte(msg), s.pipeW), true
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "esc", "s":
@@ -150,17 +142,14 @@ type HelpLayer struct {
 	cursor  int
 	items   []helpItem
 	session *SessionLayer
-	pipeW   io.Writer
 }
 
-func NewHelpLayer(items []helpItem, session *SessionLayer, pipeW io.Writer) *HelpLayer {
-	return &HelpLayer{items: items, session: session, pipeW: pipeW}
+func NewHelpLayer(items []helpItem, session *SessionLayer) *HelpLayer {
+	return &HelpLayer{items: items, session: session}
 }
 
 func (h *HelpLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case RawInputMsg:
-		return nil, handleFocusModeInput([]byte(msg), h.pipeW), true
 	case tea.KeyPressMsg:
 		return h.handleKey(msg)
 	case tea.MouseMsg:

@@ -60,9 +60,10 @@ func handleFocusModeInput(chunk []byte, pipeW io.Writer) tea.Cmd {
 // handleRawInput processes raw bytes from the terminal input goroutine.
 // Returns (response, cmd) where response may be DetachMsg if detaching.
 func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
-	// Scrollback focus mode: write to pipeW for key event parsing.
-	// (Overlay focus mode is handled by overlay layers above session.)
-	if s.term != nil && s.term.ScrollbackActive() {
+	// Focus mode: overlay or scrollback is active — write to pipeW so
+	// bubbletea parses key events. Layers above handle the resulting
+	// KeyPressMsg and MouseMsg.
+	if s.focusMode || (s.term != nil && s.term.ScrollbackActive()) {
 		return nil, handleFocusModeInput(chunk, s.pipeW)
 	}
 

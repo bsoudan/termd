@@ -19,6 +19,8 @@ func (s *SessionLayer) sendRawToServer(raw []byte) {
 	})
 }
 
+// handlePrefixCommand dispatches a command byte after ctrl+b.
+// Used for the inline case (ctrl+b + command in same raw input chunk).
 func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
 	switch key {
 	case 'd':
@@ -27,13 +29,13 @@ func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
 		s.sendRawToServer([]byte{prefixKey})
 		return nil, nil
 	case 'l':
-		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.pipeW, s.logRing, s.termWidth, s.termHeight)
+		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.logRing, s.termWidth, s.termHeight)
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case '?':
-		layer := NewHelpLayer(helpItems, s, s.pipeW)
+		layer := NewHelpLayer(helpItems, s)
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case 's':
-		layer := NewStatusLayer(s.buildStatusCaps(), s.pipeW)
+		layer := NewStatusLayer(s.buildStatusCaps())
 		s.requestFn(protocol.StatusRequest{}, func(payload any) {
 			if resp, ok := payload.(*protocol.StatusResponse); ok {
 				layer.SetStatus(resp)
@@ -41,7 +43,7 @@ func (s *SessionLayer) handlePrefixCommand(key byte) (tea.Msg, tea.Cmd) {
 		})
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case 'n':
-		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, s.pipeW, nil, s.termWidth, s.termHeight)
+		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, nil, s.termWidth, s.termHeight)
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	case '[':
 		if s.term != nil {
@@ -72,11 +74,11 @@ var helpItems = []helpItem{
 		return s.detach()
 	}},
 	{"l", "log viewer", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.pipeW, s.logRing, s.termWidth, s.termHeight)
+		layer := NewScrollableLayer("logviewer", s.logRing.String(), true, s.logRing, s.termWidth, s.termHeight)
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"s", "status", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		layer := NewStatusLayer(s.buildStatusCaps(), s.pipeW)
+		layer := NewStatusLayer(s.buildStatusCaps())
 		s.requestFn(protocol.StatusRequest{}, func(payload any) {
 			if resp, ok := payload.(*protocol.StatusResponse); ok {
 				layer.SetStatus(resp)
@@ -85,7 +87,7 @@ var helpItems = []helpItem{
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"n", "release notes", func(s *SessionLayer) (tea.Msg, tea.Cmd) {
-		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, s.pipeW, nil, s.termWidth, s.termHeight)
+		layer := NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, nil, s.termWidth, s.termHeight)
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }
 	}},
 	{"r", "refresh screen", func(s *SessionLayer) (tea.Msg, tea.Cmd) {

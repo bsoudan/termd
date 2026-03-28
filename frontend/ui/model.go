@@ -56,6 +56,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Tell session whether focus mode is needed (overlay layer active).
+	// CommandLayer and HintLayer are transparent — they don't need focus mode.
+	session := m.layers[0].(*SessionLayer)
+	session.focusMode = false
+	for i := 1; i < len(m.layers); i++ {
+		if _, ok := m.layers[i].(OverlayViewer); ok {
+			session.focusMode = true
+			break
+		}
+	}
+
 	var cmds []tea.Cmd
 	for i := len(m.layers) - 1; i >= 0; i-- {
 		resp, cmd, handled := m.layers[i].Update(msg)

@@ -19,7 +19,8 @@ type SessionLayer struct {
 	cmd     string
 	cmdArgs []string
 
-	term *TerminalChild // nil until subscribe succeeds
+	term      *TerminalChild // nil until subscribe succeeds
+	focusMode bool          // set by Model when overlay/command layer is active
 
 	regionID   string
 	regionName string
