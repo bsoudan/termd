@@ -179,17 +179,17 @@ var categories = []string{"main", "session", "tab"}
 
 func allCommands() []*Command {
 	return []*Command{
-		// Main — user category "main", mixed handlers
-		{Name: "run-command", Category: "main", Layer: "session", Description: "command palette"},
+		// Main — user category "main"
+		{Name: "run-command", Category: "main", Layer: "main", Description: "command palette"},
 		{Name: "detach", Category: "main", Layer: "main", Description: "detach"},
-		{Name: "send-prefix", Category: "main", Layer: "session", Description: "send literal prefix key"},
-		{Name: "show-help", Category: "main", Layer: "session", Description: "show keybindings"},
-		{Name: "show-log", Category: "main", Layer: "session", Description: "open log viewer"},
-		{Name: "show-status", Category: "main", Layer: "session", Description: "show status"},
-		{Name: "show-release-notes", Category: "main", Layer: "session", Description: "show release notes"},
-		{Name: "enter-scrollback", Category: "main", Layer: "session", Description: "enter scrollback mode"},
-		{Name: "refresh-screen", Category: "main", Layer: "session", Description: "refresh screen"},
-		// Session — user category "session", handled by MainLayer
+		{Name: "send-prefix", Category: "main", Layer: "main", Description: "send literal prefix key"},
+		{Name: "show-help", Category: "main", Layer: "main", Description: "show keybindings"},
+		{Name: "show-log", Category: "main", Layer: "main", Description: "open log viewer"},
+		{Name: "show-status", Category: "main", Layer: "main", Description: "show status"},
+		{Name: "show-release-notes", Category: "main", Layer: "main", Description: "show release notes"},
+		{Name: "enter-scrollback", Category: "main", Layer: "main", Description: "enter scrollback mode"},
+		{Name: "refresh-screen", Category: "main", Layer: "main", Description: "refresh screen"},
+		// Session — user category "session"
 		{Name: "open-session", Category: "session", Layer: "main", Description: "create new session"},
 		{Name: "close-session", Category: "session", Layer: "main", Description: "kill current session"},
 		{Name: "next-session", Category: "session", Layer: "main", Description: "next session"},

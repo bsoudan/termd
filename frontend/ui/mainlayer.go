@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -190,13 +191,12 @@ func (m *MainLayer) forwardToActiveSession(msg tea.Msg) (tea.Msg, tea.Cmd, bool)
 
 	// If the active session lost all its regions, handle it.
 	if len(s.tabs) == 0 && s.status == "no regions" {
-		if len(m.sessions) <= 1 {
-			// Last session has no regions — quit.
-			qResp, qCmd := m.quit()
-			return qResp, tea.Batch(cmd, qCmd), true
-		}
-		// Other sessions available — kill this one and switch.
+		s.Deactivate()
 		m.sessions = slices.Delete(m.sessions, m.activeSession, m.activeSession+1)
+		if len(m.sessions) == 0 {
+			m.activeSession = 0
+			return resp, cmd, true
+		}
 		if m.activeSession >= len(m.sessions) {
 			m.activeSession = len(m.sessions) - 1
 		}
@@ -207,13 +207,17 @@ func (m *MainLayer) forwardToActiveSession(msg tea.Msg) (tea.Msg, tea.Cmd, bool)
 }
 
 func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
+	push := func(layer Layer) (tea.Msg, tea.Cmd, bool) {
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }, true
+	}
 	switch msg.Name {
+
+	// ── Session management ─────────────────────────────────────────────
 	case "open-session":
 		if msg.Args != "" {
 			return nil, m.createSession(msg.Args), true
 		}
-		layer := &SessionNameLayer{}
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }, true
+		return push(&SessionNameLayer{})
 	case "close-session":
 		return m.killSession()
 	case "next-session":
@@ -234,6 +238,62 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 	case "detach":
 		resp, cmd := m.detach()
 		return resp, cmd, true
+
+	// ── Overlays ───────────────────────────────────────────────────────
+	case "run-command":
+		return push(NewCommandPaletteLayer(m.registry))
+	case "show-help":
+		return push(NewHelpLayer(m.registry))
+	case "show-log":
+		return push(NewScrollableLayer("logviewer", m.logRing.String(), true, m.logRing, m.termWidth, m.termHeight))
+	case "show-release-notes":
+		return push(NewScrollableLayer("release notes", strings.TrimRight(m.changelog, "\n"), false, nil, m.termWidth, m.termHeight))
+	case "show-status":
+		caps := StatusCaps{
+			Hostname:    m.localHostname,
+			Endpoint:    m.endpoint,
+			Version:     m.version,
+			ConnStatus:  m.connStatus,
+		}
+		if s := m.activeSessionLayer(); s != nil {
+			caps.SessionName = s.sessionName
+			if t := s.activeTerm(); t != nil {
+				caps.KeyboardFlags = t.KeyboardFlags()
+				caps.BgDark = t.BgDark()
+				caps.TermEnv = t.TermEnv()
+				caps.MouseModes = t.MouseModes()
+			}
+		}
+		sl := NewStatusLayer(caps)
+		m.requestFn(protocol.StatusRequest{}, func(payload any) {
+			if resp, ok := payload.(protocol.StatusResponse); ok {
+				sl.SetStatus(&resp)
+			}
+		})
+		return push(sl)
+
+	// ── Commands that require an active session ────────────────────────
+	case "send-prefix":
+		if s := m.activeSessionLayer(); s != nil {
+			s.sendRawToServer([]byte{m.registry.PrefixKey})
+		}
+		return nil, nil, true
+	case "enter-scrollback":
+		if s := m.activeSessionLayer(); s != nil {
+			if t := s.activeTerm(); t != nil {
+				t.EnterScrollback(0)
+			}
+		}
+		return nil, nil, true
+	case "refresh-screen":
+		if s := m.activeSessionLayer(); s != nil {
+			if t := s.activeTerm(); t != nil {
+				t.SetPendingClear()
+				m.server.Send(protocol.GetScreenRequest{RegionID: t.RegionID()})
+			}
+		}
+		return nil, nil, true
+
 	default:
 		return nil, nil, true
 	}
@@ -266,8 +326,8 @@ func (m *MainLayer) killSession() (tea.Msg, tea.Cmd, bool) {
 	m.sessions = slices.Delete(m.sessions, m.activeSession, m.activeSession+1)
 
 	if len(m.sessions) == 0 {
-		resp, cmd := m.quit()
-		return resp, cmd, true
+		m.activeSession = 0
+		return nil, nil, true
 	}
 
 	if m.activeSession >= len(m.sessions) {
@@ -317,16 +377,59 @@ func (m *MainLayer) openSessionPicker() tea.Cmd {
 	return func() tea.Msg { return PushLayerMsg{Layer: picker} }
 }
 
-// View delegates to the active session.
+// View delegates to the active session, or renders the no-session pattern.
 func (m *MainLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	if m.err != "" {
 		return []*lipgloss.Layer{lipgloss.NewLayer("error: " + m.err + "\n")}
 	}
 	s := m.activeSessionLayer()
-	if s == nil {
-		return nil
+	if s != nil {
+		return s.View(width, height, active)
 	}
-	return s.View(width, height, active)
+	return m.viewNoSession(width, height)
+}
+
+// viewNoSession renders a sparse microdot grid filling the content area.
+// Dots appear on every other row with a space between each dot.
+func (m *MainLayer) viewNoSession(width, height int) []*lipgloss.Layer {
+	width = max(width, 80)
+	height = max(height, 24)
+
+	// Tab bar: faint dots across the full width.
+	var tabBar strings.Builder
+	tabBar.WriteString(statusFaint.Render("•"))
+	fillCount := max(width-2, 1)
+	for range fillCount {
+		tabBar.WriteString("·")
+	}
+	tabBar.WriteString("•")
+	tabBarStr := statusFaint.Render(tabBar.String())
+
+	contentHeight := max(height-1, 1)
+	var sb strings.Builder
+	for row := range contentHeight {
+		if row%2 == 1 {
+			for col := range width {
+				if col%2 == 0 {
+					sb.WriteRune('·')
+				} else {
+					sb.WriteByte(' ')
+				}
+			}
+		} else {
+			for range width {
+				sb.WriteByte(' ')
+			}
+		}
+		if row < contentHeight-1 {
+			sb.WriteByte('\n')
+		}
+	}
+
+	return []*lipgloss.Layer{
+		lipgloss.NewLayer(tabBarStr),
+		lipgloss.NewLayer(statusFaint.Render(sb.String())).Y(1),
+	}
 }
 
 // Status returns the active session's status, overlaid with reconnecting
@@ -338,7 +441,7 @@ func (m *MainLayer) Status() (string, lipgloss.Style) {
 	}
 	s := m.activeSessionLayer()
 	if s == nil {
-		return m.endpoint, statusFaint
+		return "no session", statusFaint
 	}
 	return s.Status()
 }

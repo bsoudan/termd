@@ -420,77 +420,9 @@ func (s *SessionLayer) handleCmd(msg SessionCmd) (tea.Msg, tea.Cmd, bool) {
 			}
 		}
 		return nil, nil, true
-	case "send-prefix":
-		s.sendRawToServer([]byte{s.registry.PrefixKey})
-		return nil, nil, true
-	case "enter-scrollback":
-		if t := s.activeTerm(); t != nil {
-			t.EnterScrollback(0)
-		}
-		return nil, nil, true
-	case "refresh-screen":
-		if t := s.activeTerm(); t != nil {
-			t.SetPendingClear()
-			s.server.Send(protocol.GetScreenRequest{
-				RegionID: t.RegionID(),
-			})
-		}
-		return nil, nil, true
-	case "show-log":
-		return nil, s.openOverlay("logviewer"), true
-	case "show-help":
-		return nil, s.openOverlay("help"), true
-	case "show-status":
-		return nil, s.openOverlay("status"), true
-	case "show-release-notes":
-		return nil, s.openOverlay("release notes"), true
-	case "run-command":
-		palette := NewCommandPaletteLayer(s.registry)
-		return nil, func() tea.Msg { return PushLayerMsg{Layer: palette} }, true
 	default:
 		return nil, nil, true
 	}
-}
-
-func (s *SessionLayer) openOverlay(name string) tea.Cmd {
-	var layer Layer
-	switch name {
-	case "logviewer":
-		layer = NewScrollableLayer("logviewer", s.logRing.String(), true, s.logRing, s.termWidth, s.termHeight)
-	case "help":
-		layer = NewHelpLayer(s.registry)
-	case "status":
-		sl := NewStatusLayer(s.buildStatusCaps())
-		s.requestFn(protocol.StatusRequest{}, func(payload any) {
-			if resp, ok := payload.(protocol.StatusResponse); ok {
-				sl.SetStatus(&resp)
-			}
-		})
-		layer = sl
-	case "release notes":
-		layer = NewScrollableLayer("release notes", strings.TrimRight(s.changelog, "\n"), false, nil, s.termWidth, s.termHeight)
-	}
-	if layer == nil {
-		return nil
-	}
-	return func() tea.Msg { return PushLayerMsg{Layer: layer} }
-}
-
-func (s *SessionLayer) buildStatusCaps() StatusCaps {
-	caps := StatusCaps{
-		Hostname:    s.localHostname,
-		Endpoint:    s.endpoint,
-		SessionName: s.sessionName,
-		Version:     s.version,
-		ConnStatus:  s.connStatus,
-	}
-	if t := s.activeTerm(); t != nil {
-		caps.KeyboardFlags = t.KeyboardFlags()
-		caps.BgDark = t.BgDark()
-		caps.TermEnv = t.TermEnv()
-		caps.MouseModes = t.MouseModes()
-	}
-	return caps
 }
 
 // View implements the Layer interface. Returns the tab bar and terminal

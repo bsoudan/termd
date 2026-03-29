@@ -1171,18 +1171,8 @@ func TestRegionKilledExternally(t *testing.T) {
 	// Kill the region externally
 	runTermctl(t, socketPath, "region", "kill", regionID)
 
-	// Wait for the frontend's PTY to close (same pattern as TestPrefixKeyDetach)
-	deadline := time.After(10 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for frontend to exit after region kill")
-		case _, ok := <-pio.ch:
-			if !ok {
-				return
-			}
-		}
-	}
+	// Frontend should enter the no-session screen instead of exiting.
+	pio.WaitFor(t, "no session", 10*time.Second)
 }
 
 func TestReconnectUnix(t *testing.T) {
@@ -1310,17 +1300,8 @@ func TestExit(t *testing.T) {
 	pio.WaitFor(t, "termd$",10*time.Second)
 	pio.Write([]byte("exit\r"))
 
-	deadline := time.After(10 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for frontend to exit after 'exit' command")
-		case _, ok := <-pio.ch:
-			if !ok {
-				return
-			}
-		}
-	}
+	// Frontend should enter the no-session screen instead of exiting.
+	pio.WaitFor(t, "no session", 10*time.Second)
 }
 
 func TestActiveTabBold(t *testing.T) {
@@ -1629,23 +1610,45 @@ func TestReconnectRestoresTabs(t *testing.T) {
 	}, "both tabs restored after reconnect", 10*time.Second)
 }
 
-func TestAllRegionsDestroyedQuits(t *testing.T) {
+func TestAllRegionsDestroyedShowsNoSession(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	fe := startFrontendFull(t, socketPath)
-	defer fe.Kill()
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
 
-	fe.WaitFor(t, "1:bash", 10*time.Second)
-	fe.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
+	pio.WaitFor(t, "termd$", 10*time.Second)
 
-	// Exit the only shell
-	fe.Write([]byte("exit\r"))
+	// Exit the only shell.
+	pio.Write([]byte("exit\r"))
 
-	// Frontend should exit
-	if err := fe.Wait(10 * time.Second); err != nil {
-		t.Fatalf("frontend did not exit cleanly: %v", err)
+	// Frontend should enter the no-session screen instead of exiting.
+	pio.WaitFor(t, "no session", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	// Open a new session from the no-session screen using a single-packet
+	// chord sequence (ctrl+b S) to exercise the real prefix detection path.
+	pio.Write([]byte("\x02S"))
+	pio.WaitFor(t, "Session name:", 5*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+	pio.Write([]byte("recover\r"))
+
+	// Wait for the session to appear on the server.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		out := runTermctl(t, socketPath, "session", "list")
+		if strings.Contains(out, "recover") {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
+	pio.WaitFor(t, "$", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	// Verify we're back in a live shell.
+	pio.Write([]byte("echo ALIVE\r"))
+	pio.WaitFor(t, "ALIVE", 10*time.Second)
 }
 
 func TestHelpOverlay(t *testing.T) {
