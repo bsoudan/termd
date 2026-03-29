@@ -69,8 +69,11 @@ func (l *ScrollableLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool
 	}
 }
 
+func (l *ScrollableLayer) Activate() tea.Cmd { return nil }
+func (l *ScrollableLayer) Deactivate()       {}
+
 // View returns a positioned dialog layer for compositing.
-func (l *ScrollableLayer) View(width, height int, active bool) *lipgloss.Layer {
+func (l *ScrollableLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	// For logviewer, refresh content from logRing on each render.
 	if l.logRing != nil {
 		atBottom := l.vp.AtBottom()
@@ -142,7 +145,7 @@ func (l *ScrollableLayer) View(width, height int, active bool) *lipgloss.Layer {
 		y = 0
 	}
 
-	return lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
 }
 
 func (l *ScrollableLayer) Status() (string, lipgloss.Style) { return l.label, lipgloss.Style{} }

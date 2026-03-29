@@ -51,7 +51,10 @@ func (p *ProgramPickerLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, b
 	}
 }
 
-func (p *ProgramPickerLayer) View(width, height int, active bool) *lipgloss.Layer {
+func (p *ProgramPickerLayer) Activate() tea.Cmd { return nil }
+func (p *ProgramPickerLayer) Deactivate()       {}
+
+func (p *ProgramPickerLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	var lines []string
 	for i, prog := range p.programs {
 		line := fmt.Sprintf("  %s", prog.Name)
@@ -90,7 +93,7 @@ func (p *ProgramPickerLayer) View(width, height int, active bool) *lipgloss.Laye
 		y = 0
 	}
 
-	return lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
 }
 
 func (p *ProgramPickerLayer) Status() (string, lipgloss.Style) {

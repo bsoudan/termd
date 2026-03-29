@@ -17,7 +17,7 @@ import (
 type tab struct {
 	regionID   string
 	regionName string
-	term       *TerminalChild // nil until subscribe succeeds
+	term       *TerminalLayer // nil until subscribe succeeds
 }
 
 // SessionLayer is the root layer — it owns server communication, region
@@ -49,16 +49,16 @@ type SessionLayer struct {
 	termHeight int
 }
 
-// activeTerm returns the active tab's TerminalChild, or nil.
-func (s *SessionLayer) activeTerm() *TerminalChild {
+// activeTerm returns the active tab's TerminalLayer, or nil.
+func (s *SessionLayer) activeTerm() *TerminalLayer {
 	if len(s.tabs) == 0 {
 		return nil
 	}
 	return s.tabs[s.activeTab].term
 }
 
-// ActiveTerm returns the active tab's TerminalChild (exported for model).
-func (s *SessionLayer) ActiveTerm() *TerminalChild {
+// ActiveTerm returns the active tab's TerminalLayer (exported for model).
+func (s *SessionLayer) ActiveTerm() *TerminalLayer {
 	return s.activeTerm()
 }
 
@@ -121,10 +121,7 @@ func (s *SessionLayer) syncTabs(regions []protocol.RegionInfo) {
 	}
 
 	// Subscribe to the active region.
-	if id := s.activeRegionID(); id != "" {
-		s.status = "subscribing..."
-		s.server.Send(protocol.SubscribeRequest{RegionID: id})
-	}
+	s.Activate()
 }
 
 // NewSessionLayer creates a session layer with the given dependencies.
@@ -154,28 +151,33 @@ func (s *SessionLayer) Init() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} })
 }
 
-func (s *SessionLayer) contentHeight() int {
-	h := s.termHeight - 1 // tab bar only
-	if h < 1 {
-		h = 1
+// Activate subscribes to the active region. Called when this session
+// becomes the active session (e.g., MainLayer switches to it).
+func (s *SessionLayer) Activate() tea.Cmd {
+	s.ensureTerminal()
+	if t := s.activeTerm(); t != nil {
+		s.status = "subscribing..."
+		return t.Activate()
 	}
-	return h
+	return nil
+}
+
+// Deactivate unsubscribes from the active region. Called when this
+// session is no longer the active session.
+func (s *SessionLayer) Deactivate() {
+	if t := s.activeTerm(); t != nil {
+		t.Deactivate()
+	}
 }
 
 func (s *SessionLayer) quit() (tea.Msg, tea.Cmd) {
-	id := s.activeRegionID()
-	if id != "" {
-		s.server.Send(protocol.UnsubscribeRequest{RegionID: id})
-	}
+	s.Deactivate()
 	s.server.Send(protocol.Disconnect{})
 	return nil, tea.Quit
 }
 
 func (s *SessionLayer) detach() (tea.Msg, tea.Cmd) {
-	id := s.activeRegionID()
-	if id != "" {
-		s.server.Send(protocol.UnsubscribeRequest{RegionID: id})
-	}
+	s.Deactivate()
 	s.server.Send(protocol.Disconnect{})
 	return DetachMsg{}, tea.Quit
 }
@@ -187,7 +189,7 @@ func (s *SessionLayer) ensureTerminal() {
 	}
 	t := &s.tabs[s.activeTab]
 	if t.term == nil {
-		t.term = NewTerminalChild(s.server, t.regionID, t.regionName, s.termWidth, s.termHeight)
+		t.term = NewTerminalLayer(s.server, t.regionID, t.regionName, s.termWidth, s.termHeight)
 	}
 }
 
@@ -198,32 +200,18 @@ func (s *SessionLayer) ensureTerminalForTab(idx int) {
 	}
 	t := &s.tabs[idx]
 	if t.term == nil {
-		t.term = NewTerminalChild(s.server, t.regionID, t.regionName, s.termWidth, s.termHeight)
+		t.term = NewTerminalLayer(s.server, t.regionID, t.regionName, s.termWidth, s.termHeight)
 	}
 }
 
 // switchToTab switches from the current active tab to the given index.
-// It unsubscribes from the old region and subscribes to the new one.
 func (s *SessionLayer) switchToTab(idx int) {
 	if idx < 0 || idx >= len(s.tabs) || idx == s.activeTab {
 		return
 	}
-	oldID := s.activeRegionID()
-	if oldID != "" {
-		s.server.Send(protocol.UnsubscribeRequest{RegionID: oldID})
-	}
+	s.Deactivate()
 	s.activeTab = idx
-	newID := s.activeRegionID()
-	if newID != "" {
-		s.server.Send(protocol.SubscribeRequest{RegionID: newID})
-		if s.termWidth > 0 && s.termHeight > 2 {
-			s.server.Send(protocol.ResizeRequest{
-				RegionID: newID,
-				Width:    uint16(s.termWidth),
-				Height:   uint16(s.contentHeight()),
-			})
-		}
-	}
+	s.Activate()
 }
 
 // Update implements the Layer interface.
@@ -302,7 +290,7 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		s.termWidth = msg.Width
 		s.termHeight = msg.Height
 		if t := s.activeTerm(); t != nil {
-			cmd := t.Update(msg)
+			_, cmd, _ := t.Update(msg)
 			return nil, cmd, true
 		}
 		return nil, nil, true
@@ -338,15 +326,10 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			s.status = ""
 			return nil, nil, true
 		}
-		// Unsubscribe from old active region before switching
-		oldID := s.activeRegionID()
-		if oldID != "" {
-			s.server.Send(protocol.UnsubscribeRequest{RegionID: oldID})
-		}
+		s.Deactivate()
 		s.tabs = append(s.tabs, tab{regionID: msg.RegionID, regionName: msg.Name})
 		s.activeTab = len(s.tabs) - 1
-		s.status = "subscribing..."
-		s.server.Send(protocol.SubscribeRequest{RegionID: msg.RegionID})
+		s.Activate()
 		return nil, nil, true
 
 	case protocol.SubscribeResponse:
@@ -361,13 +344,6 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		s.status = ""
 		s.ensureTerminal()
-		if s.termWidth > 0 && s.termHeight > 2 {
-			s.server.Send(protocol.ResizeRequest{
-				RegionID: s.activeRegionID(),
-				Width:    uint16(s.termWidth),
-				Height:   uint16(s.contentHeight()),
-			})
-		}
 		return nil, nil, true
 
 	// Terminal messages — route to the correct tab by RegionID
@@ -377,12 +353,12 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		s.ensureTerminalForTab(idx)
-		cmd := s.tabs[idx].term.Update(msg)
+		_, cmd, _ := s.tabs[idx].term.Update(msg)
 		return nil, cmd, true
 	case protocol.GetScreenResponse:
 		idx := s.findTabIndex(msg.RegionID)
 		if idx >= 0 && s.tabs[idx].term != nil {
-			cmd := s.tabs[idx].term.Update(msg)
+			_, cmd, _ := s.tabs[idx].term.Update(msg)
 			return nil, cmd, true
 		}
 		return nil, nil, true
@@ -392,12 +368,12 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			return nil, nil, true
 		}
 		s.ensureTerminalForTab(idx)
-		cmd := s.tabs[idx].term.Update(msg)
+		_, cmd, _ := s.tabs[idx].term.Update(msg)
 		return nil, cmd, true
 	case protocol.GetScrollbackResponse:
 		idx := s.findTabIndex(msg.RegionID)
 		if idx >= 0 && s.tabs[idx].term != nil {
-			s.tabs[idx].term.Update(msg)
+			_, _, _ = s.tabs[idx].term.Update(msg)
 		}
 		return nil, nil, true
 	case protocol.ResizeResponse:
@@ -406,17 +382,17 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	// Capability messages — delegate to active terminal if it exists
 	case tea.KeyboardEnhancementsMsg:
 		if t := s.activeTerm(); t != nil {
-			t.Update(msg)
+			_, _, _ = t.Update(msg)
 		}
 		return nil, nil, true
 	case tea.BackgroundColorMsg:
 		if t := s.activeTerm(); t != nil {
-			t.Update(msg)
+			_, _, _ = t.Update(msg)
 		}
 		return nil, nil, true
 	case tea.EnvMsg:
 		if t := s.activeTerm(); t != nil {
-			t.Update(msg)
+			_, _, _ = t.Update(msg)
 		}
 		return nil, nil, true
 
@@ -445,11 +421,7 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		if s.activeTab >= len(s.tabs) {
 			s.activeTab = len(s.tabs) - 1
 		}
-		// Subscribe to the now-active tab
-		newID := s.activeRegionID()
-		if newID != "" {
-			s.server.Send(protocol.SubscribeRequest{RegionID: newID})
-		}
+		s.Activate()
 		return nil, nil, true
 
 	case DisconnectedMsg:
@@ -540,30 +512,29 @@ func (s *SessionLayer) buildStatusCaps() StatusCaps {
 	return caps
 }
 
-// View implements the Layer interface. Renders the tab bar (left side
-// only — terminal tabs) plus terminal content. Model composites the
-// right side of the tab bar (status + branding) as a separate layer.
-func (s *SessionLayer) View(width, height int, active bool) *lipgloss.Layer {
+// View implements the Layer interface. Returns the tab bar and terminal
+// content as separate layers for compositing. Model composites the
+// right side of the tab bar (status + branding) as an additional layer.
+func (s *SessionLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	if s.err != "" {
-		return lipgloss.NewLayer("error: " + s.err + "\n")
+		return []*lipgloss.Layer{lipgloss.NewLayer("error: " + s.err + "\n")}
 	}
 
 	width = max(width, 80)
 	height = max(height, 24)
 
-	var sb strings.Builder
-	sb.WriteString(s.renderTabBar(width))
-	sb.WriteByte('\n')
+	layers := []*lipgloss.Layer{lipgloss.NewLayer(s.renderTabBar(width))}
 
 	contentHeight := max(height-1, 1)
-	term := s.activeTerm()
-	scrollbackActive := term != nil && term.ScrollbackActive()
-	showCursor := active && !scrollbackActive
-	disconnected := s.connStatus == "reconnecting"
-
-	if term != nil {
-		term.View(&sb, width, contentHeight, showCursor, disconnected)
+	if term := s.activeTerm(); term != nil {
+		term.disconnected = (s.connStatus == "reconnecting")
+		termLayers := term.View(width, contentHeight, active)
+		for i := range termLayers {
+			termLayers[i] = termLayers[i].Y(1)
+		}
+		layers = append(layers, termLayers...)
 	} else {
+		var sb strings.Builder
 		for i := range contentHeight {
 			for range width {
 				sb.WriteByte(' ')
@@ -572,9 +543,10 @@ func (s *SessionLayer) View(width, height int, active bool) *lipgloss.Layer {
 				sb.WriteByte('\n')
 			}
 		}
+		layers = append(layers, lipgloss.NewLayer(sb.String()).Y(1))
 	}
 
-	return lipgloss.NewLayer(sb.String())
+	return layers
 }
 
 // renderTabBar renders the left side of the tab bar with all tabs.
@@ -624,8 +596,7 @@ var (
 
 func (s *SessionLayer) Status() (string, lipgloss.Style) {
 	if t := s.activeTerm(); t != nil && t.ScrollbackActive() {
-		text, _, _ := t.Status()
-		return text, statusBold
+		return t.Status()
 	}
 	if s.connStatus == "reconnecting" {
 		secs := int(time.Until(s.retryAt).Seconds()) + 1

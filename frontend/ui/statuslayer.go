@@ -51,8 +51,11 @@ func (s *StatusLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	return nil, nil, false
 }
 
+func (s *StatusLayer) Activate() tea.Cmd { return nil }
+func (s *StatusLayer) Deactivate()       {}
+
 // View returns a positioned dialog layer for compositing.
-func (s *StatusLayer) View(width, height int, active bool) *lipgloss.Layer {
+func (s *StatusLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	var lines []string
 
 	lines = append(lines, "termd-tui:")
@@ -146,7 +149,7 @@ func (s *StatusLayer) View(width, height int, active bool) *lipgloss.Layer {
 		y = 0
 	}
 
-	return lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)
+	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
 }
 
 func (s *StatusLayer) Status() (string, lipgloss.Style) { return "status", lipgloss.Style{} }

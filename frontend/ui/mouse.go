@@ -9,10 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// chromeRows is the number of rows used by termd-tui's chrome (tab bar)
-// above the content area.
-const chromeRows = 1
-
 // parseSGRMouse parses an SGR mouse sequence and returns the corresponding
 // bubbletea MouseMsg. Returns nil if parsing fails.
 // Format: ESC [ < btn ; col ; row M/m (1-based coordinates)

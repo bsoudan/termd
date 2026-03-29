@@ -190,14 +190,12 @@ func (m Model) View() tea.View {
 		}
 	}
 
-	// Collect all non-nil View layers. The first layer (session) is
-	// active when no overlay is above it — it uses this to show the cursor.
+	// Collect all View layers. Each layer returns a slice; flatten them.
+	// The first layer (session) is active when no overlay is above it.
 	var layers []*lipgloss.Layer
-	layers = append(layers, session.View(width, height, !hasOverlay))
+	layers = append(layers, session.View(width, height, !hasOverlay)...)
 	for i := 1; i < len(m.layers); i++ {
-		if l := m.layers[i].View(width, height, false); l != nil {
-			layers = append(layers, l)
-		}
+		layers = append(layers, m.layers[i].View(width, height, false)...)
 	}
 
 	// Status bar (right side of tab bar) as the topmost layer.

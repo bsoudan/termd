@@ -58,8 +58,10 @@ func cmdMsg(msg tea.Msg) tea.Cmd {
 	return func() tea.Msg { return msg }
 }
 
-func (c *CommandLayer) View(width, height int, active bool) *lipgloss.Layer { return nil }
-func (c *CommandLayer) Status() (string, lipgloss.Style) { return "?", lipgloss.Style{} }
+func (c *CommandLayer) Activate() tea.Cmd                            { return nil }
+func (c *CommandLayer) Deactivate()                                   {}
+func (c *CommandLayer) View(width, height int, active bool) []*lipgloss.Layer { return nil }
+func (c *CommandLayer) Status() (string, lipgloss.Style)              { return "?", lipgloss.Style{} }
 
 
 // HintLayer is a temporary layer pushed after startup to show
@@ -82,7 +84,10 @@ var logoLines = [3]string{
 
 const logoWidth = 24 // display width of each logo line
 
-func (h *HintLayer) View(width, height int, active bool) *lipgloss.Layer {
+func (h *HintLayer) Activate() tea.Cmd { return nil }
+func (h *HintLayer) Deactivate()       {}
+
+func (h *HintLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	pad := " "
 	blank := pad + strings.Repeat(" ", logoWidth) + pad
 	logo := blank + "\n" +
@@ -96,7 +101,7 @@ func (h *HintLayer) View(width, height int, active bool) *lipgloss.Layer {
 		x = 0
 	}
 
-	return lipgloss.NewLayer(logo).X(x).Y(2).Z(1)
+	return []*lipgloss.Layer{lipgloss.NewLayer(logo).X(x).Y(2).Z(1)}
 }
 
 var logoStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))

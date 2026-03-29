@@ -10,12 +10,17 @@ import (
 // The bool return signals whether the message was handled (stop propagating)
 // or should continue to the next layer.
 //
-// View returns a *lipgloss.Layer for compositing, or nil for transparent
-// layers (command, hint). Model collects non-nil layers and the session
-// base, then feeds them all to a single lipgloss.NewCompositor call.
+// View returns a slice of *lipgloss.Layer for compositing. Layers that
+// have no visual output (command, hint) return nil. Model flattens all
+// slices and feeds them to a single lipgloss.NewCompositor call.
+//
+// Activate/Deactivate manage lifecycle when a layer becomes or stops
+// being the active target (e.g., session switching).
 type Layer interface {
+	Activate() tea.Cmd
+	Deactivate()
 	Update(tea.Msg) (response tea.Msg, cmd tea.Cmd, handled bool)
-	View(width, height int, active bool) *lipgloss.Layer
+	View(width, height int, active bool) []*lipgloss.Layer
 	Status() (text string, style lipgloss.Style)
 }
 

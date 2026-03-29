@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	te "github.com/rcarmo/go-te/pkg/te"
 	"termd/frontend/protocol"
@@ -20,15 +21,16 @@ func privateModeKey(mode int) int {
 	return mode << 5
 }
 
-// TerminalChild owns screen state, scrollback, capabilities, and server
-// communication for a single terminal region. Session owns it as a child.
-type TerminalChild struct {
+// TerminalLayer owns screen state, scrollback, capabilities, and server
+// communication for a single terminal region. Implements the Layer interface.
+type TerminalLayer struct {
 	screen       *te.Screen
 	lines        []string
 	cursorRow    int
 	cursorCol    int
 	pendingClear bool
 	scrollback   Scrollback
+	disconnected bool
 
 	server     *Server
 	regionID   string
@@ -41,9 +43,9 @@ type TerminalChild struct {
 	bgDark        *bool
 }
 
-// NewTerminalChild creates a terminal child for a subscribed region.
-func NewTerminalChild(server *Server, regionID, regionName string, width, height int) *TerminalChild {
-	return &TerminalChild{
+// NewTerminalLayer creates a terminal layer for a region.
+func NewTerminalLayer(server *Server, regionID, regionName string, width, height int) *TerminalLayer {
+	return &TerminalLayer{
 		server:     server,
 		regionID:   regionID,
 		regionName: regionName,
@@ -52,7 +54,25 @@ func NewTerminalChild(server *Server, regionID, regionName string, width, height
 	}
 }
 
-func (t *TerminalChild) contentHeight() int {
+// Activate subscribes to this terminal's region and sends a resize.
+func (t *TerminalLayer) Activate() tea.Cmd {
+	t.server.Send(protocol.SubscribeRequest{RegionID: t.regionID})
+	if t.termWidth > 0 && t.termHeight > 2 {
+		t.server.Send(protocol.ResizeRequest{
+			RegionID: t.regionID,
+			Width:    uint16(t.termWidth),
+			Height:   uint16(t.contentHeight()),
+		})
+	}
+	return nil
+}
+
+// Deactivate unsubscribes from this terminal's region.
+func (t *TerminalLayer) Deactivate() {
+	t.server.Send(protocol.UnsubscribeRequest{RegionID: t.regionID})
+}
+
+func (t *TerminalLayer) contentHeight() int {
 	h := t.termHeight - 1 // tab bar
 	if h < 1 {
 		h = 1
@@ -60,20 +80,20 @@ func (t *TerminalChild) contentHeight() int {
 	return h
 }
 
-// Update handles messages routed by session. Returns a tea.Cmd or nil.
-func (t *TerminalChild) Update(msg tea.Msg) tea.Cmd {
+// Update implements the Layer interface.
+func (t *TerminalLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case protocol.ScreenUpdate:
-		return t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes)
+		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes), true
 	case protocol.GetScreenResponse:
-		return t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, nil)
+		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, nil), true
 	case protocol.TerminalEvents:
-		return t.handleTerminalEvents(msg.Events)
+		return nil, t.handleTerminalEvents(msg.Events), true
 	case protocol.GetScrollbackResponse:
 		t.scrollback = t.scrollback.SetData(msg.Lines)
-		return nil
+		return nil, nil, true
 	case protocol.ResizeResponse:
-		return nil
+		return nil, nil, true
 	case tea.WindowSizeMsg:
 		t.termWidth = msg.Width
 		t.termHeight = msg.Height
@@ -82,14 +102,14 @@ func (t *TerminalChild) Update(msg tea.Msg) tea.Cmd {
 			Width:    uint16(msg.Width),
 			Height:   uint16(t.contentHeight()),
 		})
-		return nil
+		return nil, nil, true
 	case tea.KeyboardEnhancementsMsg:
 		t.keyboardFlags = msg.Flags
-		return nil
+		return nil, nil, true
 	case tea.BackgroundColorMsg:
 		dark := msg.IsDark()
 		t.bgDark = &dark
-		return nil
+		return nil, nil, true
 	case tea.EnvMsg:
 		t.termEnv = make(map[string]string)
 		for _, key := range []string{"TERM", "COLORTERM", "TERM_PROGRAM"} {
@@ -97,13 +117,13 @@ func (t *TerminalChild) Update(msg tea.Msg) tea.Cmd {
 				t.termEnv[key] = v
 			}
 		}
-		return nil
+		return nil, nil, true
 	default:
-		return nil
+		return nil, nil, false
 	}
 }
 
-func (t *TerminalChild) handleScreenUpdate(lines []string, cells [][]protocol.ScreenCell, cursorRow, cursorCol uint16, modes map[int]bool) tea.Cmd {
+func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.ScreenCell, cursorRow, cursorCol uint16, modes map[int]bool) tea.Cmd {
 	height := t.contentHeight()
 	if t.termHeight <= 0 {
 		height = 23
@@ -141,7 +161,7 @@ func (t *TerminalChild) handleScreenUpdate(lines []string, cells [][]protocol.Sc
 	return nil
 }
 
-func (t *TerminalChild) handleTerminalEvents(events []protocol.TerminalEvent) tea.Cmd {
+func (t *TerminalLayer) handleTerminalEvents(events []protocol.TerminalEvent) tea.Cmd {
 	if t.screen == nil {
 		return nil
 	}
@@ -154,84 +174,87 @@ func (t *TerminalChild) handleTerminalEvents(events []protocol.TerminalEvent) te
 	return nil
 }
 
-// View renders the terminal content area (including scrollback if active).
-func (t *TerminalChild) View(sb *strings.Builder, width, height int, showCursor, disconnected bool) {
-	if t.scrollback.Active() && t.screen != nil {
-		t.scrollback.View(sb, t.ScreenCells(), width, height)
-		return
-	}
+// View implements the Layer interface. Renders terminal content including
+// scrollback if active. The active param controls cursor visibility
+// (combined with scrollback state). SessionLayer sets disconnected before
+// calling View.
+func (t *TerminalLayer) View(width, height int, active bool) []*lipgloss.Layer {
+	showCursor := active && !t.scrollback.Active()
 
-	if t.screen != nil {
+	var sb strings.Builder
+	if t.scrollback.Active() && t.screen != nil {
+		t.scrollback.View(&sb, t.ScreenCells(), width, height)
+	} else if t.screen != nil {
 		cells := t.screen.LinesCells()
 		for i := range height {
 			var row []te.Cell
 			if i < len(cells) {
 				row = cells[i]
 			}
-			renderCellLine(sb, row, width, i, t.cursorRow, t.cursorCol, showCursor, disconnected)
+			renderCellLine(&sb, row, width, i, t.cursorRow, t.cursorCol, showCursor, t.disconnected)
 			if i < height-1 {
 				sb.WriteByte('\n')
 			}
 		}
-		return
-	}
-
-	// Plain text fallback (no screen yet)
-	for i := range height {
-		line := ""
-		if i < len(t.lines) {
-			line = t.lines[i]
-		}
-		runes := []rune(line)
-		if len(runes) > width {
-			runes = runes[:width]
-		}
-		for col := range width {
-			ch := ' '
-			if col < len(runes) {
-				ch = runes[col]
+	} else {
+		// Plain text fallback (no screen yet)
+		for i := range height {
+			line := ""
+			if i < len(t.lines) {
+				line = t.lines[i]
 			}
-			if showCursor && i == t.cursorRow && col == t.cursorCol {
-				sb.WriteString(ansi.SGR(ansi.AttrReverse))
-				sb.WriteRune(ch)
-				sb.WriteString(ansi.SGR(ansi.AttrNoReverse))
-			} else {
-				sb.WriteRune(ch)
+			runes := []rune(line)
+			if len(runes) > width {
+				runes = runes[:width]
+			}
+			for col := range width {
+				ch := ' '
+				if col < len(runes) {
+					ch = runes[col]
+				}
+				if showCursor && i == t.cursorRow && col == t.cursorCol {
+					sb.WriteString(ansi.SGR(ansi.AttrReverse))
+					sb.WriteRune(ch)
+					sb.WriteString(ansi.SGR(ansi.AttrNoReverse))
+				} else {
+					sb.WriteRune(ch)
+				}
+			}
+			if i < height-1 {
+				sb.WriteByte('\n')
 			}
 		}
-		if i < height-1 {
-			sb.WriteByte('\n')
-		}
 	}
+	return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
 }
 
 // Title returns the region name for the tab bar.
-func (t *TerminalChild) Title() string { return t.regionName }
+func (t *TerminalLayer) Title() string { return t.regionName }
 
-// Status returns status bar info. Scrollback mode reports offset/total.
-func (t *TerminalChild) Status() (string, bool, bool) {
+// Status implements the Layer interface.
+func (t *TerminalLayer) Status() (string, lipgloss.Style) {
 	if t.scrollback.Active() {
-		return t.scrollback.StatusText(), true, false
+		return t.scrollback.StatusText(), statusBold
 	}
-	return "", false, false
+	return "", lipgloss.Style{}
 }
 
 // ScrollbackActive returns whether scrollback mode is active.
-func (t *TerminalChild) ScrollbackActive() bool { return t.scrollback.Active() }
+func (t *TerminalLayer) ScrollbackActive() bool { return t.scrollback.Active() }
 
 // EnterScrollback activates scrollback mode and requests data from the server.
-func (t *TerminalChild) EnterScrollback(offset int) {
+func (t *TerminalLayer) EnterScrollback(offset int) {
 	t.scrollback = t.scrollback.Enter(offset)
 	t.server.Send(protocol.GetScrollbackRequest{RegionID: t.regionID})
 }
 
 // ExitScrollback deactivates scrollback mode.
-func (t *TerminalChild) ExitScrollback() {
+func (t *TerminalLayer) ExitScrollback() {
 	t.scrollback = t.scrollback.Exit()
 }
 
 // HandleScrollbackKey processes keyboard input during scrollback mode.
-func (t *TerminalChild) HandleScrollbackKey(msg tea.KeyPressMsg) {
+func (t *TerminalLayer) HandleScrollbackKey(msg tea.KeyPressMsg) {
 	var exited bool
 	t.scrollback, exited = t.scrollback.Update(msg, t.contentHeight())
 	if exited {
@@ -241,7 +264,7 @@ func (t *TerminalChild) HandleScrollbackKey(msg tea.KeyPressMsg) {
 
 // HandleScrollbackWheel processes scroll wheel during scrollback mode.
 // Returns true if scrollback was exited.
-func (t *TerminalChild) HandleScrollbackWheel(button tea.MouseButton) bool {
+func (t *TerminalLayer) HandleScrollbackWheel(button tea.MouseButton) bool {
 	var exited bool
 	t.scrollback, exited = t.scrollback.HandleWheel(button)
 	if exited {
@@ -251,12 +274,12 @@ func (t *TerminalChild) HandleScrollbackWheel(button tea.MouseButton) bool {
 }
 
 // SetPendingClear marks that a screen clear should happen on the next screen update.
-func (t *TerminalChild) SetPendingClear() {
+func (t *TerminalLayer) SetPendingClear() {
 	t.pendingClear = true
 }
 
 // ForwardMouse encodes and sends a mouse event to the server.
-func (t *TerminalChild) ForwardMouse(msg tea.MouseMsg) {
+func (t *TerminalLayer) ForwardMouse(msg tea.MouseMsg) {
 	mouse := msg.Mouse()
 	seq := encodeSGRMouse(msg, mouse.X, mouse.Y-1)
 	if seq != "" {
@@ -268,7 +291,7 @@ func (t *TerminalChild) ForwardMouse(msg tea.MouseMsg) {
 }
 
 // ChildWantsMouse checks if the child application has mouse mode enabled.
-func (t *TerminalChild) ChildWantsMouse() bool {
+func (t *TerminalLayer) ChildWantsMouse() bool {
 	if t.screen == nil {
 		return false
 	}
@@ -279,7 +302,7 @@ func (t *TerminalChild) ChildWantsMouse() bool {
 }
 
 // MouseMode returns the bubbletea mouse mode based on the child's mode state.
-func (t *TerminalChild) MouseMode() int {
+func (t *TerminalLayer) MouseMode() int {
 	if t.screen == nil {
 		return 0
 	}
@@ -291,7 +314,7 @@ func (t *TerminalChild) MouseMode() int {
 }
 
 // ScreenCells returns the current cell data for rendering.
-func (t *TerminalChild) ScreenCells() [][]te.Cell {
+func (t *TerminalLayer) ScreenCells() [][]te.Cell {
 	if t.screen == nil {
 		return nil
 	}
@@ -299,28 +322,28 @@ func (t *TerminalChild) ScreenCells() [][]te.Cell {
 }
 
 // RegionID returns the terminal's region ID.
-func (t *TerminalChild) RegionID() string { return t.regionID }
+func (t *TerminalLayer) RegionID() string { return t.regionID }
 
 // Width returns the terminal width.
-func (t *TerminalChild) Width() int { return t.termWidth }
+func (t *TerminalLayer) Width() int { return t.termWidth }
 
 // Height returns the terminal height.
-func (t *TerminalChild) Height() int { return t.termHeight }
+func (t *TerminalLayer) Height() int { return t.termHeight }
 
 // KeyboardFlags returns kitty keyboard protocol flags.
-func (t *TerminalChild) KeyboardFlags() int { return t.keyboardFlags }
+func (t *TerminalLayer) KeyboardFlags() int { return t.keyboardFlags }
 
 // BgDark returns the background darkness state.
-func (t *TerminalChild) BgDark() *bool { return t.bgDark }
+func (t *TerminalLayer) BgDark() *bool { return t.bgDark }
 
 // TermEnv returns terminal environment variables.
-func (t *TerminalChild) TermEnv() map[string]string { return t.termEnv }
+func (t *TerminalLayer) TermEnv() map[string]string { return t.termEnv }
 
 // Screen returns the underlying te.Screen (for status caps mouse mode detection).
-func (t *TerminalChild) Screen() *te.Screen { return t.screen }
+func (t *TerminalLayer) Screen() *te.Screen { return t.screen }
 
 // MouseModes returns a human-readable mouse mode string for status display.
-func (t *TerminalChild) MouseModes() string {
+func (t *TerminalLayer) MouseModes() string {
 	if t.screen == nil {
 		return ""
 	}
