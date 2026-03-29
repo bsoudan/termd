@@ -23,10 +23,11 @@ changelog:
 	mv "$$tmp" frontend/changelog.txt
 
 build-tui: changelog
-	go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/termd-tui ./frontend
+	go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/ttui ./frontend
+	ln -sf ttui .local/bin/termd-tui
 
 build-tui-windows: changelog
-	GOOS=windows GOARCH=amd64 go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/termd-tui.exe ./frontend
+	GOOS=windows GOARCH=amd64 go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/ttui.exe ./frontend
 
 build-mousehelper:
 	cd e2e/testdata/mousehelper && go build -o ../../../.local/bin/mousehelper .
