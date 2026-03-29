@@ -46,6 +46,12 @@ func (c *CommandLayer) dispatch(msg tea.KeyPressMsg) tea.Cmd {
 		return cmdMsg(SpawnRegionMsg{})
 	case "x":
 		return cmdMsg(CloseTabMsg{})
+	case "S":
+		return cmdMsg(NewSessionMsg{})
+	case "X":
+		return cmdMsg(KillSessionMsg{})
+	case "w":
+		return cmdMsg(OpenOverlayMsg{Name: "sessions"})
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		idx, _ := strconv.Atoi(msg.String())
 		return cmdMsg(SwitchTabMsg{Index: idx - 1})

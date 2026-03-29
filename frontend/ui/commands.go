@@ -2,7 +2,9 @@ package ui
 
 import tea "charm.land/bubbletea/v2"
 
-// Command messages dispatched by CommandLayer and HelpLayer for session to handle.
+// Command messages dispatched by CommandLayer and HelpLayer.
+// Session-level commands (Spawn, Switch, Close) are handled by SessionLayer.
+// Session management commands (New, Create, Kill, SwitchSession) are handled by MainLayer.
 type (
 	DetachRequestMsg     struct{}              // graceful detach
 	SendLiteralPrefixMsg struct{}              // send literal ctrl+b to server
@@ -13,6 +15,11 @@ type (
 	SpawnProgramMsg      struct{ Name string } // spawn a specific program by name
 	SwitchTabMsg         struct{ Index int }   // switch to tab by 0-based index
 	CloseTabMsg          struct{}              // kill the active tab's region
+
+	NewSessionMsg    struct{}              // open session name prompt
+	CreateSessionMsg struct{ Name string } // create session with given name (from name prompt)
+	KillSessionMsg   struct{}              // kill the current session
+	SwitchSessionMsg struct{ Index int }   // switch to session by index
 )
 
 // sendRawToServer forwards raw bytes as input to the active region.
@@ -39,6 +46,9 @@ var helpItems = []helpItem{
 	{"c", "new region", func() tea.Cmd { return cmdMsg(SpawnRegionMsg{}) }},
 	{"x", "close tab", func() tea.Cmd { return cmdMsg(CloseTabMsg{}) }},
 	{"1-9", "switch tab", nil},
+	{"S", "new session", func() tea.Cmd { return cmdMsg(NewSessionMsg{}) }},
+	{"X", "kill session", func() tea.Cmd { return cmdMsg(KillSessionMsg{}) }},
+	{"w", "switch session", func() tea.Cmd { return cmdMsg(OpenOverlayMsg{Name: "sessions"}) }},
 	{"d", "detach", func() tea.Cmd { return cmdMsg(DetachRequestMsg{}) }},
 	{"l", "log viewer", func() tea.Cmd { return cmdMsg(OpenOverlayMsg{Name: "logviewer"}) }},
 	{"s", "status", func() tea.Cmd { return cmdMsg(OpenOverlayMsg{Name: "status"}) }},

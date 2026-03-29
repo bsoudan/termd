@@ -2,10 +2,8 @@ package ui
 
 import (
 	"fmt"
-	"io"
 	"slices"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -20,11 +18,10 @@ type tab struct {
 	term       *TerminalLayer // nil until subscribe succeeds
 }
 
-// SessionLayer is the root layer — it owns server communication, region
-// lifecycle, terminal children, and connection state.
+// SessionLayer manages one named session's regions and terminals.
+// MainLayer owns the session list and forwards messages here.
 type SessionLayer struct {
 	server    *Server
-	pipeW     io.Writer
 	requestFn RequestFunc
 
 	programs []protocol.ProgramInfo
@@ -32,8 +29,7 @@ type SessionLayer struct {
 	tabs      []tab
 	activeTab int
 
-	connStatus string
-	retryAt    time.Time
+	connStatus string // set by MainLayer on disconnect/reconnect
 	status     string
 	err        string
 
@@ -44,7 +40,6 @@ type SessionLayer struct {
 	changelog     string
 	sessionName   string
 
-	// Pre-terminal dimensions (stored until terminal is created).
 	termWidth  int
 	termHeight int
 }
@@ -120,19 +115,16 @@ func (s *SessionLayer) syncTabs(regions []protocol.RegionInfo) {
 		s.activeTab = max(len(s.tabs)-1, 0)
 	}
 
-	// Subscribe to the active region.
-	s.Activate()
 }
 
 // NewSessionLayer creates a session layer with the given dependencies.
 func NewSessionLayer(
-	server *Server, pipeW io.Writer, requestFn RequestFunc,
+	server *Server, requestFn RequestFunc,
 	logRing *termlog.LogRingBuffer,
 	endpoint, version, changelog, hostname, sessionName string,
 ) *SessionLayer {
 	return &SessionLayer{
 		server:        server,
-		pipeW:         pipeW,
 		requestFn:     requestFn,
 		endpoint:      endpoint,
 		version:       version,
@@ -145,10 +137,17 @@ func NewSessionLayer(
 	}
 }
 
-// Init sends the initial SessionConnectRequest and returns a cmd to show the hint.
-func (s *SessionLayer) Init() tea.Cmd {
+// Reconnect re-sends the SessionConnectRequest to refresh the region list.
+// Called by MainLayer after a connection is restored.
+func (s *SessionLayer) Reconnect() {
 	s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
-	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} })
+}
+
+// KillAllRegions sends KillRegionRequest for every region in this session.
+func (s *SessionLayer) KillAllRegions() {
+	for _, t := range s.tabs {
+		s.server.Send(protocol.KillRegionRequest{RegionID: t.regionID})
+	}
 }
 
 // Activate subscribes to the active region. Called when this session
@@ -168,18 +167,6 @@ func (s *SessionLayer) Deactivate() {
 	if t := s.activeTerm(); t != nil {
 		t.Deactivate()
 	}
-}
-
-func (s *SessionLayer) quit() (tea.Msg, tea.Cmd) {
-	s.Deactivate()
-	s.server.Send(protocol.Disconnect{})
-	return nil, tea.Quit
-}
-
-func (s *SessionLayer) detach() (tea.Msg, tea.Cmd) {
-	s.Deactivate()
-	s.server.Send(protocol.Disconnect{})
-	return DetachMsg{}, tea.Quit
 }
 
 // ensureTerminal creates the terminal for the active tab if it doesn't exist yet.
@@ -215,14 +202,12 @@ func (s *SessionLayer) switchToTab(idx int) {
 }
 
 // Update implements the Layer interface.
+// Update implements the Layer interface. Handles session-specific messages.
+// Global messages (disconnect, reconnect, detach, etc.) are handled by MainLayer.
 func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case RawInputMsg:
 		resp, cmd := s.handleRawInput([]byte(msg))
-		return resp, cmd, true
-
-	case DetachRequestMsg:
-		resp, cmd := s.detach()
 		return resp, cmd, true
 
 	case SendLiteralPrefixMsg:
@@ -280,12 +265,6 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		return nil, nil, true
 
-	case protocol.Identify:
-		if msg.Hostname != s.localHostname {
-			s.endpoint = s.localHostname + " -> " + s.endpoint
-		}
-		return nil, nil, true
-
 	case tea.WindowSizeMsg:
 		s.termWidth = msg.Width
 		s.termHeight = msg.Height
@@ -298,31 +277,28 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case protocol.SessionConnectResponse:
 		if msg.Error {
 			s.err = "session connect failed: " + msg.Message
-			resp, cmd := s.quit()
-			return resp, cmd, true
+			return nil, nil, true
 		}
 		s.sessionName = msg.Session
 		s.programs = msg.Programs
 		s.syncTabs(msg.Regions)
+		s.Activate()
 		return nil, nil, true
 
 	case protocol.ListRegionsResponse:
 		if msg.Error {
 			s.err = "list regions failed: " + msg.Message
-			resp, cmd := s.quit()
-			return resp, cmd, true
+			return nil, nil, true
 		}
 		s.syncTabs(msg.Regions)
+		s.Activate()
 		return nil, nil, true
 
 	case protocol.SpawnResponse:
 		if msg.Error {
 			if len(s.tabs) == 0 {
 				s.err = "spawn failed: " + msg.Message
-				resp, cmd := s.quit()
-				return resp, cmd, true
 			}
-			// Non-fatal: we have other tabs
 			s.status = ""
 			return nil, nil, true
 		}
@@ -336,8 +312,6 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		if msg.Error {
 			if len(s.tabs) == 0 {
 				s.err = "subscribe failed: " + msg.Message
-				resp, cmd := s.quit()
-				return resp, cmd, true
 			}
 			s.status = ""
 			return nil, nil, true
@@ -397,7 +371,6 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		return nil, nil, true
 
 	case protocol.RegionCreated:
-		// Update name for the matching tab if it exists
 		idx := s.findTabIndex(msg.RegionID)
 		if idx >= 0 {
 			s.tabs[idx].regionName = msg.Name
@@ -414,45 +387,14 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		}
 		s.tabs = slices.Delete(s.tabs, idx, idx+1)
 		if len(s.tabs) == 0 {
-			s.err = "region destroyed"
-			resp, cmd := s.quit()
-			return resp, cmd, true
+			// No regions left — MainLayer will handle this via View showing error
+			s.status = "no regions"
+			return nil, nil, true
 		}
 		if s.activeTab >= len(s.tabs) {
 			s.activeTab = len(s.tabs) - 1
 		}
 		s.Activate()
-		return nil, nil, true
-
-	case DisconnectedMsg:
-		s.connStatus = "reconnecting"
-		s.retryAt = msg.RetryAt
-		return nil, tea.Tick(time.Second, func(time.Time) tea.Msg { return reconnectTickMsg{} }), true
-
-	case ReconnectedMsg:
-		s.connStatus = "connected"
-		s.retryAt = time.Time{}
-		// Re-connect to session to restore all tabs.
-		s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
-		return nil, nil, true
-
-	case ServerErrorMsg:
-		s.err = msg.Context + ": " + msg.Message
-		resp, cmd := s.quit()
-		return resp, cmd, true
-
-	case LogEntryMsg:
-		return nil, nil, true
-
-	case showHintMsg:
-		pushCmd := func() tea.Msg { return PushLayerMsg{Layer: &HintLayer{}} }
-		hideCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hideHintMsg{} })
-		return nil, tea.Batch(pushCmd, hideCmd), true
-
-	case reconnectTickMsg:
-		if s.connStatus == "reconnecting" {
-			return nil, tea.Tick(time.Second, func(time.Time) tea.Msg { return reconnectTickMsg{} }), true
-		}
 		return nil, nil, true
 
 	case tea.MouseMsg:
@@ -585,9 +527,8 @@ func (s *SessionLayer) renderTabBar(width int) string {
 	return sb.String()
 }
 
-// Status implements the Layer interface. Returns the session's own
-// status — scrollback mode, reconnecting, or endpoint. Layers above
-// session override this via the layer stack Status traversal.
+// Status implements the Layer interface. Returns scrollback mode or session name.
+// Reconnecting status is handled by MainLayer.
 var (
 	statusFaint   = lipgloss.NewStyle().Faint(true)
 	statusBoldRed = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
@@ -597,10 +538,6 @@ var (
 func (s *SessionLayer) Status() (string, lipgloss.Style) {
 	if t := s.activeTerm(); t != nil && t.ScrollbackActive() {
 		return t.Status()
-	}
-	if s.connStatus == "reconnecting" {
-		secs := int(time.Until(s.retryAt).Seconds()) + 1
-		return fmt.Sprintf("reconnecting to %s in %ds...", s.endpoint, secs), statusBoldRed
 	}
 	name := s.endpoint
 	if s.sessionName != "" {

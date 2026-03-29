@@ -30,15 +30,15 @@ func NewModel(s *Server, pipeW io.Writer, ring *termlog.LogRingBuffer, endpoint,
 		req.pending[req.nextReqID] = reply
 		s.Send(protocol.TaggedWithReqID(msg, req.nextReqID))
 	}
-	session := NewSessionLayer(s, pipeW, requestFn, ring, endpoint, version, changelog, hostname, sessionName)
+	main := NewMainLayer(s, pipeW, requestFn, ring, endpoint, version, changelog, hostname, sessionName)
 	return Model{
-		layers: []Layer{session},
+		layers: []Layer{main},
 		req:    req,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.layers[0].(*SessionLayer).Init()
+	return m.layers[0].(*MainLayer).Init()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -66,15 +66,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	//  - ctrl+b detection pushes CommandLayer before delivering the
 	//    remaining bytes, ensuring proper sequencing.
 	if raw, ok := msg.(RawInputMsg); ok {
-		session := m.layers[0].(*SessionLayer)
-		if m.hasFocusLayer(session) {
-			return m.handleFocusInput(raw, session.pipeW)
+		main := m.layers[0].(*MainLayer)
+		if m.hasFocusLayer(main) {
+			return m.handleFocusInput(raw, main.pipeW)
 		}
 		if idx := bytes.IndexByte([]byte(raw), prefixKey); idx >= 0 {
-			return m.handlePrefixDetected(raw, idx, session)
+			return m.handlePrefixDetected(raw, idx, main)
 		}
 		// Normal mode — fall through to layer iteration.
-		// Session handles mouse routing and server forwarding.
+		// MainLayer forwards to active session for mouse routing and server forwarding.
 	}
 
 	var cmds []tea.Cmd
@@ -99,14 +99,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // hasFocusLayer returns true if any overlay or scrollback mode is active,
 // meaning raw input should be routed through pipeW for key event parsing
 // rather than forwarded to the server.
-func (m Model) hasFocusLayer(session *SessionLayer) bool {
+func (m Model) hasFocusLayer(main *MainLayer) bool {
 	for i := 1; i < len(m.layers); i++ {
 		switch m.layers[i].(type) {
-		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer:
+		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer:
 			return true
 		}
 	}
-	t := session.ActiveTerm()
+	t := main.ActiveTerm()
 	return t != nil && t.ScrollbackActive()
 }
 
@@ -141,9 +141,9 @@ func (m Model) handleFocusInput(raw RawInputMsg, pipeW io.Writer) (tea.Model, te
 // pushed, then any bytes after ctrl+b are re-sent as a new RawInputMsg
 // for CommandLayer to process. tea.Sequence guarantees the push happens
 // before the re-send.
-func (m Model) handlePrefixDetected(raw RawInputMsg, idx int, session *SessionLayer) (tea.Model, tea.Cmd) {
+func (m Model) handlePrefixDetected(raw RawInputMsg, idx int, main *MainLayer) (tea.Model, tea.Cmd) {
 	if idx > 0 {
-		session.sendRawToServer(raw[:idx])
+		main.sendRawToServer(raw[:idx])
 	}
 
 	pushCmd := func() tea.Msg { return PushLayerMsg{Layer: &CommandLayer{}} }
@@ -158,9 +158,9 @@ func (m Model) handlePrefixDetected(raw RawInputMsg, idx int, session *SessionLa
 }
 
 func (m Model) View() tea.View {
-	session := m.layers[0].(*SessionLayer)
+	main := m.layers[0].(*MainLayer)
 
-	width, height := session.termWidth, session.termHeight
+	width, height := main.termWidth, main.termHeight
 	if width <= 0 {
 		width = 80
 	}
@@ -170,7 +170,7 @@ func (m Model) View() tea.View {
 
 	// Collect topmost Status and detect overlay presence.
 	// Status is collected bottom-up; topmost non-empty text wins.
-	// Model applies bold to status from layers above session.
+	// Model applies bold to status from layers above main.
 	statusText := ""
 	statusStyle := lipgloss.Style{}
 	hasOverlay := false
@@ -185,21 +185,21 @@ func (m Model) View() tea.View {
 			}
 		}
 		switch m.layers[i].(type) {
-		case *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer:
+		case *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer:
 			hasOverlay = true
 		}
 	}
 
 	// Collect all View layers. Each layer returns a slice; flatten them.
-	// The first layer (session) is active when no overlay is above it.
+	// The first layer (main) is active when no overlay is above it.
 	var layers []*lipgloss.Layer
-	layers = append(layers, session.View(width, height, !hasOverlay)...)
+	layers = append(layers, main.View(width, height, !hasOverlay)...)
 	for i := 1; i < len(m.layers); i++ {
 		layers = append(layers, m.layers[i].View(width, height, false)...)
 	}
 
 	// Status bar (right side of tab bar) as the topmost layer.
-	statusContent, statusWidth := renderStatusBar(statusText, session.version, statusStyle, hasOverlay)
+	statusContent, statusWidth := renderStatusBar(statusText, main.version, statusStyle, hasOverlay)
 	statusX := max(width-statusWidth, 0)
 	layers = append(layers, lipgloss.NewLayer(statusContent).X(statusX).Z(2))
 
@@ -208,7 +208,7 @@ func (m Model) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 
-	if activeTerm := session.ActiveTerm(); activeTerm != nil {
+	if activeTerm := main.ActiveTerm(); activeTerm != nil {
 		switch activeTerm.MouseMode() {
 		case 2:
 			v.MouseMode = tea.MouseModeAllMotion
