@@ -7,4 +7,6 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("8")).
 			Padding(0, 1)
+
+	helpSelected = lipgloss.NewStyle().Reverse(true)
 )

@@ -1,22 +1,80 @@
 package ui
 
 import (
-	"fmt"
-	"strings"
-
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-// HelpLayer shows available keybindings grouped by category.
-// Items are built from the keybinding registry.
+// HelpLayer shows available keybindings in a table, grouped by category.
 type HelpLayer struct {
-	cursor  int
-	entries []displayEntry
+	table   table.Model
+	entries []displayEntry // parallel to table rows for dispatch
 }
 
 func NewHelpLayer(registry *Registry) *HelpLayer {
-	return &HelpLayer{entries: registry.DisplayEntries()}
+	entries := registry.DisplayEntries()
+
+	// Compute column widths from content.
+	maxKey := 0
+	maxDesc := 0
+	for _, e := range entries {
+		if e.isHeader {
+			continue
+		}
+		if len(e.keyDisplay) > maxKey {
+			maxKey = len(e.keyDisplay)
+		}
+		if len(e.description) > maxDesc {
+			maxDesc = len(e.description)
+		}
+	}
+	if maxKey < 10 {
+		maxKey = 10
+	}
+	if maxDesc < 20 {
+		maxDesc = 20
+	}
+
+	cols := []table.Column{
+		{Title: "", Width: maxKey},
+		{Title: "", Width: maxDesc},
+	}
+
+	rows := make([]table.Row, len(entries))
+	for i, e := range entries {
+		if e.isHeader {
+			rows[i] = table.Row{"── " + e.keyDisplay + " ──", ""}
+		} else {
+			rows[i] = table.Row{e.keyDisplay, e.description}
+		}
+	}
+
+	s := table.DefaultStyles()
+	s.Header = lipgloss.Style{}
+	s.Selected = lipgloss.NewStyle().Bold(true).Reverse(true)
+	s.Cell = lipgloss.NewStyle().PaddingRight(1)
+
+	km := table.KeyMap{
+		LineUp:   key.NewBinding(key.WithKeys("up", "k")),
+		LineDown: key.NewBinding(key.WithKeys("down", "j")),
+	}
+
+	// Total width: column widths + cell padding (1 right pad per cell).
+	totalW := maxKey + maxDesc + 2
+
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithStyles(s),
+		table.WithKeyMap(km),
+		table.WithWidth(totalW),
+		table.WithHeight(len(rows)),
+	)
+
+	return &HelpLayer{table: t, entries: entries}
 }
 
 func (h *HelpLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
@@ -29,44 +87,27 @@ func (h *HelpLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	return nil, nil, false
 }
 
-// selectableIndex returns the index of the nth selectable (non-header) entry.
-func (h *HelpLayer) isSelectable(i int) bool {
-	return !h.entries[i].isHeader
-}
-
 func (h *HelpLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
 	switch msg.String() {
 	case "q", "esc", "?":
 		return QuitLayerMsg{}, nil, true
-	case "up", "k":
-		for i := h.cursor - 1; i >= 0; i-- {
-			if h.isSelectable(i) {
-				h.cursor = i
-				break
-			}
-		}
-		return nil, nil, true
-	case "down", "j":
-		for i := h.cursor + 1; i < len(h.entries); i++ {
-			if h.isSelectable(i) {
-				h.cursor = i
-				break
-			}
-		}
-		return nil, nil, true
 	case "enter":
-		if h.cursor < len(h.entries) {
-			if e := h.entries[h.cursor]; e.cmdFn != nil {
+		idx := h.table.Cursor()
+		if idx >= 0 && idx < len(h.entries) {
+			if e := h.entries[idx]; e.cmdFn != nil {
 				return QuitLayerMsg{}, e.cmdFn(), true
 			}
 		}
 		return nil, nil, true
 	default:
+		// Check for direct chord key shortcut.
 		for _, e := range h.entries {
 			if e.chordKey != "" && msg.String() == e.chordKey && e.cmdFn != nil {
 				return QuitLayerMsg{}, e.cmdFn(), true
 			}
 		}
+		// Pass navigation keys to the table.
+		h.table, _ = h.table.Update(msg)
 		return nil, nil, true
 	}
 }
@@ -74,62 +115,35 @@ func (h *HelpLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
 func (h *HelpLayer) Activate() tea.Cmd { return nil }
 func (h *HelpLayer) Deactivate()       {}
 
-var (
-	helpSelected = lipgloss.NewStyle().Reverse(true)
-	helpHeader   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-)
-
 func (h *HelpLayer) View(width, height int, active bool) []*lipgloss.Layer {
-	// Compute max key width for alignment (skip headers).
-	maxKey := 0
-	for _, e := range h.entries {
-		if !e.isHeader && len(e.keyDisplay) > maxKey {
-			maxKey = len(e.keyDisplay)
-		}
+	// Size the table to fit within the terminal.
+	maxH := height - 6 // room for border + help text
+	if maxH < 5 {
+		maxH = 5
 	}
-
-	// Ensure cursor starts on a selectable entry.
-	if h.entries[h.cursor].isHeader {
-		for i := h.cursor + 1; i < len(h.entries); i++ {
-			if h.isSelectable(i) {
-				h.cursor = i
-				break
-			}
-		}
+	if len(h.entries) < maxH {
+		maxH = len(h.entries)
 	}
+	h.table.SetHeight(maxH)
 
-	var lines []string
-	for i, e := range h.entries {
-		if e.isHeader {
-			lines = append(lines, helpHeader.Render("  "+strings.ToUpper(e.keyDisplay)))
-			continue
-		}
-		line := fmt.Sprintf("  %-*s   %s", maxKey, e.keyDisplay, e.description)
-		if i == h.cursor {
-			line = fmt.Sprintf("%-*s   %s", maxKey+2, "▸ "+e.keyDisplay, e.description)
-			line = helpSelected.Render(line)
-		}
-		lines = append(lines, line)
-	}
-	content := strings.Join(lines, "\n")
+	content := h.table.View()
 
-	overlayW := maxKey + 24
+	overlayW := h.table.Width()
 	if overlayW < 38 {
 		overlayW = 38
 	}
+	// Cap to 80% of terminal width.
+	if cap := width * 4 / 5; overlayW > cap && cap >= 38 {
+		overlayW = cap
+	}
+
 	dialog := overlayBorder.Width(overlayW).Render(content)
 
 	help := statusFaint.Render("• ↑↓/enter: select • q/esc: close •")
-	dialogLines := strings.Split(dialog, "\n")
-	helpPad := (overlayW + 2 - lipgloss.Width(help)) / 2
-	if helpPad < 0 {
-		helpPad = 0
-	}
-	dialogLines = append(dialogLines, strings.Repeat(" ", helpPad)+help)
-	dialog = strings.Join(dialogLines, "\n")
+	dialogLines := lipgloss.JoinVertical(lipgloss.Left, dialog, help)
 
-	dialogH := strings.Count(dialog, "\n") + 1
-	x := (width - overlayW) / 2
+	dialogH := lipgloss.Height(dialogLines)
+	x := (width - overlayW - 2) / 2
 	y := (height - dialogH) / 2
 	if x < 0 {
 		x = 0
@@ -138,7 +152,7 @@ func (h *HelpLayer) View(width, height int, active bool) []*lipgloss.Layer {
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
+	return []*lipgloss.Layer{lipgloss.NewLayer(dialogLines).X(x).Y(y).Z(1)}
 }
 
 func (h *HelpLayer) Status() (string, lipgloss.Style) { return "help", lipgloss.Style{} }

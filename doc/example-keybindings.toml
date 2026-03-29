@@ -9,7 +9,7 @@ style = "native"
 # native/tmux: "ctrl+b", screen: "ctrl+a"
 # prefix = "ctrl+a"
 
-# Bindings are organized by category: [tab], [session], [main].
+# Bindings are organized by category: [main], [session], [tab].
 # Each entry maps a command to a key or list of keys.
 #
 # Key formats:
@@ -24,6 +24,27 @@ style = "native"
 #
 # Commands with arguments:
 #   "switch-tab 1" = "1"       # prefix+1 switches to tab 1
+
+# ── Main ─────────────────────────────────────────────────────────────
+
+[main]
+# detach = "d"
+# send-prefix = "ctrl+b"
+# show-help = "?"
+# show-log = "l"
+# show-status = "s"
+# show-release-notes = "n"
+# enter-scrollback = "["
+# refresh-screen = "r"
+
+# ── Session management ───────────────────────────────────────────────
+
+[session]
+# open-session = "S"
+# close-session = "X"
+# next-session = ")"
+# prev-session = "("
+# switch-session = "w"
 
 # ── Tab management ───────────────────────────────────────────────────
 
@@ -41,24 +62,3 @@ style = "native"
 # "switch-tab 7" = "7"
 # "switch-tab 8" = "8"
 # "switch-tab 9" = "9"
-
-# ── Session management ───────────────────────────────────────────────
-
-[session]
-# open-session = "S"
-# close-session = "X"
-# next-session = ")"
-# prev-session = "("
-# switch-session = "w"
-
-# ── Main ─────────────────────────────────────────────────────────────
-
-[main]
-# detach = "d"
-# send-prefix = "ctrl+b"
-# show-help = "?"
-# show-log = "l"
-# show-status = "s"
-# show-release-notes = "n"
-# enter-scrollback = "["
-# refresh-screen = "r"

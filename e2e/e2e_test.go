@@ -1648,6 +1648,56 @@ func TestAllRegionsDestroyedQuits(t *testing.T) {
 	}
 }
 
+func TestHelpOverlay(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "bash", 10*time.Second)
+	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	// Open help overlay: ctrl+b ?
+	pio.Write([]byte{0x02})
+	time.Sleep(50 * time.Millisecond)
+	pio.Write([]byte("?"))
+
+	// Wait for the help overlay to render with keybinding content.
+	pio.WaitFor(t, "detach", 5*time.Second)
+
+	lines := pio.ScreenLines()
+	// Should show category headers and keybindings.
+	foundMain := false
+	foundDetach := false
+	foundTab := false
+	for _, line := range lines {
+		if strings.Contains(line, "main") {
+			foundMain = true
+		}
+		if strings.Contains(line, "detach") {
+			foundDetach = true
+		}
+		if strings.Contains(line, "tab") {
+			foundTab = true
+		}
+	}
+	if !foundMain {
+		t.Error("help overlay should show 'main' category")
+	}
+	if !foundDetach {
+		t.Error("help overlay should show 'detach' command")
+	}
+	if !foundTab {
+		t.Error("help overlay should show 'tab' category")
+	}
+
+	// Close with q.
+	pio.Write([]byte("q"))
+	pio.WaitFor(t, "termd$", 5*time.Second)
+}
+
 // ── Keybinding tests ────────────────────────────────────────────────
 
 func TestKeybindNativeNextPrevTab(t *testing.T) {

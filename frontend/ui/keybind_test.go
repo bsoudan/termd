@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -305,5 +306,36 @@ func TestRegistryDisplayCategories(t *testing.T) {
 	// First entry should be a header.
 	if !entries[0].isHeader {
 		t.Errorf("first display entry should be a header, got %q", entries[0].keyDisplay)
+	}
+}
+
+func TestHelpLayerView(t *testing.T) {
+	r := NewRegistry("native", "", nil)
+	h := NewHelpLayer(r)
+
+	// Verify the table renders content with keybindings.
+	h.View(80, 24, false) // trigger SetHeight
+	content := h.table.View()
+	if strings.TrimSpace(content) == "" {
+		t.Fatal("help table rendered empty content")
+	}
+	if !strings.Contains(content, "detach") {
+		t.Error("help table should contain 'detach'")
+	}
+	if !strings.Contains(content, "main") {
+		t.Error("help table should contain 'main' category header")
+	}
+	if !strings.Contains(content, "session") {
+		t.Error("help table should contain 'session' category header")
+	}
+	if !strings.Contains(content, "tab") {
+		t.Error("help table should contain 'tab' category header")
+	}
+	// Category order: main first, then session, then tab.
+	mainIdx := strings.Index(content, "main")
+	sessionIdx := strings.Index(content, "session")
+	tabIdx := strings.Index(content, "── tab")
+	if mainIdx >= sessionIdx || sessionIdx >= tabIdx {
+		t.Errorf("category order wrong: main@%d session@%d tab@%d", mainIdx, sessionIdx, tabIdx)
 	}
 }

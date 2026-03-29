@@ -94,31 +94,31 @@ func (r *Registry) DisplayEntries() []displayEntry {
 
 // categories defines the display order of categories in the help overlay
 // and the TOML config sections.
-var categories = []string{"tab", "session", "main"}
+var categories = []string{"main", "session", "tab"}
 
 func allCommands() []*Command {
 	return []*Command{
-		// Tab — user category "tab", handled by SessionLayer
-		{Name: "open-tab", Category: "tab", Layer: "session", Description: "open new tab"},
-		{Name: "close-tab", Category: "tab", Layer: "session", Description: "close active tab"},
-		{Name: "next-tab", Category: "tab", Layer: "session", Description: "next tab"},
-		{Name: "prev-tab", Category: "tab", Layer: "session", Description: "previous tab"},
-		{Name: "switch-tab", Category: "tab", Layer: "session", Description: "switch to tab N"},
+		// Main — user category "main", mixed handlers
+		{Name: "detach", Category: "main", Layer: "main", Description: "detach"},
+		{Name: "send-prefix", Category: "main", Layer: "session", Description: "send literal prefix key"},
+		{Name: "show-help", Category: "main", Layer: "session", Description: "show keybindings"},
+		{Name: "show-log", Category: "main", Layer: "session", Description: "open log viewer"},
+		{Name: "show-status", Category: "main", Layer: "session", Description: "show status"},
+		{Name: "show-release-notes", Category: "main", Layer: "session", Description: "show release notes"},
+		{Name: "enter-scrollback", Category: "main", Layer: "session", Description: "enter scrollback mode"},
+		{Name: "refresh-screen", Category: "main", Layer: "session", Description: "refresh screen"},
 		// Session — user category "session", handled by MainLayer
 		{Name: "open-session", Category: "session", Layer: "main", Description: "create new session"},
 		{Name: "close-session", Category: "session", Layer: "main", Description: "kill current session"},
 		{Name: "next-session", Category: "session", Layer: "main", Description: "next session"},
 		{Name: "prev-session", Category: "session", Layer: "main", Description: "previous session"},
 		{Name: "switch-session", Category: "session", Layer: "main", Description: "switch session"},
-		// Main — user category "main", mixed handlers
-		{Name: "detach", Category: "main", Layer: "main", Description: "detach from all sessions"},
-		{Name: "send-prefix", Category: "main", Layer: "session", Description: "send literal prefix key"},
-		{Name: "show-log", Category: "main", Layer: "session", Description: "open log viewer"},
-		{Name: "show-help", Category: "main", Layer: "session", Description: "show keybindings"},
-		{Name: "show-status", Category: "main", Layer: "session", Description: "show status dialog"},
-		{Name: "show-release-notes", Category: "main", Layer: "session", Description: "show release notes"},
-		{Name: "enter-scrollback", Category: "main", Layer: "session", Description: "enter scrollback mode"},
-		{Name: "refresh-screen", Category: "main", Layer: "session", Description: "refresh terminal screen"},
+		// Tab — user category "tab", handled by SessionLayer
+		{Name: "open-tab", Category: "tab", Layer: "session", Description: "open new tab"},
+		{Name: "close-tab", Category: "tab", Layer: "session", Description: "close active tab"},
+		{Name: "next-tab", Category: "tab", Layer: "session", Description: "next tab"},
+		{Name: "prev-tab", Category: "tab", Layer: "session", Description: "previous tab"},
+		{Name: "switch-tab", Category: "tab", Layer: "session", Description: "switch to tab N"},
 	}
 }
 
