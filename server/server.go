@@ -186,14 +186,19 @@ func (s *Server) destroyRegion(regionID string) {
 		}
 	}
 
-	var toNotify []*Client
+	clients := make([]*Client, 0, len(s.clients))
 	for _, c := range s.clients {
+		clients = append(clients, c)
+	}
+	s.mu.Unlock()
+
+	var toNotify []*Client
+	for _, c := range clients {
 		if c.GetSubscribedRegionID() == regionID {
 			c.SetSubscribedRegionID("")
 			toNotify = append(toNotify, c)
 		}
 	}
-	s.mu.Unlock()
 
 	for _, c := range toNotify {
 		c.SendMessage(protocol.RegionDestroyed{
@@ -262,13 +267,18 @@ func (s *Server) sendTerminalEvents(region *Region) {
 	}
 
 	s.mu.Lock()
-	var subscribers []*Client
+	clients := make([]*Client, 0, len(s.clients))
 	for _, c := range s.clients {
+		clients = append(clients, c)
+	}
+	s.mu.Unlock()
+
+	var subscribers []*Client
+	for _, c := range clients {
 		if c.GetSubscribedRegionID() == region.id {
 			subscribers = append(subscribers, c)
 		}
 	}
-	s.mu.Unlock()
 
 	if len(subscribers) == 0 {
 		return
@@ -484,10 +494,14 @@ func (s *Server) getRegionInfos(sessionFilter string) []protocol.RegionInfo {
 
 func (s *Server) getClientInfos() []protocol.ClientInfoData {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	infos := make([]protocol.ClientInfoData, 0, len(s.clients))
+	clients := make([]*Client, 0, len(s.clients))
 	for _, c := range s.clients {
+		clients = append(clients, c)
+	}
+	s.mu.Unlock()
+
+	infos := make([]protocol.ClientInfoData, 0, len(clients))
+	for _, c := range clients {
 		infos = append(infos, protocol.ClientInfoData{
 			ClientID:           c.id,
 			Hostname:           c.GetHostname(),

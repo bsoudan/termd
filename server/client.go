@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"termd/config"
 	"termd/frontend/protocol"
@@ -93,8 +94,13 @@ func (c *Client) writeRaw(data []byte) {
 	if c.closed {
 		return
 	}
-	if _, err := c.conn.Write(data); err != nil {
-		slog.Debug("client write error", "client_id", c.id, "err", err)
+	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, err := c.conn.Write(data)
+	c.conn.SetWriteDeadline(time.Time{})
+	if err != nil {
+		slog.Debug("client write error, closing", "client_id", c.id, "err", err)
+		c.closed = true
+		c.conn.Close()
 	}
 }
 
