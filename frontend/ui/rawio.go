@@ -173,6 +173,12 @@ const prefixKey = 0x02 // ctrl+b
 // sgrMouseCSIPrefix identifies SGR mouse sequences (ESC [ <).
 var sgrMouseCSIPrefix = []byte{0x1b, '[', '<'}
 
+// Alt key sequences for tab navigation.
+var (
+	altPrevTab = []byte{0x1b, ','} // Alt+, = previous tab
+	altNextTab = []byte{0x1b, '.'} // Alt+. = next tab
+)
+
 // handleRawInput processes raw bytes in normal mode (no focus layer active,
 // ctrl+b already handled by Model). It uses DecodeSequence to iterate
 // complete tokens, routing SGR mouse sequences based on whether the child
@@ -182,13 +188,15 @@ var sgrMouseCSIPrefix = []byte{0x1b, '[', '<'}
 // we can safely identify mouse sequences by prefix without worrying
 // about partial sequences.
 func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
-	// Fast path: no mouse prefix in the chunk at all.
-	if !bytes.Contains(chunk, sgrMouseCSIPrefix) {
+	// Fast path: no special sequences in the chunk at all.
+	if !bytes.Contains(chunk, sgrMouseCSIPrefix) &&
+		!bytes.Contains(chunk, altPrevTab) &&
+		!bytes.Contains(chunk, altNextTab) {
 		s.sendRawToServer(chunk)
 		return nil, nil
 	}
 
-	// Iterate complete tokens, separating mouse from non-mouse.
+	// Iterate complete tokens, separating special sequences from regular input.
 	var mice []tea.MouseMsg
 	var rest []byte
 	pos := 0
@@ -198,11 +206,24 @@ func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 			break
 		}
 		seq := chunk[pos : pos+n]
-		if bytes.HasPrefix(seq, sgrMouseCSIPrefix) {
+		switch {
+		case bytes.HasPrefix(seq, sgrMouseCSIPrefix):
 			if msg := parseSGRMouse(seq); msg != nil {
 				mice = append(mice, msg)
 			}
-		} else {
+		case bytes.Equal(seq, altPrevTab):
+			if len(rest) > 0 {
+				s.sendRawToServer(rest)
+				rest = nil
+			}
+			s.prevTab()
+		case bytes.Equal(seq, altNextTab):
+			if len(rest) > 0 {
+				s.sendRawToServer(rest)
+				rest = nil
+			}
+			s.nextTab()
+		default:
 			rest = append(rest, seq...)
 		}
 		pos += n

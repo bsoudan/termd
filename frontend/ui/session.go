@@ -201,6 +201,22 @@ func (s *SessionLayer) switchToTab(idx int) {
 	s.Activate()
 }
 
+// nextTab switches to the next tab, wrapping around.
+func (s *SessionLayer) nextTab() {
+	if len(s.tabs) <= 1 {
+		return
+	}
+	s.switchToTab((s.activeTab + 1) % len(s.tabs))
+}
+
+// prevTab switches to the previous tab, wrapping around.
+func (s *SessionLayer) prevTab() {
+	if len(s.tabs) <= 1 {
+		return
+	}
+	s.switchToTab((s.activeTab - 1 + len(s.tabs)) % len(s.tabs))
+}
+
 // Update implements the Layer interface.
 // Update implements the Layer interface. Handles session-specific messages.
 // Global messages (disconnect, reconnect, detach, etc.) are handled by MainLayer.

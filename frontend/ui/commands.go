@@ -46,6 +46,8 @@ var helpItems = []helpItem{
 	{"c", "new region", func() tea.Cmd { return cmdMsg(SpawnRegionMsg{}) }},
 	{"x", "close tab", func() tea.Cmd { return cmdMsg(CloseTabMsg{}) }},
 	{"1-9", "switch tab", nil},
+	{"alt+,", "prev tab", nil},
+	{"alt+.", "next tab", nil},
 	{"S", "new session", func() tea.Cmd { return cmdMsg(NewSessionMsg{}) }},
 	{"X", "kill session", func() tea.Cmd { return cmdMsg(KillSessionMsg{}) }},
 	{"w", "switch session", func() tea.Cmd { return cmdMsg(OpenOverlayMsg{Name: "sessions"}) }},
