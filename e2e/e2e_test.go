@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -449,8 +450,7 @@ func TestPrefixKeyDetach(t *testing.T) {
 
 	fe.WaitFor(t, "bash", 10*time.Second)
 
-	fe.Write([]byte{0x02})
-	fe.Write([]byte("d"))
+	fe.Write([]byte{0x02, 'd'})
 
 	// Process should exit cleanly with code 0, no panic
 	if err := fe.Wait(5 * time.Second); err != nil {
@@ -535,8 +535,7 @@ func TestLogViewerOverlay(t *testing.T) {
 	pio.WaitFor(t, "bash", 10*time.Second)
 
 	pio.WaitForSilence(500 * time.Millisecond)
-	pio.Write([]byte{0x02})
-	pio.Write([]byte("l"))
+	pio.Write([]byte{0x02, 'l'})
 
 	lines := pio.WaitForScreen(t, func(lines []string) bool {
 		topRow, _ := findOnScreen(lines, "\u256d")
@@ -623,8 +622,7 @@ func TestSessionPersistence(t *testing.T) {
 	}
 
 	// Detach
-	pio1.Write([]byte{0x02})
-	pio1.Write([]byte("d"))
+	pio1.Write([]byte{0x02, 'd'})
 
 	deadline := time.After(10 * time.Second)
 	for {
@@ -879,22 +877,45 @@ func TestScrollbackBuffer(t *testing.T) {
 	pio.Write([]byte("seq 1 200\r"))
 	pio.WaitFor(t, "termd$",10*time.Second)
 
-	// Request scrollback via termctl
-	out := runTermctl(t, socketPath, "region", "scrollback", regionID)
-	lines := strings.Split(strings.TrimSpace(out), "\n")
+	// Poll scrollback via termctl until early numbers are present.
+	// The server's terminal emulator may still be processing output
+	// even after the frontend shows the prompt.
+	want := []string{"1", "2", "3", "10", "50"}
+	deadline := time.After(10 * time.Second)
+	for {
+		out := runTermctl(t, socketPath, "region", "scrollback", regionID)
+		lines := strings.Split(strings.TrimSpace(out), "\n")
 
-	// Verify early numbers are in the scrollback
-	found := make(map[string]bool)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "1" || trimmed == "2" || trimmed == "3" || trimmed == "10" || trimmed == "50" {
-			found[trimmed] = true
+		found := make(map[string]bool)
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			for _, w := range want {
+				if trimmed == w {
+					found[w] = true
+				}
+			}
 		}
-	}
+		allFound := true
+		for _, w := range want {
+			if !found[w] {
+				allFound = false
+				break
+			}
+		}
+		if allFound {
+			return
+		}
 
-	for _, want := range []string{"1", "2", "3", "10", "50"} {
-		if !found[want] {
-			t.Errorf("scrollback missing line %q (got %d lines total)", want, len(lines))
+		select {
+		case <-deadline:
+			for _, w := range want {
+				if !found[w] {
+					t.Errorf("scrollback missing line %q (got %d lines total)", w, len(lines))
+				}
+			}
+			return
+		default:
+			runtime.Gosched()
 		}
 	}
 }
@@ -913,9 +934,7 @@ func TestScrollbackNavigation(t *testing.T) {
 	pio.WaitFor(t, "termd$",10*time.Second)
 
 	// Enter scrollback mode with ctrl+b [
-	pio.Write([]byte{0x02}) // ctrl+b
-	time.Sleep(50 * time.Millisecond)
-	pio.Write([]byte("["))
+	pio.Write([]byte{0x02, '['})
 
 	// Tab bar should show "scrollback"
 	pio.WaitForScreen(t, func(lines []string) bool {

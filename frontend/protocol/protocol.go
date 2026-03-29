@@ -294,6 +294,12 @@ type RemoveProgramResponse struct {
 	Message string `json:"message"`
 }
 
+type Warning struct {
+	Type     string `json:"type"`
+	WarnType string `json:"warn_type"`
+	Message  string `json:"message"`
+}
+
 type TerminalEvent struct {
 	Op      string `json:"op"`
 	Data    string `json:"data,omitempty"`

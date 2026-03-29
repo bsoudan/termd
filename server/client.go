@@ -9,35 +9,92 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"termd/config"
 	"termd/frontend/protocol"
 )
 
+type clientIdentity struct {
+	hostname string
+	username string
+	pid      int
+	process  string
+}
+
+type writeMsg struct {
+	data      []byte
+	byteIndex uint64
+}
+
 type Client struct {
 	conn   net.Conn
 	server *Server
 	id     uint32
 
-	mu                 sync.Mutex
-	hostname           string
-	username           string
-	pid                int
-	process            string
-	sessionName        string
-	subscribedRegionID string
-	closed             bool
+	writeCh   chan writeMsg
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	identity  atomic.Value // stores *clientIdentity
+
+	// nextByteIndex tracks the byte offset for drop detection.
+	// Only accessed by goroutines that call SendMessage/sendReply,
+	// but multiple goroutines can call SendMessage concurrently
+	// (watchRegion goroutines, broadcast), so we use atomic.
+	nextByteIndex atomic.Uint64
 }
 
 func NewClient(conn net.Conn, server *Server, id uint32) *Client {
-	return &Client{
-		conn:     conn,
-		server:   server,
-		id:       id,
+	c := &Client{
+		conn:    conn,
+		server:  server,
+		id:      id,
+		writeCh: make(chan writeMsg, 64),
+		closeCh: make(chan struct{}),
+	}
+	c.identity.Store(&clientIdentity{
 		hostname: "unknown",
 		username: "unknown",
 		process:  "unknown",
+	})
+	go c.writeLoop()
+	return c
+}
+
+func (c *Client) writeLoop() {
+	defer c.conn.Close()
+
+	var writtenByteIndex uint64
+
+	for {
+		select {
+		case msg, ok := <-c.writeCh:
+			if !ok {
+				return
+			}
+
+			if msg.byteIndex > writtenByteIndex {
+				dropped := msg.byteIndex - writtenByteIndex
+				warning := fmt.Sprintf(`{"type":"warning","warn_type":"dropped_data","message":"lost %d bytes"}`, dropped)
+				warning += "\n"
+				c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				c.conn.Write([]byte(warning))
+				slog.Debug("sent drop warning", "client_id", c.id, "dropped_bytes", dropped)
+			}
+
+			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_, err := c.conn.Write(msg.data)
+			c.conn.SetWriteDeadline(time.Time{})
+			if err != nil {
+				slog.Debug("client write error, closing", "client_id", c.id, "err", err)
+				return
+			}
+			writtenByteIndex = msg.byteIndex + uint64(len(msg.data))
+
+		case <-c.closeCh:
+			return
+		}
 	}
 }
 
@@ -55,7 +112,6 @@ func (c *Client) ReadLoop() {
 	}
 }
 
-// replyFunc returns a function that sends a response with the given req_id.
 func (c *Client) replyFunc(reqID uint64) func(any) {
 	return func(msg any) {
 		c.sendReply(msg, reqID)
@@ -63,6 +119,7 @@ func (c *Client) replyFunc(reqID uint64) func(any) {
 }
 
 // sendReply marshals a response and injects req_id into the JSON.
+// Blocks until the write channel has room (caller is this client's ReadLoop).
 func (c *Client) sendReply(msg any, reqID uint64) {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -74,10 +131,16 @@ func (c *Client) sendReply(msg any, reqID uint64) {
 		data = append(data[:len(data)-1], []byte(inject)...)
 	}
 	data = append(data, '\n')
-	c.writeRaw(data)
+
+	idx := c.nextByteIndex.Add(uint64(len(data))) - uint64(len(data))
+	select {
+	case c.writeCh <- writeMsg{data: data, byteIndex: idx}:
+	case <-c.closeCh:
+	}
 }
 
 // SendMessage sends a message to the client (no req_id).
+// Non-blocking: drops the message if the write channel is full.
 func (c *Client) SendMessage(msg any) {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -85,81 +148,35 @@ func (c *Client) SendMessage(msg any) {
 		return
 	}
 	data = append(data, '\n')
-	c.writeRaw(data)
-}
 
-func (c *Client) writeRaw(data []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, err := c.conn.Write(data)
-	c.conn.SetWriteDeadline(time.Time{})
-	if err != nil {
-		slog.Debug("client write error, closing", "client_id", c.id, "err", err)
-		c.closed = true
-		c.conn.Close()
+	idx := c.nextByteIndex.Add(uint64(len(data))) - uint64(len(data))
+	select {
+	case c.writeCh <- writeMsg{data: data, byteIndex: idx}:
+	default:
+		slog.Debug("client write channel full, dropping", "client_id", c.id, "bytes", len(data))
 	}
 }
 
 func (c *Client) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	c.closed = true
-	c.conn.Close()
-}
-
-func (c *Client) GetSubscribedRegionID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.subscribedRegionID
-}
-
-func (c *Client) SetSubscribedRegionID(id string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.subscribedRegionID = id
+	c.closeOnce.Do(func() {
+		close(c.closeCh)
+	})
 }
 
 func (c *Client) GetHostname() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.hostname
+	return c.identity.Load().(*clientIdentity).hostname
 }
 
 func (c *Client) GetUsername() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.username
+	return c.identity.Load().(*clientIdentity).username
 }
 
 func (c *Client) GetPid() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.pid
+	return c.identity.Load().(*clientIdentity).pid
 }
 
 func (c *Client) GetProcess() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.process
-}
-
-func (c *Client) GetSessionName() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.sessionName
-}
-
-func (c *Client) SetSessionName(name string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sessionName = name
+	return c.identity.Load().(*clientIdentity).process
 }
 
 type envelope struct {
@@ -274,12 +291,12 @@ func (c *Client) sendIdentify() {
 }
 
 func (c *Client) handleIdentify(msg protocol.Identify) {
-	c.mu.Lock()
-	c.hostname = msg.Hostname
-	c.username = msg.Username
-	c.pid = msg.Pid
-	c.process = msg.Process
-	c.mu.Unlock()
+	c.identity.Store(&clientIdentity{
+		hostname: msg.Hostname,
+		username: msg.Username,
+		pid:      msg.Pid,
+		process:  msg.Process,
+	})
 
 	slog.Debug("client identified", "client_id", c.id,
 		"hostname", msg.Hostname, "username", msg.Username,
@@ -289,7 +306,7 @@ func (c *Client) handleIdentify(msg protocol.Identify) {
 func (c *Client) handleSpawn(msg protocol.SpawnRequest, reply func(any)) {
 	sessionName := msg.Session
 	if sessionName == "" {
-		sessionName = c.GetSessionName()
+		sessionName = c.server.GetClientSession(c.id)
 	}
 	if sessionName == "" {
 		sessionName = c.server.sessionsCfg.DefaultName
@@ -350,7 +367,7 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 		return
 	}
 
-	c.SetSubscribedRegionID(region.id)
+	c.server.Subscribe(c.id, region.id)
 
 	snap := region.Snapshot()
 	c.SendMessage(protocol.ScreenUpdate{
@@ -374,7 +391,7 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 }
 
 func (c *Client) handleUnsubscribe(msg protocol.UnsubscribeRequest, reply func(any)) {
-	c.SetSubscribedRegionID("")
+	c.server.Unsubscribe(c.id)
 	reply(protocol.UnsubscribeResponse{
 		Type:     "unsubscribe_response",
 		RegionID: msg.RegionID,
@@ -558,7 +575,7 @@ func (c *Client) handleSessionConnect(msg protocol.SessionConnectRequest, reply 
 		return
 	}
 
-	c.SetSessionName(sess.name)
+	c.server.SetClientSession(c.id, sess.name)
 
 	reply(protocol.SessionConnectResponse{
 		Type:     "session_connect_response",
