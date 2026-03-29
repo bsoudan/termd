@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -62,7 +63,8 @@ func (c *CommandLayer) Status() (string, lipgloss.Style) { return "?", lipgloss.
 
 
 // HintLayer is a temporary layer pushed after startup to show
-// "ctrl+b ? for help" in the status bar. It pops itself on hideHintMsg.
+// "ctrl+b ? for help" in the status bar and the termd logo in the
+// upper right corner. It pops itself on hideHintMsg.
 type HintLayer struct{}
 
 func (h *HintLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
@@ -72,5 +74,31 @@ func (h *HintLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	return nil, nil, false
 }
 
-func (h *HintLayer) View(width, height int, active bool) *lipgloss.Layer { return nil }
+var logoLines = [3]string{
+	"▀█▀ █▀▀ █▀▀▄ █▀▄▀█ █▀▄",
+	" █  █▀▀ █▀▀▘ █ ▀ █ █ █",
+	" ▀  ▀▀▀ ▀  ▀ ▀   ▀ ▀▀ ",
+}
+
+const logoWidth = 24 // display width of each logo line
+
+func (h *HintLayer) View(width, height int, active bool) *lipgloss.Layer {
+	pad := " "
+	blank := pad + strings.Repeat(" ", logoWidth) + pad
+	logo := blank + "\n" +
+		pad + logoStyle.Render(logoLines[0]) + pad + "\n" +
+		pad + logoStyle.Render(logoLines[1]) + pad + "\n" +
+		pad + logoStyle.Render(logoLines[2]) + pad + "\n" +
+		blank
+
+	x := width - logoWidth - 3
+	if x < 0 {
+		x = 0
+	}
+
+	return lipgloss.NewLayer(logo).X(x).Y(2).Z(1)
+}
+
+var logoStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+
 func (h *HintLayer) Status() (string, lipgloss.Style) { return "ctrl+b ? for help", lipgloss.Style{} }

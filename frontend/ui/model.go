@@ -179,7 +179,7 @@ func (m Model) View() tea.View {
 		if t != "" {
 			statusText = t
 			if i > 0 {
-				statusStyle = s.Bold(true)
+				statusStyle = s.Bold(true).Foreground(lipgloss.Color("6"))
 			} else {
 				statusStyle = s
 			}
