@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"time"
 
@@ -121,7 +122,13 @@ func (p *InputParser) Run() {
 // InputLoop reads raw bytes from stdin and sends complete chunks to
 // bubbletea. It spawns a goroutine for blocking reads, then runs
 // InputParser to handle buffering and sequence boundary detection.
-func InputLoop(stdin *os.File, p *tea.Program) {
+//
+// During startup bubbletea negotiates terminal capabilities via
+// query/response sequences. Since bubbletea reads from a pipe (not
+// stdin directly), we forward stdin data through pipeW until Init
+// completes so bubbletea can process those responses. After that we
+// switch to sending RawInputMsg for normal operation.
+func InputLoop(stdin *os.File, p *tea.Program, pipeW io.Writer, ready <-chan struct{}) {
 	ch := make(chan []byte, 16)
 	go func() {
 		buf := make([]byte, 4096)
@@ -139,6 +146,20 @@ func InputLoop(stdin *os.File, p *tea.Program) {
 		}
 	}()
 
+	// Forward all input to bubbletea's pipe until init completes.
+	for {
+		select {
+		case <-ready:
+			goto rawMode
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			pipeW.Write(data)
+		}
+	}
+
+rawMode:
 	parser := &InputParser{
 		Input:      ch,
 		Send:       func(msg RawInputMsg) { p.Send(msg) },

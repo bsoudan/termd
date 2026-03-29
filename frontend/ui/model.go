@@ -20,6 +20,7 @@ type Model struct {
 	layers   []Layer
 	req      *requestState
 	Detached bool
+	initDone chan struct{}
 }
 
 func NewModel(s *Server, pipeW io.Writer, ring *termlog.LogRingBuffer, endpoint, version, changelog, sessionName string) Model {
@@ -32,13 +33,22 @@ func NewModel(s *Server, pipeW io.Writer, ring *termlog.LogRingBuffer, endpoint,
 	}
 	main := NewMainLayer(s, pipeW, requestFn, ring, endpoint, version, changelog, hostname, sessionName)
 	return Model{
-		layers: []Layer{main},
-		req:    req,
+		layers:   []Layer{main},
+		req:      req,
+		initDone: make(chan struct{}),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
+	close(m.initDone)
 	return m.layers[0].(*MainLayer).Init()
+}
+
+// InitDone returns a channel that is closed when Init completes.
+// InputLoop uses this to know when to stop forwarding input to bubbletea
+// and start sending RawInputMsg instead.
+func (m Model) InitDone() <-chan struct{} {
+	return m.initDone
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

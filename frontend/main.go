@@ -130,7 +130,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); server.Run(conn, dialFn, p) }()
-	go func() { defer wg.Done(); ui.InputLoop(stdinDup, p) }()
+	go func() { defer wg.Done(); ui.InputLoop(stdinDup, p, pipeW, model.InitDone()) }()
 
 	finalModel, err := p.Run()
 
