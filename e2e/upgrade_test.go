@@ -149,12 +149,8 @@ func TestLiveUpgrade(t *testing.T) {
 		defer fe.kill()
 	}
 
-	// Wait for all frontends to connect. Multiple frontends sharing one
-	// region can miss the initial bash prompt if they subscribe after it
-	// was already rendered. Send Enter to trigger a fresh prompt.
+	// Wait for all frontends to see the prompt.
 	for _, fe := range frontends {
-		fe.pio.WaitFor(t, "bash", 10*time.Second)
-		fe.pio.Write([]byte("\r"))
 		fe.pio.WaitFor(t, "termd$", 10*time.Second)
 	}
 

@@ -360,7 +360,7 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 		return
 	}
 
-	region := c.server.Subscribe(c.id, msg.RegionID)
+	region, snap := c.server.Subscribe(c.id, msg.RegionID)
 	if region == nil {
 		reply(protocol.SubscribeResponse{
 			Type:     "subscribe_response",
@@ -371,7 +371,6 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 		return
 	}
 
-	snap := region.Snapshot()
 	c.SendMessage(protocol.ScreenUpdate{
 		Type:      "screen_update",
 		RegionID:  region.id,

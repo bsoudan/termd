@@ -421,12 +421,16 @@ func (s *Server) getSessionInfos() []protocol.SessionInfo {
 	return <-resp
 }
 
-func (s *Server) Subscribe(clientID uint32, regionID string) *Region {
-	resp := make(chan *Region, 1)
+func (s *Server) Subscribe(clientID uint32, regionID string) (*Region, Snapshot) {
+	resp := make(chan *subscribeResult, 1)
 	if !s.send(subscribeReq{clientID: clientID, regionID: regionID, resp: resp}) {
-		return nil
+		return nil, Snapshot{}
 	}
-	return <-resp
+	result := <-resp
+	if result == nil {
+		return nil, Snapshot{}
+	}
+	return result.region, result.snapshot
 }
 
 func (s *Server) Unsubscribe(clientID uint32) {

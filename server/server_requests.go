@@ -113,10 +113,15 @@ type getSessionInfosReq struct {
 	resp chan []protocol.SessionInfo
 }
 
+type subscribeResult struct {
+	region   *Region
+	snapshot Snapshot
+}
+
 type subscribeReq struct {
 	clientID uint32
 	regionID string
-	resp     chan *Region // nil if region not found
+	resp     chan *subscribeResult // nil if region not found
 }
 
 type unsubscribeReq struct {
@@ -378,12 +383,16 @@ func (s *Server) eventLoop() {
 						}
 					}
 				}
+				// Take snapshot before adding to subscriber list.
+				// This prevents sendTerminalEvents from seeing this
+				// client before it has its initial snapshot.
+				snap := region.Snapshot()
 				subscriptions[r.clientID] = r.regionID
 				if regionSubs[r.regionID] == nil {
 					regionSubs[r.regionID] = make(map[uint32]struct{})
 				}
 				regionSubs[r.regionID][r.clientID] = struct{}{}
-				r.resp <- region
+				r.resp <- &subscribeResult{region: region, snapshot: snap}
 
 			case unsubscribeReq:
 				if rid, ok := subscriptions[r.clientID]; ok {
