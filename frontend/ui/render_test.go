@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 )
 
 func TestSgrTransition(t *testing.T) {

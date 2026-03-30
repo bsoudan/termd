@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
 

@@ -411,6 +411,49 @@ func (s *Server) eventLoop() {
 					})
 				}
 				r.resp <- infos
+
+			// --- Live upgrade support ---
+
+			case disconnectAllReq:
+				for _, c := range clients {
+					c.Close()
+				}
+				clients = make(map[uint32]*Client)
+				subscriptions = make(map[uint32]string)
+				regionSubs = make(map[string]map[uint32]struct{})
+				clientSessions = make(map[uint32]string)
+				r.resp <- struct{}{}
+
+			case upgradeReq:
+				r.resp <- upgradeResult{
+					regions:  regions,
+					sessions: sessions,
+					programs: programs,
+				}
+				// Pause: wait for resume (rollback) or done (successful upgrade).
+				select {
+				case <-s.requests:
+					// resumeUpgradeReq — put state back and continue.
+					// (The actual type is checked below; here we just drain.)
+				case <-s.done:
+					s.shutdownResp <- shutdownResult{}
+					return
+				}
+
+			case resumeUpgradeReq:
+				// No-op; handled by the pause select in upgradeReq above.
+
+			case restoreRegionReq:
+				regions[r.region.id] = r.region
+				sess, ok := sessions[r.session]
+				if !ok {
+					sess = &Session{name: r.session, regions: make(map[string]*Region)}
+					sessions[r.session] = sess
+				}
+				sess.regions[r.region.id] = r.region
+				r.region.session = r.session
+				go s.watchRegion(r.region)
+				r.resp <- struct{}{}
 			}
 
 		case <-s.done:

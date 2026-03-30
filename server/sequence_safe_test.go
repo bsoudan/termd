@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 )
 
 // feedChunks simulates readLoop by feeding data through sequenceSafe and then

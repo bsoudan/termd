@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
 

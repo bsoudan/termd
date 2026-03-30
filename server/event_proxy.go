@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/charmbracelet/x/ansi"
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
 

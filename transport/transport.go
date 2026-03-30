@@ -10,6 +10,7 @@ package transport
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -55,6 +56,51 @@ func Cleanup(spec string) {
 	scheme, addr := parseSpec(spec)
 	if scheme == "unix" {
 		cleanupUnix(addr)
+	}
+}
+
+// ListenerFile returns the underlying OS file for a listener.
+// For SSH and WS listeners, returns the underlying TCP listener's file.
+// The caller must close the returned file after use.
+func ListenerFile(ln net.Listener) (*os.File, error) {
+	switch l := ln.(type) {
+	case *net.TCPListener:
+		return l.File()
+	case *net.UnixListener:
+		return l.File()
+	case *sshListener:
+		if tcpLn, ok := l.tcpLn.(*net.TCPListener); ok {
+			return tcpLn.File()
+		}
+		return nil, fmt.Errorf("ssh listener: underlying is %T, not *net.TCPListener", l.tcpLn)
+	case *wsListener:
+		if tcpLn, ok := l.tcpLn.(*net.TCPListener); ok {
+			return tcpLn.File()
+		}
+		return nil, fmt.Errorf("ws listener: underlying is %T, not *net.TCPListener", l.tcpLn)
+	default:
+		return nil, fmt.Errorf("unsupported listener type: %T", ln)
+	}
+}
+
+// ListenFromFile reconstructs a net.Listener from an OS file and spec.
+// The spec determines the listener type (unix, tcp, ssh, ws).
+func ListenFromFile(f *os.File, spec string, sshCfg SSHListenerConfig) (net.Listener, error) {
+	scheme, _ := parseSpec(spec)
+	ln, err := net.FileListener(f)
+	if err != nil {
+		return nil, fmt.Errorf("file listener for %s: %w", spec, err)
+	}
+	switch scheme {
+	case "unix", "tcp":
+		return ln, nil
+	case "ssh":
+		return ListenSSHFromListener(ln, sshCfg)
+	case "ws":
+		return listenWSFromListener(ln)
+	default:
+		ln.Close()
+		return nil, fmt.Errorf("unsupported scheme for file listener: %q", scheme)
 	}
 }
 

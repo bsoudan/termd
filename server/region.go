@@ -11,11 +11,12 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
-	te "github.com/rcarmo/go-te/pkg/te"
+	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
 
@@ -50,6 +51,7 @@ type Region struct {
 
 	notify     chan struct{}
 	readerDone chan struct{}
+	stopRead   chan struct{} // closed to stop readLoop for live upgrade
 }
 
 func NewRegion(cmdStr string, args []string, env map[string]string, width, height int) (*Region, error) {
@@ -89,6 +91,7 @@ func NewRegion(cmdStr string, args []string, env map[string]string, width, heigh
 		stream:  stream,
 		notify:     make(chan struct{}, 1),
 		readerDone: make(chan struct{}),
+		stopRead:   make(chan struct{}),
 	}
 
 	slog.Debug("spawned child", "pid", r.pid, "cmd", cmdStr)
@@ -126,6 +129,12 @@ func (r *Region) readLoop() {
 			}
 		}
 		if err != nil {
+			// If stopRead is closed, this is a controlled stop for upgrade.
+			select {
+			case <-r.stopRead:
+			default:
+				slog.Debug("readLoop exiting", "region_id", r.id, "err", err)
+			}
 			break
 		}
 	}
@@ -180,7 +189,13 @@ func sequenceSafe(carry, chunk, carryBuf []byte) (safe []byte, carryN int) {
 }
 
 func (r *Region) waitLoop() {
-	r.cmdObj.Wait()
+	if r.cmdObj != nil {
+		r.cmdObj.Wait()
+	} else {
+		// Inherited region: child is not our process. Detect exit via
+		// PTY master EOF (readLoop closes readerDone).
+		<-r.readerDone
+	}
 	close(r.notify)
 }
 
@@ -331,11 +346,83 @@ func (r *Region) FlushEvents() (events []protocol.TerminalEvent, needsSnapshot b
 }
 
 func (r *Region) Kill() {
-	r.cmdObj.Process.Signal(syscall.SIGKILL)
+	if r.cmdObj != nil {
+		r.cmdObj.Process.Signal(syscall.SIGKILL)
+	} else if r.pid > 0 {
+		syscall.Kill(r.pid, syscall.SIGKILL)
+	}
 }
 
 func (r *Region) Close() {
 	r.ptmx.Close()
+}
+
+// StopReadLoop stops the readLoop goroutine and returns a dup'd PTY FD
+// for handoff. The original FD is closed (unblocking readLoop's Read).
+// The caller should use the returned file for the new process.
+// StopReadLoop stops the readLoop by sending SIGWINCH to the child process
+// (which causes the PTY to become readable) and signaling via stopRead.
+// Returns a dup'd PTY FD for handoff. If readLoop doesn't exit quickly,
+// proceeds without waiting (the FD is dup'd so the handoff still works).
+func (r *Region) StopReadLoop() *os.File {
+	newFD, err := syscall.Dup(int(r.ptmx.Fd()))
+	if err != nil {
+		slog.Error("StopReadLoop: dup failed", "err", err)
+		return nil
+	}
+	dupFile := os.NewFile(uintptr(newFD), r.ptmx.Name())
+
+	close(r.stopRead)
+	// Send SIGWINCH to child to generate PTY activity, unblocking the Read.
+	if r.pid > 0 {
+		syscall.Kill(r.pid, syscall.SIGWINCH)
+	}
+	// Wait briefly for readLoop to notice and exit.
+	select {
+	case <-r.readerDone:
+	case <-time.After(500 * time.Millisecond):
+		slog.Debug("StopReadLoop: readLoop did not exit in time, proceeding", "region_id", r.id)
+	}
+
+	r.ptmx = dupFile
+	return dupFile
+}
+
+// RestoreRegion reconstructs a Region from serialized state and a PTY FD.
+// Used by the new process during live upgrade. The child process is already
+// running (inherited from the old process); cmdObj is nil.
+func RestoreRegion(id, name, cmd, session string, pid, width, height int, ptmxFile *os.File, histState *te.HistoryState) *Region {
+	hscreen := te.NewHistoryScreen(width, height, scrollbackSize)
+	hscreen.UnmarshalState(histState)
+	hscreen.Screen.WriteProcessInput = func(data string) {
+		ptmxFile.Write([]byte(data))
+	}
+
+	proxy := NewEventProxy(hscreen)
+	stream := te.NewStream(proxy, false)
+
+	r := &Region{
+		id:      id,
+		name:    name,
+		cmd:     cmd,
+		pid:     pid,
+		session: session,
+		width:   width,
+		height:  height,
+		ptmx:    ptmxFile,
+		screen:  hscreen.Screen,
+		hscreen: hscreen,
+		proxy:   proxy,
+		stream:  stream,
+		notify:     make(chan struct{}, 1),
+		readerDone: make(chan struct{}),
+		stopRead:   make(chan struct{}),
+	}
+
+	go r.readLoop()
+	go r.waitLoop()
+
+	return r
 }
 
 // padLine pads or truncates a line to exactly width characters (by rune count).

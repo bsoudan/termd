@@ -74,14 +74,54 @@ func ListenSSH(addr string, cfg SSHListenerConfig) (net.Listener, error) {
 		return nil, fmt.Errorf("ssh listen: %w", err)
 	}
 
+	return listenSSHFromListener(tcpLn, serverConfig)
+}
+
+// ListenSSHFromListener creates an SSH listener from an existing TCP listener.
+func ListenSSHFromListener(tcpLn net.Listener, cfg SSHListenerConfig) (net.Listener, error) {
+	serverConfig := &ssh.ServerConfig{}
+	hostKey, err := loadOrGenerateHostKey(cfg.HostKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("ssh host key: %w", err)
+	}
+	serverConfig.AddHostKey(hostKey)
+
+	if cfg.NoAuth {
+		serverConfig.NoClientAuth = true
+	} else {
+		authKeysPath := cfg.AuthorizedKeysPath
+		if authKeysPath == "" {
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				authKeysPath = home + "/.ssh/authorized_keys"
+			}
+		}
+		authorizedKeys, err := loadAuthorizedKeys(authKeysPath)
+		if err != nil {
+			return nil, fmt.Errorf("ssh authorized keys: %w", err)
+		}
+		if len(authorizedKeys) == 0 {
+			return nil, fmt.Errorf("ssh: no authorized keys found at %s", authKeysPath)
+		}
+		serverConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if _, ok := authorizedKeys[string(key.Marshal())]; ok {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("unknown public key for %s", conn.User())
+		}
+	}
+
+	return listenSSHFromListener(tcpLn, serverConfig)
+}
+
+func listenSSHFromListener(tcpLn net.Listener, serverConfig *ssh.ServerConfig) (net.Listener, error) {
 	sl := &sshListener{
-		tcpLn: tcpLn,
+		tcpLn:  tcpLn,
 		config: serverConfig,
-		conns: make(chan net.Conn, 16),
-		done:  make(chan struct{}),
+		conns:  make(chan net.Conn, 16),
+		done:   make(chan struct{}),
 	}
 	go sl.acceptLoop()
-
 	return sl, nil
 }
 

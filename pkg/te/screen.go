@@ -1,0 +1,2886 @@
+package te
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
+
+	"github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
+	"golang.org/x/text/unicode/norm"
+)
+
+// Margins defines the top and bottom scroll region.
+type Margins struct {
+	Top    int
+	Bottom int
+}
+
+// Savepoint captures cursor and state for save/restore operations.
+type Savepoint struct {
+	Cursor   Cursor
+	G0       []rune
+	G1       []rune
+	Charset  int
+	Origin   bool
+	Wrap     bool
+	WrapNext bool
+	SavedCol *int
+}
+
+// Screen models a terminal screen buffer.
+type Screen struct {
+	Columns             int
+	Lines               int
+	Buffer              [][]Cell
+	Dirty               map[int]struct{}
+	Cursor              Cursor
+	Mode                map[int]struct{}
+	Margins             *Margins
+	Charset             int
+	G0                  []rune
+	G1                  []rune
+	TabStops            map[int]struct{}
+	Title               string
+	IconName            string
+	cursorStyle         int
+	charProtectionMode  int
+	statusDisplay       int
+	Savepoints          []Savepoint
+	SavedColumns        *int
+	WriteProcessInput   func(string)
+	lastDrawn           string
+	leftMargin          int
+	rightMargin         int
+	lineWrapped         map[int]bool
+	wrapNext            bool
+	savedModes          map[int]bool
+	selectionData       map[string]string
+	colorPalette        map[int]string
+	dynamicColors       map[int]string
+	specialColors       map[int]string
+	titleHexInput       bool
+	titleHexOutput      bool
+	conformanceLevel    int
+	conformanceExplicit bool
+	titleStack          []string
+	iconStack           []string
+	windowPosX          int
+	windowPosY          int
+	windowPixelWidth    int
+	windowPixelHeight   int
+	screenPixelWidth    int
+	screenPixelHeight   int
+	charPixelWidth      int
+	charPixelHeight     int
+	windowIconified     bool
+	indexedColors       int
+
+	altBuffer      [][]Cell
+	altSavepoints  []Savepoint
+	altLineWrapped map[int]bool
+	altWrapNext    bool
+	altActive      bool
+	altSavedCursor *Cursor
+}
+
+// NewScreen creates a Screen with the specified dimensions.
+func NewScreen(cols, lines int) *Screen {
+	s := &Screen{}
+	s.Resize(lines, cols)
+	s.Reset()
+	return s
+}
+
+// Reset resets the screen state to defaults.
+func (s *Screen) Reset() {
+	if s.SavedColumns != nil {
+		s.Resize(s.Lines, *s.SavedColumns)
+		s.SavedColumns = nil
+	}
+	s.Dirty = make(map[int]struct{})
+	s.markDirtyRange(0, s.Lines-1)
+	s.Buffer = makeBlankCells(s.Lines, s.Columns)
+	s.Margins = nil
+	s.altBuffer = nil
+	s.altSavepoints = nil
+	s.altLineWrapped = nil
+	s.altWrapNext = false
+	s.altActive = false
+	s.altSavedCursor = nil
+	s.Mode = map[int]struct{}{
+		ModeDECAWM:       {},
+		ModeDECTCEM:      {},
+		ModeAllow80To132: {},
+	}
+	s.Title = ""
+	s.IconName = ""
+	s.Charset = 0
+	s.G0 = charsetLat1
+	s.G1 = charsetVT100
+	s.TabStops = make(map[int]struct{})
+	for col := 8; col < s.Columns; col += 8 {
+		s.TabStops[col] = struct{}{}
+	}
+	s.Cursor = Cursor{Row: 0, Col: 0, Attr: s.defaultAttr(), Hidden: false}
+	s.SavedColumns = nil
+	s.leftMargin = 0
+	s.rightMargin = s.Columns - 1
+	s.lineWrapped = make(map[int]bool)
+	s.wrapNext = false
+	s.savedModes = make(map[int]bool)
+	s.selectionData = make(map[string]string)
+	s.colorPalette = make(map[int]string)
+	s.dynamicColors = make(map[int]string)
+	s.specialColors = make(map[int]string)
+	s.titleHexInput = false
+	s.titleHexOutput = false
+	s.conformanceLevel = 1
+	s.conformanceExplicit = false
+	s.cursorStyle = 0
+	s.charProtectionMode = 0
+	s.statusDisplay = 0
+	s.titleStack = nil
+	s.iconStack = nil
+	if s.charPixelWidth == 0 {
+		s.charPixelWidth = 8
+	}
+	if s.charPixelHeight == 0 {
+		s.charPixelHeight = 16
+	}
+	s.windowPixelWidth = s.Columns * s.charPixelWidth
+	s.windowPixelHeight = s.Lines * s.charPixelHeight
+	s.screenPixelWidth = s.windowPixelWidth
+	s.screenPixelHeight = s.windowPixelHeight
+	s.windowPosX = 0
+	s.windowPosY = 0
+	s.windowIconified = false
+	if s.indexedColors == 0 {
+		s.indexedColors = 16
+	}
+	if s.WriteProcessInput == nil {
+		s.WriteProcessInput = func(string) {}
+	}
+}
+
+// Resize executes the resize operation.
+func (s *Screen) Resize(lines, columns int) {
+	if lines <= 0 {
+		lines = 1
+	}
+	if columns <= 0 {
+		columns = 1
+	}
+	if s.Lines == lines && s.Columns == columns && s.Buffer != nil {
+		return
+	}
+	if s.Buffer == nil {
+		s.Lines = lines
+		s.Columns = columns
+		s.Buffer = makeBlankCells(lines, columns)
+		if s.charPixelWidth == 0 {
+			s.charPixelWidth = 8
+		}
+		if s.charPixelHeight == 0 {
+			s.charPixelHeight = 16
+		}
+		s.windowPixelWidth = s.Columns * s.charPixelWidth
+		s.windowPixelHeight = s.Lines * s.charPixelHeight
+		s.screenPixelWidth = s.windowPixelWidth
+		s.screenPixelHeight = s.windowPixelHeight
+		return
+	}
+
+	s.markDirtyRange(0, lines-1)
+
+	if lines < s.Lines {
+		s.SaveCursor()
+		s.CursorPosition(0, 0)
+		s.DeleteLines(s.Lines - lines)
+		s.RestoreCursor()
+	}
+
+	if columns < s.Columns {
+		for row := range s.Buffer {
+			if len(s.Buffer[row]) > columns {
+				s.Buffer[row] = s.Buffer[row][:columns]
+			}
+		}
+	}
+
+	if columns > s.Columns {
+		for row := range s.Buffer {
+			if len(s.Buffer[row]) < columns {
+				missing := make([]Cell, columns-len(s.Buffer[row]))
+				for i := range missing {
+					missing[i] = s.defaultCell()
+				}
+				s.Buffer[row] = append(s.Buffer[row], missing...)
+			}
+		}
+	}
+
+	if lines > s.Lines {
+		for i := 0; i < lines-s.Lines; i++ {
+			s.Buffer = append(s.Buffer, blankLine(columns, s.defaultCell()))
+		}
+	}
+
+	s.Lines = lines
+	s.Columns = columns
+	s.SetMargins(0, 0)
+	s.leftMargin = 0
+	if s.charPixelWidth == 0 {
+		s.charPixelWidth = 8
+	}
+	if s.charPixelHeight == 0 {
+		s.charPixelHeight = 16
+	}
+	s.windowPixelWidth = s.Columns * s.charPixelWidth
+	s.windowPixelHeight = s.Lines * s.charPixelHeight
+	if s.screenPixelWidth == 0 {
+		s.screenPixelWidth = s.windowPixelWidth
+	}
+	if s.screenPixelHeight == 0 {
+		s.screenPixelHeight = s.windowPixelHeight
+	}
+	s.rightMargin = s.Columns - 1
+	s.lineWrapped = make(map[int]bool)
+	s.wrapNext = false
+	s.savedModes = make(map[int]bool)
+	s.selectionData = make(map[string]string)
+	s.colorPalette = make(map[int]string)
+	s.dynamicColors = make(map[int]string)
+	s.specialColors = make(map[int]string)
+	s.titleHexInput = false
+	s.titleHexOutput = false
+	s.conformanceLevel = 1
+	s.conformanceExplicit = false
+	s.cursorStyle = 0
+	s.charProtectionMode = 0
+	s.statusDisplay = 0
+	s.titleStack = nil
+	s.iconStack = nil
+	if s.charPixelWidth == 0 {
+		s.charPixelWidth = 8
+	}
+	if s.charPixelHeight == 0 {
+		s.charPixelHeight = 16
+	}
+	s.windowPixelWidth = s.Columns * s.charPixelWidth
+	s.windowPixelHeight = s.Lines * s.charPixelHeight
+	s.screenPixelWidth = s.windowPixelWidth
+	s.screenPixelHeight = s.windowPixelHeight
+
+	if s.altBuffer != nil {
+		s.altBuffer = makeBlankCells(lines, columns)
+		s.altLineWrapped = make(map[int]bool)
+		s.altSavepoints = nil
+		s.altWrapNext = false
+	}
+}
+
+// Display returns the screen contents as strings.
+func (s *Screen) Display() []string {
+	lines := make([]string, s.Lines)
+	for row := 0; row < s.Lines; row++ {
+		var b strings.Builder
+		col := 0
+		for col < s.Columns {
+			cell := s.Buffer[row][col]
+			if cell.Data == "" {
+				col++
+				continue
+			}
+			width := runewidth.StringWidth(cell.Data)
+			if width == 0 {
+				b.WriteString(cell.Data)
+				col++
+				continue
+			}
+			b.WriteString(cell.Data)
+			if width > 1 {
+				col += width
+			} else {
+				col++
+			}
+		}
+		lines[row] = b.String()
+	}
+	return lines
+}
+
+// LinesCells returns a copy of the screen cell buffer.
+func (s *Screen) LinesCells() [][]Cell {
+	lines := make([][]Cell, s.Lines)
+	for row := range s.Buffer {
+		lines[row] = append([]Cell(nil), s.Buffer[row]...)
+	}
+	return lines
+}
+
+// Draw renders text at the current cursor position.
+func (s *Screen) Draw(data string) {
+	data = s.translate(data)
+	graphemes := uniseg.NewGraphemes(data)
+loop:
+	for graphemes.Next() {
+		cluster := graphemes.Str()
+		width := runewidth.StringWidth(cluster)
+		limit := s.Columns - 1
+		if s.isModeSet(ModeDECLRMM) {
+			limit = s.rightMargin
+		}
+
+		if s.wrapNext && width > 0 {
+			s.wrapNext = false
+			s.Dirty[s.Cursor.Row] = struct{}{}
+			s.CarriageReturn()
+			s.LineFeed()
+		}
+		if width > 0 && s.Cursor.Col > limit {
+			s.Cursor.Col = limit
+		}
+
+		if s.isModeSet(ModeIRM) && width > 0 {
+			s.InsertCharacters(width)
+		}
+
+		line := s.Buffer[s.Cursor.Row]
+		switch {
+		case width == 1:
+			line[s.Cursor.Col] = Cell{Data: cluster, Attr: s.Cursor.Attr}
+		case width == 2:
+			line[s.Cursor.Col] = Cell{Data: cluster, Attr: s.Cursor.Attr}
+			if s.Cursor.Col+1 < s.Columns {
+				line[s.Cursor.Col+1] = Cell{Data: "", Attr: s.Cursor.Attr}
+			}
+		case width == 0 && isCombiningCluster(cluster):
+			if s.Cursor.Col > 0 {
+				prev := line[s.Cursor.Col-1]
+				line[s.Cursor.Col-1] = Cell{Data: norm.NFC.String(prev.Data + cluster), Attr: prev.Attr}
+			} else if s.Cursor.Row > 0 {
+				prevLine := s.Buffer[s.Cursor.Row-1]
+				prev := prevLine[s.Columns-1]
+				prevLine[s.Columns-1] = Cell{Data: norm.NFC.String(prev.Data + cluster), Attr: prev.Attr}
+			}
+		default:
+			break loop
+		}
+
+		if width > 0 {
+			s.lastDrawn = cluster
+			nextCol := s.Cursor.Col + width
+			if nextCol > limit {
+				if s.isModeSet(ModeDECAWM) {
+					s.lineWrapped[s.Cursor.Row] = true
+					s.wrapNext = true
+					s.Cursor.Col = limit + 1
+					continue
+				}
+				if s.isModeSet(ModeDECLRMM) {
+					s.Cursor.Col = limit
+				} else {
+					s.Cursor.Col = limit + 1
+				}
+			} else {
+				s.Cursor.Col = nextCol
+			}
+		}
+	}
+	s.Dirty[s.Cursor.Row] = struct{}{}
+}
+
+// SetTitle updates the window title.
+func (s *Screen) SetTitle(param string) {
+	s.Title = s.applyTitleModes(param)
+}
+
+// SetIconName updates the icon name.
+func (s *Screen) SetIconName(param string) {
+	s.IconName = s.applyTitleModes(param)
+}
+
+// CarriageReturn moves the cursor to column zero.
+func (s *Screen) CarriageReturn() {
+	s.wrapNext = false
+	if s.isModeSet(ModeDECLRMM) {
+		if s.isModeSet(ModeDECOM) {
+			s.Cursor.Col = s.leftMargin
+			return
+		}
+		if s.Cursor.Col < s.leftMargin {
+			s.Cursor.Col = 0
+			return
+		}
+		s.Cursor.Col = s.leftMargin
+		return
+	}
+	s.Cursor.Col = 0
+}
+
+// Index performs an index (scroll up) operation.
+func (s *Screen) Index() {
+	s.wrapNext = false
+	top, bottom := s.scrollRegion()
+	if s.Cursor.Row == bottom {
+		if !s.canScrollHorizontal() {
+			return
+		}
+		s.markDirtyRange(0, s.Lines-1)
+		for row := top; row < bottom; row++ {
+			s.Buffer[row] = s.Buffer[row+1]
+		}
+		s.Buffer[bottom] = blankLine(s.Columns, s.defaultCell())
+		return
+	}
+	if s.Cursor.Row < bottom {
+		s.Cursor.Row++
+		return
+	}
+	if s.Cursor.Row < s.Lines-1 {
+		s.Cursor.Row++
+	}
+}
+
+// ReverseIndex performs a reverse index operation.
+func (s *Screen) ReverseIndex() {
+	s.wrapNext = false
+	top, bottom := s.scrollRegion()
+	if s.Cursor.Row == top {
+		if !s.canScrollHorizontal() {
+			return
+		}
+		s.markDirtyRange(0, s.Lines-1)
+		for row := bottom; row > top; row-- {
+			s.Buffer[row] = s.Buffer[row-1]
+		}
+		s.Buffer[top] = blankLine(s.Columns, s.defaultCell())
+		return
+	}
+	if s.Cursor.Row > top {
+		s.Cursor.Row--
+		return
+	}
+	if s.Cursor.Row > 0 {
+		s.Cursor.Row--
+	}
+}
+
+// LineFeed moves the cursor down and optionally scrolls.
+func (s *Screen) LineFeed() {
+	s.wrapNext = false
+	if !s.canScrollHorizontal() {
+		_, bottom := s.scrollRegion()
+		if s.Cursor.Row < bottom {
+			s.Cursor.Row++
+		} else if s.Cursor.Row > bottom {
+			if s.Cursor.Row < s.Lines-1 {
+				s.Cursor.Row++
+			}
+		}
+	} else {
+		s.Index()
+	}
+	if s.isModeSet(ModeLNM) {
+		s.CarriageReturn()
+	}
+}
+
+// Tab moves the cursor to the next tab stop.
+func (s *Screen) Tab() {
+	keepWrap := s.wrapNext && !s.isModeSet(ModeMoreFix)
+	if s.wrapNext && s.isModeSet(ModeMoreFix) {
+		s.wrapNext = false
+		s.LineFeed()
+		s.CarriageReturn()
+	}
+	limit := s.Columns - 1
+	if s.isModeSet(ModeDECLRMM) {
+		limit = s.rightMargin
+	}
+	column := limit
+	for _, stop := range sortedStops(s.TabStops) {
+		if s.Cursor.Col < stop {
+			column = stop
+			break
+		}
+	}
+	if column > limit {
+		column = limit
+	}
+	s.Cursor.Col = column
+	if !keepWrap {
+		s.wrapNext = false
+	}
+}
+
+// Backspace moves the cursor left.
+func (s *Screen) Backspace() {
+	s.moveLeft(1, true)
+}
+
+// SaveCursor saves cursor.
+func (s *Screen) SaveCursor() {
+	s.saveCursorState(true)
+}
+
+// SaveCursorDEC saves cursor dec.
+func (s *Screen) SaveCursorDEC() {
+	s.saveCursorState(false)
+}
+
+func (s *Screen) saveCursorState(restoreWrap bool) {
+	modeOrigin := s.isModeSet(ModeDECOM)
+	modeWrap := s.isModeSet(ModeDECAWM)
+	wrapNext := s.wrapNext
+	if !restoreWrap {
+		modeWrap = false
+		wrapNext = false
+	}
+	s.Savepoints = append(s.Savepoints, Savepoint{
+		Cursor:   s.Cursor,
+		G0:       s.G0,
+		G1:       s.G1,
+		Charset:  s.Charset,
+		Origin:   modeOrigin,
+		Wrap:     modeWrap,
+		WrapNext: wrapNext,
+		SavedCol: s.SavedColumns,
+	})
+}
+
+// RestoreCursor restores cursor.
+func (s *Screen) RestoreCursor() {
+	s.restoreCursorState(true)
+}
+
+// RestoreCursorDEC restores cursor dec.
+func (s *Screen) RestoreCursorDEC() {
+	s.restoreCursorState(false)
+}
+
+func (s *Screen) restoreCursorState(restoreWrap bool) {
+	if len(s.Savepoints) == 0 {
+		s.ResetMode([]int{ModeDECOM}, false)
+		s.CursorPosition(0, 0)
+		if !restoreWrap {
+			s.wrapNext = false
+		}
+		return
+	}
+
+	last := s.Savepoints[len(s.Savepoints)-1]
+	s.Savepoints = s.Savepoints[:len(s.Savepoints)-1]
+	s.G0 = last.G0
+	s.G1 = last.G1
+	s.Charset = last.Charset
+	if last.Origin {
+		s.SetMode([]int{ModeDECOM}, false)
+	} else {
+		s.ResetMode([]int{ModeDECOM}, false)
+	}
+	if restoreWrap {
+		if last.Wrap {
+			s.SetMode([]int{ModeDECAWM}, false)
+		} else {
+			s.ResetMode([]int{ModeDECAWM}, false)
+		}
+		s.wrapNext = last.WrapNext
+	} else {
+		s.wrapNext = false
+	}
+	s.Cursor = last.Cursor
+	s.ensureHB()
+	s.ensureVB(true)
+}
+
+// InsertLines inserts blank lines at the cursor.
+func (s *Screen) InsertLines(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	if s.Cursor.Row < top || s.Cursor.Row > bottom {
+		return
+	}
+	left, right := s.horizontalMargins()
+	if s.isModeSet(ModeDECLRMM) && (s.Cursor.Col < left || s.Cursor.Col > right) {
+		return
+	}
+	s.markDirtyRange(s.Cursor.Row, s.Lines-1)
+	if count > bottom-s.Cursor.Row+1 {
+		count = bottom - s.Cursor.Row + 1
+	}
+	for row := bottom; row >= s.Cursor.Row; row-- {
+		if row+count <= bottom {
+			s.copyRowSegment(row, row+count, left, right)
+		}
+		s.clearRowSegment(row, left, right)
+	}
+	s.CarriageReturn()
+}
+
+// DeleteLines deletes lines at the cursor.
+func (s *Screen) DeleteLines(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	if s.Cursor.Row < top || s.Cursor.Row > bottom {
+		return
+	}
+	left, right := s.horizontalMargins()
+	if s.isModeSet(ModeDECLRMM) && (s.Cursor.Col < left || s.Cursor.Col > right) {
+		return
+	}
+	s.markDirtyRange(s.Cursor.Row, s.Lines-1)
+	if count > bottom-s.Cursor.Row+1 {
+		count = bottom - s.Cursor.Row + 1
+	}
+	for row := s.Cursor.Row; row <= bottom; row++ {
+		if row+count <= bottom {
+			s.copyRowSegment(row+count, row, left, right)
+		} else {
+			s.clearRowSegment(row, left, right)
+		}
+	}
+	s.CarriageReturn()
+}
+
+// InsertCharacters inserts blank characters.
+func (s *Screen) InsertCharacters(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	left, right := s.horizontalMargins()
+	if s.Cursor.Col < left || s.Cursor.Col > right {
+		return
+	}
+	top, bottom := s.scrollRegion()
+	if s.isModeSet(ModeDECLRMM) {
+		if s.Cursor.Row < top || s.Cursor.Row > bottom {
+			return
+		}
+	}
+	maxCount := right - s.Cursor.Col + 1
+	if count > maxCount {
+		count = maxCount
+	}
+	if count <= 0 {
+		return
+	}
+	s.Dirty[s.Cursor.Row] = struct{}{}
+	line := s.Buffer[s.Cursor.Row]
+	for col := right; col >= s.Cursor.Col+count; col-- {
+		line[col] = line[col-count]
+	}
+	for col := s.Cursor.Col; col < s.Cursor.Col+count && col <= right; col++ {
+		line[col] = s.defaultCell()
+	}
+}
+
+// DeleteCharacters deletes characters at the cursor.
+func (s *Screen) DeleteCharacters(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	left, right := s.horizontalMargins()
+	if s.Cursor.Col < left || s.Cursor.Col > right {
+		return
+	}
+	top, bottom := s.scrollRegion()
+	if s.isModeSet(ModeDECLRMM) {
+		if s.Cursor.Row < top || s.Cursor.Row > bottom {
+			return
+		}
+	}
+	maxCount := right - s.Cursor.Col + 1
+	if count > maxCount {
+		count = maxCount
+	}
+	if count <= 0 {
+		return
+	}
+	s.Dirty[s.Cursor.Row] = struct{}{}
+	line := s.Buffer[s.Cursor.Row]
+	for col := s.Cursor.Col; col <= right-count; col++ {
+		line[col] = line[col+count]
+	}
+	for col := right - count + 1; col <= right; col++ {
+		line[col] = s.defaultCell()
+	}
+}
+
+// EraseCharacters erases characters at the cursor.
+func (s *Screen) EraseCharacters(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	left := 0
+	right := s.Columns - 1
+	if s.Cursor.Col < left || s.Cursor.Col > right {
+		return
+	}
+	s.Dirty[s.Cursor.Row] = struct{}{}
+	line := s.Buffer[s.Cursor.Row]
+	end := minInt(s.Cursor.Col+count-1, right)
+	for col := s.Cursor.Col; col <= end; col++ {
+		if line[col].Attr.ISOProtected {
+			continue
+		}
+		line[col] = Cell{Data: " ", Attr: s.defaultAttr()}
+	}
+}
+
+// EraseInLine erases portions of the current line.
+func (s *Screen) EraseInLine(how int, private bool, _ ...int) {
+	s.Dirty[s.Cursor.Row] = struct{}{}
+	line := s.Buffer[s.Cursor.Row]
+	left := 0
+	right := s.Columns - 1
+	var start, end int
+	switch how {
+	case 0:
+		start = maxInt(s.Cursor.Col, left)
+		end = right + 1
+	case 1:
+		start = left
+		end = minInt(s.Cursor.Col, right) + 1
+	case 2:
+		start = left
+		end = right + 1
+	}
+	for col := start; col < end; col++ {
+		protected := line[col].Attr.ISOProtected
+		if private {
+			protected = line[col].Attr.Protected
+		}
+		if protected {
+			continue
+		}
+		line[col] = Cell{Data: " ", Attr: s.defaultAttr()}
+	}
+}
+
+// EraseInDisplay erases portions of the display.
+func (s *Screen) EraseInDisplay(how int, private bool, _ ...int) {
+	s.eraseInDisplay(how, private, false)
+}
+
+// EraseInDisplaySelective performs selective display erase.
+func (s *Screen) EraseInDisplaySelective(how int) {
+	s.eraseInDisplay(how, true, true)
+}
+
+func (s *Screen) eraseInDisplay(how int, private bool, selective bool) {
+	if how == 3 {
+		if selective {
+			return
+		}
+		how = 2
+	}
+	var start, end int
+	switch how {
+	case 0:
+		start = s.Cursor.Row + 1
+		end = s.Lines
+	case 1:
+		start = 0
+		end = s.Cursor.Row
+	case 2:
+		start = 0
+		end = s.Lines
+	}
+	if how == 0 || how == 1 {
+		s.EraseInLine(how, private)
+	}
+	for row := start; row < end; row++ {
+		line := s.Buffer[row]
+		for col := 0; col < s.Columns; col++ {
+			protected := line[col].Attr.ISOProtected
+			if private {
+				protected = line[col].Attr.Protected
+			}
+			if protected {
+				continue
+			}
+			line[col] = Cell{Data: " ", Attr: s.defaultAttr()}
+		}
+		s.Dirty[row] = struct{}{}
+	}
+	if how == 2 {
+		s.markDirtyRange(0, s.Lines-1)
+	}
+}
+
+// SetTabStop adds a tab stop at the cursor column.
+func (s *Screen) SetTabStop() {
+	s.TabStops[s.Cursor.Col] = struct{}{}
+}
+
+// StartProtectedArea enables ISO protected mode.
+func (s *Screen) StartProtectedArea() {
+	s.Cursor.Attr.ISOProtected = true
+}
+
+// EndProtectedArea disables ISO protected mode.
+func (s *Screen) EndProtectedArea() {
+	s.Cursor.Attr.ISOProtected = false
+}
+
+// SetCharacterProtection updates character protection mode.
+func (s *Screen) SetCharacterProtection(mode int) {
+	s.charProtectionMode = mode
+	s.Cursor.Attr.Protected = mode == 1
+}
+
+// SetCursorStyle updates the cursor style setting.
+func (s *Screen) SetCursorStyle(style int) {
+	s.cursorStyle = style
+}
+
+// SetActiveStatusDisplay sets the active status display mode.
+func (s *Screen) SetActiveStatusDisplay(mode int) {
+	s.statusDisplay = mode
+}
+
+// ClearTabStop clears tab stops based on the given mode.
+func (s *Screen) ClearTabStop(how ...int) {
+	value := 0
+	if len(how) > 0 {
+		value = how[0]
+	}
+	switch value {
+	case 0:
+		delete(s.TabStops, s.Cursor.Col)
+	case 3:
+		s.TabStops = make(map[int]struct{})
+	}
+}
+
+// EnsureCursor clamps the cursor within bounds.
+func (s *Screen) EnsureCursor() {
+	s.ensureHB()
+	s.ensureVB(false)
+}
+
+// CursorUp moves the cursor up by a count.
+func (s *Screen) CursorUp(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.wrapNext = false
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	limitTop := 0
+	if s.Cursor.Row >= top && s.Cursor.Row <= bottom {
+		limitTop = top
+	}
+	s.Cursor.Row = maxInt(s.Cursor.Row-count, limitTop)
+}
+
+// CursorUp1 moves the cursor up and to column one.
+func (s *Screen) CursorUp1(params ...int) {
+	s.wrapNext = false
+	s.CursorUp(params...)
+	s.CarriageReturn()
+}
+
+// CursorDown moves the cursor down by a count.
+func (s *Screen) CursorDown(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.wrapNext = false
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	limitBottom := s.Lines - 1
+	if s.Cursor.Row >= top && s.Cursor.Row <= bottom {
+		limitBottom = bottom
+	}
+	s.Cursor.Row = minInt(s.Cursor.Row+count, limitBottom)
+}
+
+// CursorDown1 moves the cursor down and to column one.
+func (s *Screen) CursorDown1(params ...int) {
+	s.wrapNext = false
+	s.CursorDown(params...)
+	s.CarriageReturn()
+}
+
+// CursorBack moves the cursor backward by a count.
+func (s *Screen) CursorBack(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.moveLeft(count, true)
+}
+
+// CursorBackTab moves the cursor to the previous tab stop.
+func (s *Screen) CursorBackTab(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.wrapNext = false
+	if count <= 0 {
+		count = 1
+	}
+	for i := 0; i < count; i++ {
+		prev := 0
+		for stop := range s.TabStops {
+			if stop < s.Cursor.Col && stop > prev {
+				prev = stop
+			}
+		}
+		s.Cursor.Col = prev
+	}
+}
+
+// CursorForwardTab moves the cursor to the next tab stop.
+func (s *Screen) CursorForwardTab(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.wrapNext = false
+	if count <= 0 {
+		count = 1
+	}
+	for i := 0; i < count; i++ {
+		s.Tab()
+	}
+}
+
+// NextLine performs a line feed followed by carriage return.
+func (s *Screen) NextLine() {
+	s.wrapNext = false
+	origCol := s.Cursor.Col
+	s.CarriageReturn()
+	if s.isModeSet(ModeDECLRMM) {
+		left, right := s.horizontalMargins()
+		if origCol < left || origCol > right {
+			_, bottom := s.scrollRegion()
+			if s.Cursor.Row < bottom {
+				s.Cursor.Row++
+			} else if s.Cursor.Row > bottom {
+				if s.Cursor.Row < s.Lines-1 {
+					s.Cursor.Row++
+				}
+			}
+			return
+		}
+	}
+	s.Index()
+}
+
+func (s *Screen) moveLeft(count int, reverseWrap bool) {
+	if count <= 0 {
+		count = 1
+	}
+	left, right := s.horizontalMargins()
+	reverseInline := s.isModeSet(ModeReverseWrapInline)
+	reverseExtend := s.isModeSet(ModeReverseWrapExtend)
+	for i := 0; i < count; i++ {
+		if s.wrapNext {
+			s.wrapNext = false
+			if reverseWrap && s.isModeSet(ModeDECAWM) && (reverseInline || reverseExtend) {
+				if s.Cursor.Col == right+1 {
+					s.Cursor.Col = right
+				}
+				continue
+			}
+			if s.Cursor.Col == right+1 {
+				s.Cursor.Col = maxInt(left, right-1)
+				continue
+			}
+			if s.Cursor.Col > 0 {
+				s.Cursor.Col--
+			}
+			continue
+		}
+		if s.Cursor.Col == right+1 {
+			s.Cursor.Col = right
+			continue
+		}
+		if s.Cursor.Col == 0 {
+			if reverseWrap && s.isModeSet(ModeDECAWM) && (reverseInline || reverseExtend) {
+				s.reverseWrapToPreviousLine(left, right, reverseInline, reverseExtend)
+			}
+			continue
+		}
+		if s.isModeSet(ModeDECLRMM) && s.Cursor.Col < left {
+			s.Cursor.Col--
+			continue
+		}
+		if s.Cursor.Col > left {
+			s.Cursor.Col--
+			continue
+		}
+		if s.Cursor.Col < left {
+			s.Cursor.Col--
+			continue
+		}
+		if !reverseWrap || !s.isModeSet(ModeDECAWM) || (!reverseInline && !reverseExtend) {
+			continue
+		}
+		s.reverseWrapToPreviousLine(left, right, reverseInline, reverseExtend)
+	}
+}
+
+func (s *Screen) reverseWrapToPreviousLine(left, right int, reverseInline, reverseExtend bool) {
+	top, bottom := s.scrollRegion()
+	targetRow := s.Cursor.Row - 1
+	if reverseExtend && s.Cursor.Row == top {
+		targetRow = bottom
+	}
+	if targetRow < 0 || targetRow >= s.Lines {
+		return
+	}
+	if reverseInline && !reverseExtend {
+		if !s.lineWrapped[targetRow] {
+			return
+		}
+	}
+	s.Cursor.Row = targetRow
+	s.Cursor.Col = right
+}
+
+// CursorForward moves the cursor forward by a count.
+func (s *Screen) CursorForward(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	s.wrapNext = false
+	if count <= 0 {
+		count = 1
+	}
+	left, right := s.horizontalMargins()
+	if s.isModeSet(ModeDECLRMM) && s.Cursor.Col >= left && s.Cursor.Col <= right {
+		s.Cursor.Col = minInt(s.Cursor.Col+count, right)
+		return
+	}
+	s.Cursor.Col = minInt(s.Cursor.Col+count, s.Columns-1)
+}
+
+// ScrollUp scrolls the screen up.
+func (s *Screen) ScrollUp(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	if count > bottom-top+1 {
+		count = bottom - top + 1
+	}
+	left, right := s.horizontalMargins()
+	s.markDirtyRange(top, bottom)
+	for i := 0; i < count; i++ {
+		for row := top; row < bottom; row++ {
+			s.copyRowSegment(row+1, row, left, right)
+		}
+		s.clearRowSegment(bottom, left, right)
+	}
+}
+
+// ScrollDown scrolls the screen down.
+func (s *Screen) ScrollDown(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	if count > bottom-top+1 {
+		count = bottom - top + 1
+	}
+	left, right := s.horizontalMargins()
+	s.markDirtyRange(top, bottom)
+	for i := 0; i < count; i++ {
+		for row := bottom; row > top; row-- {
+			s.copyRowSegment(row-1, row, left, right)
+		}
+		s.clearRowSegment(top, left, right)
+	}
+}
+
+// RepeatLast repeats the last drawn character.
+func (s *Screen) RepeatLast(params ...int) {
+	count := 1
+	if len(params) > 0 {
+		count = params[0]
+	}
+	if count <= 0 {
+		count = 1
+	}
+	if s.lastDrawn == "" {
+		return
+	}
+	for i := 0; i < count; i++ {
+		s.Draw(s.lastDrawn)
+	}
+}
+
+// CursorPosition moves the cursor to a line and column.
+func (s *Screen) CursorPosition(params ...int) {
+	line := 0
+	column := 0
+	if len(params) > 0 {
+		line = params[0]
+	}
+	if len(params) > 1 {
+		column = params[1]
+	}
+	s.wrapNext = false
+	if column <= 0 {
+		column = 1
+	}
+	if line <= 0 {
+		line = 1
+	}
+	row := line - 1
+	col := column - 1
+	if s.Margins != nil && s.isModeSet(ModeDECOM) {
+		row += s.Margins.Top
+		if row < s.Margins.Top || row > s.Margins.Bottom {
+			return
+		}
+	}
+	if s.isModeSet(ModeDECOM) && s.isModeSet(ModeDECLRMM) {
+		col += s.leftMargin
+		if col < s.leftMargin || col > s.rightMargin {
+			return
+		}
+	}
+	s.Cursor.Row = row
+	s.Cursor.Col = col
+	s.ensureHB()
+	s.ensureVB(false)
+}
+
+// CursorToColumn moves the cursor to a column.
+func (s *Screen) CursorToColumn(column ...int) {
+	value := 1
+	if len(column) > 0 {
+		value = column[0]
+	}
+	s.wrapNext = false
+	if value <= 0 {
+		value = 1
+	}
+	col := value - 1
+	if s.isModeSet(ModeDECOM) && s.isModeSet(ModeDECLRMM) {
+		col += s.leftMargin
+	}
+	s.Cursor.Col = col
+	s.ensureHB()
+}
+
+// CursorToColumnAbsolute moves the cursor to an absolute column.
+func (s *Screen) CursorToColumnAbsolute(column ...int) {
+	value := 1
+	if len(column) > 0 {
+		value = column[0]
+	}
+	s.wrapNext = false
+	if value <= 0 {
+		value = 1
+	}
+	col := value - 1
+	if col < 0 {
+		col = 0
+	}
+	if col >= s.Columns {
+		col = s.Columns - 1
+	}
+	s.Cursor.Col = col
+}
+
+// CursorToLine moves the cursor to a line.
+func (s *Screen) CursorToLine(params ...int) {
+	line := 1
+	if len(params) > 0 {
+		line = params[0]
+	}
+	s.wrapNext = false
+	if line <= 0 {
+		line = 1
+	}
+	row := line - 1
+	if s.isModeSet(ModeDECOM) && s.Margins != nil {
+		row += s.Margins.Top
+	}
+	s.Cursor.Row = row
+	s.ensureVB(false)
+}
+
+// Bell triggers the terminal bell.
+func (s *Screen) Bell() {
+}
+
+// AlignmentDisplay fills the screen with the alignment pattern.
+func (s *Screen) AlignmentDisplay() {
+	s.markDirtyRange(0, s.Lines-1)
+	for row := 0; row < s.Lines; row++ {
+		for col := 0; col < s.Columns; col++ {
+			cell := s.Buffer[row][col]
+			cell.Data = "E"
+			s.Buffer[row][col] = cell
+		}
+	}
+	s.Margins = nil
+	s.leftMargin = 0
+	s.rightMargin = s.Columns - 1
+	s.lineWrapped = make(map[int]bool)
+	s.wrapNext = false
+	s.CursorPosition(0, 0)
+}
+
+// SelectGraphicRendition selects graphic rendition.
+func (s *Screen) SelectGraphicRendition(attrs []int, private bool) {
+	if private {
+		return
+	}
+	if len(attrs) == 0 || (len(attrs) == 1 && attrs[0] == 0) {
+		s.Cursor.Attr = s.defaultAttr()
+		return
+	}
+
+	replace := s.Cursor.Attr
+	queue := append([]int(nil), attrs...)
+
+	for len(queue) > 0 {
+		attr := queue[0]
+		queue = queue[1:]
+		switch {
+		case attr == 0:
+			replace = s.defaultAttr()
+		case fgANSI[attr] != "":
+			replace.Fg = colorFromName(fgANSI[attr], ColorANSI16, uint8(attr-30))
+		case bgANSI[attr] != "":
+			replace.Bg = colorFromName(bgANSI[attr], ColorANSI16, uint8(attr-40))
+		case fgAixterm[attr] != "":
+			replace.Fg = colorFromName(fgAixterm[attr], ColorANSI16, uint8(attr-90+8))
+		case bgAixterm[attr] != "":
+			replace.Bg = colorFromName(bgAixterm[attr], ColorANSI16, uint8(attr-100+8))
+		case textAttributes[attr] != "":
+			flag := textAttributes[attr]
+			switch flag {
+			case "+bold":
+				replace.Bold = true
+			case "-bold":
+				replace.Bold = false
+			case "+italics":
+				replace.Italics = true
+			case "-italics":
+				replace.Italics = false
+			case "+underline":
+				replace.Underline = true
+			case "-underline":
+				replace.Underline = false
+			case "+blink":
+				replace.Blink = true
+			case "-blink":
+				replace.Blink = false
+			case "+reverse":
+				replace.Reverse = true
+			case "-reverse":
+				replace.Reverse = false
+			case "+strikethrough":
+				replace.Strikethrough = true
+			case "-strikethrough":
+				replace.Strikethrough = false
+			}
+		case attr == SgrFg256 || attr == SgrBg256:
+			keyIsFg := attr == SgrFg256
+			if len(queue) < 1 {
+				break
+			}
+			mode := queue[0]
+			queue = queue[1:]
+			switch mode {
+			case 5:
+				if len(queue) < 1 {
+					break
+				}
+				index := queue[0]
+				queue = queue[1:]
+				if index >= 0 && index < len(fgBg256) {
+					color := Color{Mode: ColorANSI256, Index: uint8(index), Name: fgBg256[index]}
+					if keyIsFg {
+						replace.Fg = color
+					} else {
+						replace.Bg = color
+					}
+				}
+			case 2:
+				if len(queue) < 3 {
+					break
+				}
+				r := queue[0]
+				g := queue[1]
+				b := queue[2]
+				queue = queue[3:]
+				color := Color{Mode: ColorTrueColor, Name: rgbHex(r, g, b)}
+				if keyIsFg {
+					replace.Fg = color
+				} else {
+					replace.Bg = color
+				}
+			}
+		}
+	}
+	s.Cursor.Attr = replace
+}
+
+// ReportDeviceAttributes emits a device attributes response.
+func (s *Screen) ReportDeviceAttributes(mode int, private bool, prefix rune, _ ...int) {
+	if mode != 0 {
+		return
+	}
+	if prefix == '>' {
+		p0 := 0
+		switch s.conformanceLevel {
+		case 5:
+			p0 = 64
+		case 4:
+			p0 = 41
+		case 3:
+			p0 = 24
+		case 2:
+			p0 = 1
+		default:
+			p0 = 0
+		}
+		p1 := 400
+		p2 := 0
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf(">%d;%d;%dc", p0, p1, p2))
+		return
+	}
+	params := []int{}
+	switch s.conformanceLevel {
+	case 5:
+		params = []int{65, 1, 2, 6, 9, 15, 16, 17, 18, 21, 22, 28, 29}
+	case 4:
+		params = []int{64, 1, 2, 6, 9, 15, 16, 17, 18, 21, 22, 28, 29}
+	case 3:
+		params = []int{63, 1, 2, 6, 9, 15, 16, 17, 18, 21, 22, 28, 29}
+	case 2:
+		params = []int{61, 1, 2, 6, 9, 15, 22, 29}
+	case 1:
+		params = []int{6}
+	default:
+		params = []int{6}
+	}
+	var b strings.Builder
+	for i, param := range params {
+		if i > 0 {
+			b.WriteString(";")
+		}
+		b.WriteString(fmt.Sprintf("%d", param))
+	}
+	if !private || prefix == '?' {
+		s.WriteProcessInput(ControlCSI + "?" + b.String() + "c")
+	}
+}
+
+// ReportDeviceStatus emits a device status response.
+func (s *Screen) ReportDeviceStatus(mode int, private bool, prefix rune, rest ...int) {
+	if private && prefix == '?' {
+		switch mode {
+		case 6:
+			x := s.Cursor.Col + 1
+			y := s.Cursor.Row + 1
+			if s.isModeSet(ModeDECOM) && s.Margins != nil {
+				if s.Cursor.Row >= s.Margins.Top && s.Cursor.Row <= s.Margins.Bottom {
+					y -= s.Margins.Top
+				}
+			}
+			if s.isModeSet(ModeDECOM) && s.isModeSet(ModeDECLRMM) {
+				if s.Cursor.Col >= s.leftMargin && s.Cursor.Col <= s.rightMargin {
+					x -= s.leftMargin
+				}
+			}
+			if x < 1 {
+				x = 1
+			}
+			if x > s.Columns {
+				x = s.Columns
+			}
+			if s.conformanceLevel >= 4 {
+				s.WriteProcessInput(ControlCSI + fmt.Sprintf("?%d;%d;1R", y, x))
+			} else {
+				s.WriteProcessInput(ControlCSI + fmt.Sprintf("?%d;%dR", y, x))
+			}
+		case 15:
+			s.WriteProcessInput(ControlCSI + "?10n")
+		case 25:
+			s.WriteProcessInput(ControlCSI + "?20n")
+		case 26:
+			if s.conformanceLevel <= 2 {
+				s.WriteProcessInput(ControlCSI + "?27;0n")
+			} else if s.conformanceLevel == 3 {
+				s.WriteProcessInput(ControlCSI + "?27;0;0n")
+			} else {
+				s.WriteProcessInput(ControlCSI + "?27;0;0;0n")
+			}
+		case 55:
+			s.WriteProcessInput(ControlCSI + "?50n")
+		case 56:
+			s.WriteProcessInput(ControlCSI + "?57;1n")
+		case 62:
+			s.WriteProcessInput(ControlCSI + "0*{")
+			return
+		case 63:
+			pid := 0
+			if len(rest) > 0 {
+				pid = rest[0]
+			}
+			s.WriteProcessInput(ControlESC + "P" + fmt.Sprintf("%d!~0000", pid) + ControlST)
+		case 75:
+			s.WriteProcessInput(ControlCSI + "?70n")
+		case 85:
+			s.WriteProcessInput(ControlCSI + "?83n")
+		}
+		return
+	}
+	switch mode {
+	case 5:
+		s.WriteProcessInput(ControlCSI + "0n")
+	case 6:
+		x := s.Cursor.Col + 1
+		y := s.Cursor.Row + 1
+		if s.isModeSet(ModeDECOM) && s.Margins != nil {
+			if s.Cursor.Row >= s.Margins.Top && s.Cursor.Row <= s.Margins.Bottom {
+				y -= s.Margins.Top
+			}
+		}
+		if s.isModeSet(ModeDECOM) && s.isModeSet(ModeDECLRMM) {
+			if s.Cursor.Col >= s.leftMargin && s.Cursor.Col <= s.rightMargin {
+				x -= s.leftMargin
+			}
+		}
+		if x < 1 {
+			x = 1
+		}
+		if x > s.Columns {
+			x = s.Columns
+		}
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("%d;%dR", y, x))
+	}
+}
+
+// ReportMode emits a mode status report.
+func (s *Screen) ReportMode(mode int, private bool) {
+	if s.conformanceExplicit && s.conformanceLevel < 3 {
+		return
+	}
+	check := mode
+	prefix := ""
+	if private {
+		check = mode << 5
+		prefix = "?"
+	}
+	status := 2
+	if s.Mode != nil {
+		if _, ok := s.Mode[check]; ok {
+			status = 1
+		}
+	}
+	if status == 2 {
+		if private {
+			switch mode {
+			case ModeDECHCCM >> 5:
+				status = 4
+			}
+		} else {
+			switch mode {
+			case 1, 5, 7, 10, 11, 13, 14, 15, 16, 17, 18, 19:
+				status = 4
+			}
+		}
+	}
+	s.WriteProcessInput(ControlCSI + fmt.Sprintf("%s%d;%d$y", prefix, mode, status))
+}
+
+// RequestStatusString responds to DECRQSS queries.
+func (s *Screen) RequestStatusString(query string) {
+	if query == "" {
+		return
+	}
+	response := ""
+	switch query {
+	case "m":
+		codes := []string{"0"}
+		if s.Cursor.Attr.Bold {
+			codes = append(codes, "1")
+		}
+		if s.Cursor.Attr.Italics {
+			codes = append(codes, "3")
+		}
+		if s.Cursor.Attr.Underline {
+			codes = append(codes, "4")
+		}
+		if s.Cursor.Attr.Blink {
+			codes = append(codes, "5")
+		}
+		if s.Cursor.Attr.Reverse {
+			codes = append(codes, "7")
+		}
+		if s.Cursor.Attr.Conceal {
+			codes = append(codes, "8")
+		}
+		if s.Cursor.Attr.Strikethrough {
+			codes = append(codes, "9")
+		}
+		response = "1$r" + strings.Join(codes, ";") + "m"
+	case "r":
+		top, bottom := s.scrollRegion()
+		response = fmt.Sprintf("1$r%d;%dr", top+1, bottom+1)
+	case "s":
+		if s.isModeSet(ModeDECLRMM) {
+			response = fmt.Sprintf("1$r%d;%ds", s.leftMargin+1, s.rightMargin+1)
+		} else {
+			response = fmt.Sprintf("1$r1;%ds", s.Columns)
+		}
+	case " q":
+		response = fmt.Sprintf("1$r%d q", s.cursorStyle)
+	case "t":
+		response = "1$r27t"
+	case "+q":
+		response = "1$r0+q"
+	case "*}":
+		response = "1$r0*}"
+	case "$}":
+		response = fmt.Sprintf("1$r%d$}", s.statusDisplay)
+	case "*x":
+		response = "1$r0*x"
+	case "\"q":
+		response = fmt.Sprintf("1$r%d\"q", s.charProtectionMode)
+	case "\"p":
+		response = fmt.Sprintf("1$r%d;1\"p", 60+s.conformanceLevel)
+	case "+r":
+		response = "1$r0+r"
+	case "*|":
+		response = fmt.Sprintf("1$r%d*|", s.Lines)
+	case "$~":
+		response = "1$r0$~"
+	default:
+		return
+	}
+	s.WriteProcessInput(ControlDCS + response + ControlST)
+}
+
+// SoftReset resets state without a full reset.
+func (s *Screen) SoftReset() {
+	s.wrapNext = false
+	s.Cursor.Hidden = false
+	s.Margins = nil
+	s.leftMargin = 0
+	s.rightMargin = s.Columns - 1
+	s.Mode = map[int]struct{}{ModeDECAWM: {}, ModeDECTCEM: {}, ModeAllow80To132: {}}
+	s.Cursor.Attr = s.defaultAttr()
+	s.G0 = charsetLat1
+	s.G1 = charsetVT100
+	s.Charset = 0
+	s.Savepoints = nil
+	s.savedModes = make(map[int]bool)
+	s.selectionData = make(map[string]string)
+	s.colorPalette = make(map[int]string)
+	s.dynamicColors = make(map[int]string)
+	s.specialColors = make(map[int]string)
+	s.titleHexInput = false
+	s.titleHexOutput = false
+	s.conformanceLevel = 1
+	s.conformanceExplicit = false
+	s.cursorStyle = 0
+	s.charProtectionMode = 0
+	s.statusDisplay = 0
+	s.titleStack = nil
+	s.iconStack = nil
+}
+
+// SaveModes saves the current mode settings.
+func (s *Screen) SaveModes(modes []int) {
+	if s.savedModes == nil {
+		s.savedModes = make(map[int]bool)
+	}
+	for _, mode := range modes {
+		key := mode << 5
+		_, ok := s.Mode[key]
+		s.savedModes[key] = ok
+	}
+}
+
+// RestoreModes restores saved mode settings.
+func (s *Screen) RestoreModes(modes []int) {
+	for _, mode := range modes {
+		key := mode << 5
+		state, ok := s.savedModes[key]
+		if !ok {
+			continue
+		}
+		if state {
+			s.applySetMode(mode, true)
+		} else {
+			s.applyResetMode(mode, true)
+		}
+	}
+}
+
+// ForwardIndex scrolls forward within the scroll region.
+func (s *Screen) ForwardIndex() {
+	left, right := s.horizontalMargins()
+	top, bottom := s.scrollRegion()
+	if s.isModeSet(ModeDECLRMM) {
+		if s.Cursor.Col < left || s.Cursor.Col > right {
+			if s.Cursor.Col < s.Columns-1 {
+				s.Cursor.Col++
+			}
+			return
+		}
+	}
+	if s.Cursor.Col < right {
+		s.Cursor.Col++
+		return
+	}
+	s.shiftHorizontal(left, right, top, bottom, -1)
+}
+
+// BackIndex scrolls backward within the scroll region.
+func (s *Screen) BackIndex() {
+	left, right := s.horizontalMargins()
+	top, bottom := s.scrollRegion()
+	if s.isModeSet(ModeDECLRMM) {
+		if s.Cursor.Col < left || s.Cursor.Col > right {
+			if s.Cursor.Col > 0 {
+				s.Cursor.Col--
+			}
+			return
+		}
+	}
+	if s.Cursor.Col > left {
+		s.Cursor.Col--
+		return
+	}
+	s.shiftHorizontal(left, right, top, bottom, 1)
+}
+
+// InsertColumns inserts columns.
+func (s *Screen) InsertColumns(count int) {
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	left, right := s.horizontalMargins()
+	if s.Cursor.Row < top || s.Cursor.Row > bottom {
+		return
+	}
+	if s.isModeSet(ModeDECLRMM) && (s.Cursor.Col < left || s.Cursor.Col > right) {
+		return
+	}
+	if right < left {
+		return
+	}
+	if count > right-s.Cursor.Col+1 {
+		count = right - s.Cursor.Col + 1
+	}
+	s.markDirtyRange(top, bottom)
+	for row := top; row <= bottom; row++ {
+		for col := right; col >= s.Cursor.Col+count; col-- {
+			s.Buffer[row][col] = s.Buffer[row][col-count]
+		}
+		for col := s.Cursor.Col; col < s.Cursor.Col+count && col <= right; col++ {
+			s.Buffer[row][col] = s.defaultCell()
+		}
+	}
+}
+
+// DeleteColumns deletes columns.
+func (s *Screen) DeleteColumns(count int) {
+	if count <= 0 {
+		count = 1
+	}
+	top, bottom := s.scrollRegion()
+	left, right := s.horizontalMargins()
+	if s.Cursor.Row < top || s.Cursor.Row > bottom {
+		return
+	}
+	if s.isModeSet(ModeDECLRMM) && (s.Cursor.Col < left || s.Cursor.Col > right) {
+		return
+	}
+	if right < left {
+		return
+	}
+	if count > right-s.Cursor.Col+1 {
+		count = right - s.Cursor.Col + 1
+	}
+	s.markDirtyRange(top, bottom)
+	for row := top; row <= bottom; row++ {
+		for col := s.Cursor.Col; col <= right-count; col++ {
+			s.Buffer[row][col] = s.Buffer[row][col+count]
+		}
+		for col := right - count + 1; col <= right; col++ {
+			s.Buffer[row][col] = s.defaultCell()
+		}
+	}
+}
+
+// EraseRectangle erases a rectangular area.
+func (s *Screen) EraseRectangle(top, left, bottom, right int) {
+	s.fillRectangle(top, left, bottom, right, " ")
+}
+
+// SelectiveEraseRectangle selectively erases a rectangular area.
+func (s *Screen) SelectiveEraseRectangle(top, left, bottom, right int) {
+	if top <= 0 {
+		top = 1
+	}
+	if left <= 0 {
+		left = 1
+	}
+	if bottom <= 0 {
+		bottom = s.Lines
+	}
+	if right <= 0 {
+		right = s.Columns
+	}
+	if s.isModeSet(ModeDECOM) && s.Margins != nil {
+		top += s.Margins.Top
+		bottom += s.Margins.Top
+		if s.isModeSet(ModeDECLRMM) {
+			left += s.leftMargin
+			right += s.leftMargin
+		}
+	}
+	if top > bottom || left > right {
+		return
+	}
+	if top < 1 {
+		top = 1
+	}
+	if left < 1 {
+		left = 1
+	}
+	if bottom > s.Lines {
+		bottom = s.Lines
+	}
+	if right > s.Columns {
+		right = s.Columns
+	}
+	for row := top - 1; row <= bottom-1; row++ {
+		for col := left - 1; col <= right-1; col++ {
+			cell := s.Buffer[row][col]
+			if cell.Attr.Protected {
+				continue
+			}
+			s.Buffer[row][col] = Cell{Data: " ", Attr: s.defaultAttr()}
+		}
+		s.Dirty[row] = struct{}{}
+	}
+}
+
+// FillRectangle fills a rectangle with the given rune.
+func (s *Screen) FillRectangle(ch rune, top, left, bottom, right int) {
+	if ch == 0 {
+		return
+	}
+	s.fillRectangle(top, left, bottom, right, string(ch))
+}
+
+func (s *Screen) enterAltScreen(clear bool, saveCursor bool, moveCursor bool) {
+	if s.altActive {
+		return
+	}
+	if saveCursor {
+		cursor := s.Cursor
+		s.altSavedCursor = &cursor
+	}
+	if s.altBuffer == nil {
+		s.altBuffer = makeBlankCells(s.Lines, s.Columns)
+		s.altLineWrapped = make(map[int]bool)
+	}
+	s.Buffer, s.altBuffer = s.altBuffer, s.Buffer
+	s.Savepoints, s.altSavepoints = s.altSavepoints, s.Savepoints
+	s.lineWrapped, s.altLineWrapped = s.altLineWrapped, s.lineWrapped
+	s.wrapNext, s.altWrapNext = s.altWrapNext, s.wrapNext
+	s.altActive = true
+	if clear {
+		s.Buffer = makeBlankCells(s.Lines, s.Columns)
+		s.lineWrapped = make(map[int]bool)
+		s.wrapNext = false
+	}
+	if moveCursor {
+		s.CursorPosition(0, 0)
+	}
+	s.markDirtyRange(0, s.Lines-1)
+}
+
+func (s *Screen) exitAltScreen(clear bool, restoreCursor bool) {
+	if !s.altActive {
+		return
+	}
+	s.Buffer, s.altBuffer = s.altBuffer, s.Buffer
+	s.Savepoints, s.altSavepoints = s.altSavepoints, s.Savepoints
+	s.lineWrapped, s.altLineWrapped = s.altLineWrapped, s.lineWrapped
+	s.wrapNext, s.altWrapNext = s.altWrapNext, s.wrapNext
+	s.altActive = false
+	if clear {
+		s.altBuffer = makeBlankCells(s.Lines, s.Columns)
+		s.altLineWrapped = make(map[int]bool)
+		s.altWrapNext = false
+		s.altSavepoints = nil
+	}
+	if restoreCursor && s.altSavedCursor != nil {
+		s.Cursor = *s.altSavedCursor
+	}
+	s.altSavedCursor = nil
+	s.markDirtyRange(0, s.Lines-1)
+}
+
+func (s *Screen) fillRectangle(top, left, bottom, right int, data string) {
+	if top <= 0 {
+		top = 1
+	}
+	if left <= 0 {
+		left = 1
+	}
+	if bottom <= 0 {
+		bottom = s.Lines
+	}
+	if right <= 0 {
+		right = s.Columns
+	}
+	if s.isModeSet(ModeDECOM) && s.Margins != nil {
+		top += s.Margins.Top
+		bottom += s.Margins.Top
+		if s.isModeSet(ModeDECLRMM) {
+			left += s.leftMargin
+			right += s.leftMargin
+		}
+	}
+	if top > bottom || left > right {
+		return
+	}
+	if top < 1 {
+		top = 1
+	}
+	if left < 1 {
+		left = 1
+	}
+	if bottom > s.Lines {
+		bottom = s.Lines
+	}
+	if right > s.Columns {
+		right = s.Columns
+	}
+	for row := top - 1; row <= bottom-1; row++ {
+		for col := left - 1; col <= right-1; col++ {
+			cell := s.Buffer[row][col]
+			if cell.Attr.Protected {
+				continue
+			}
+			cell.Data = data
+			s.Buffer[row][col] = cell
+		}
+		s.Dirty[row] = struct{}{}
+	}
+}
+
+// CopyRectangle copies a rectangle within the screen.
+func (s *Screen) CopyRectangle(srcTop, srcLeft, srcBottom, srcRight, dstTop, dstLeft int) {
+	if srcTop <= 0 {
+		srcTop = 1
+	}
+	if srcLeft <= 0 {
+		srcLeft = 1
+	}
+	if srcBottom <= 0 {
+		srcBottom = s.Lines
+	}
+	if srcRight <= 0 {
+		srcRight = s.Columns
+	}
+	if dstTop <= 0 {
+		dstTop = 1
+	}
+	if dstLeft <= 0 {
+		dstLeft = 1
+	}
+	if s.isModeSet(ModeDECOM) && s.Margins != nil {
+		srcTop += s.Margins.Top
+		srcBottom += s.Margins.Top
+		dstTop += s.Margins.Top
+		if s.isModeSet(ModeDECLRMM) {
+			srcLeft += s.leftMargin
+			srcRight += s.leftMargin
+			dstLeft += s.leftMargin
+		}
+	}
+	if srcTop > srcBottom || srcLeft > srcRight {
+		return
+	}
+	if srcTop < 1 {
+		srcTop = 1
+	}
+	if srcLeft < 1 {
+		srcLeft = 1
+	}
+	if srcBottom > s.Lines {
+		srcBottom = s.Lines
+	}
+	if srcRight > s.Columns {
+		srcRight = s.Columns
+	}
+	height := srcBottom - srcTop + 1
+	width := srcRight - srcLeft + 1
+	if height <= 0 || width <= 0 {
+		return
+	}
+	temp := make([][]Cell, height)
+	for r := 0; r < height; r++ {
+		temp[r] = make([]Cell, width)
+		copy(temp[r], s.Buffer[srcTop-1+r][srcLeft-1:srcLeft-1+width])
+	}
+	for r := 0; r < height; r++ {
+		dstRow := dstTop - 1 + r
+		if dstRow < 0 || dstRow >= s.Lines {
+			continue
+		}
+		for c := 0; c < width; c++ {
+			dstCol := dstLeft - 1 + c
+			if dstCol < 0 || dstCol >= s.Columns {
+				continue
+			}
+			s.Buffer[dstRow][dstCol] = temp[r][c]
+		}
+		s.Dirty[dstRow] = struct{}{}
+	}
+}
+
+// SetSelectionData stores OSC 52 selection data.
+func (s *Screen) SetSelectionData(selection, data string) {
+	if selection == "" {
+		selection = "s0"
+	}
+	if s.selectionData == nil {
+		s.selectionData = make(map[string]string)
+	}
+	s.selectionData[selection] = data
+}
+
+// QuerySelectionData replies with OSC 52 selection data.
+func (s *Screen) QuerySelectionData(selection string) {
+	if selection == "" {
+		selection = "s0"
+	}
+	data := ""
+	if s.selectionData != nil {
+		if value, ok := s.selectionData[selection]; ok {
+			data = value
+		}
+	}
+	s.WriteProcessInput(ControlOSC + "52;" + selection + ";" + data + ControlST)
+}
+
+// SetColor updates a palette color.
+func (s *Screen) SetColor(index int, value string) {
+	normalized, ok := normalizeColorSpec(value)
+	if !ok {
+		return
+	}
+	if s.indexedColors == 0 {
+		s.indexedColors = 16
+	}
+	if index >= s.indexedColors {
+		if s.specialColors == nil {
+			s.specialColors = make(map[int]string)
+		}
+		s.specialColors[index-s.indexedColors] = normalized
+		return
+	}
+	if s.colorPalette == nil {
+		s.colorPalette = make(map[int]string)
+	}
+	s.colorPalette[index] = normalized
+}
+
+// QueryColor queries a palette color.
+func (s *Screen) QueryColor(index int) {
+	value := "rgb:0000/0000/0000"
+	if s.indexedColors == 0 {
+		s.indexedColors = 16
+	}
+	if index >= s.indexedColors {
+		if s.specialColors != nil {
+			if v, ok := s.specialColors[index-s.indexedColors]; ok {
+				value = v
+			}
+		}
+		s.WriteProcessInput(ControlOSC + fmt.Sprintf("4;%d;%s", index, value) + ControlST)
+		return
+	}
+	if s.colorPalette != nil {
+		if v, ok := s.colorPalette[index]; ok {
+			value = v
+		}
+	}
+	s.WriteProcessInput(ControlOSC + fmt.Sprintf("4;%d;%s", index, value) + ControlST)
+}
+
+// ResetColor resets palette colors.
+func (s *Screen) ResetColor(index int, all bool) {
+	if s.colorPalette == nil {
+		return
+	}
+	if all {
+		s.colorPalette = make(map[int]string)
+		return
+	}
+	delete(s.colorPalette, index)
+}
+
+// SetDynamicColor updates a dynamic color slot.
+func (s *Screen) SetDynamicColor(index int, value string) {
+	normalized, ok := normalizeColorSpec(value)
+	if !ok {
+		return
+	}
+	if s.dynamicColors == nil {
+		s.dynamicColors = make(map[int]string)
+	}
+	s.dynamicColors[index] = normalized
+}
+
+// QueryDynamicColor queries a dynamic color slot.
+func (s *Screen) QueryDynamicColor(index int) {
+	value := "rgb:0000/0000/0000"
+	if s.dynamicColors != nil {
+		if v, ok := s.dynamicColors[index]; ok {
+			value = v
+		}
+	}
+	s.WriteProcessInput(ControlOSC + fmt.Sprintf("%d;%s", index, value) + ControlST)
+}
+
+// SetSpecialColor updates a special color slot.
+func (s *Screen) SetSpecialColor(index int, value string) {
+	normalized, ok := normalizeColorSpec(value)
+	if !ok {
+		return
+	}
+	if s.specialColors == nil {
+		s.specialColors = make(map[int]string)
+	}
+	s.specialColors[index] = normalized
+}
+
+// QuerySpecialColor queries a special color slot.
+func (s *Screen) QuerySpecialColor(index int) {
+	value := "rgb:0000/0000/0000"
+	if s.specialColors != nil {
+		if v, ok := s.specialColors[index]; ok {
+			value = v
+		}
+	}
+	s.WriteProcessInput(ControlOSC + fmt.Sprintf("5;%d;%s", index, value) + ControlST)
+}
+
+// ResetSpecialColor resets special color slots.
+func (s *Screen) ResetSpecialColor(index int, all bool) {
+	if s.specialColors == nil {
+		return
+	}
+	if all {
+		s.specialColors = make(map[int]string)
+		return
+	}
+	delete(s.specialColors, index)
+}
+
+// ResetDynamicColor resets dynamic color slots.
+func (s *Screen) ResetDynamicColor(index int, all bool) {
+	if s.dynamicColors == nil {
+		return
+	}
+	if all {
+		s.dynamicColors = make(map[int]string)
+		return
+	}
+	delete(s.dynamicColors, index)
+}
+
+var colorSpecAliases = map[string]string{
+	"rgbi:1/1/1":         "ffff/ffff/ffff",
+	"rgbi:0.5/0.5/0.5":   "c1c1/bbbb/bbbb",
+	"CIEXYZ:1/1/1":       "ffff/ffff/ffff",
+	"CIEXYZ:0.5/0.5/0.5": "dddd/b5b5/a0a0",
+	"CIEuvY:1/1/1":       "ffff/ffff/ffff",
+	"CIEuvY:0.5/0.5/0.5": "ffff/a3a3/aeae",
+	"CIExyY:1/1/1":       "ffff/ffff/ffff",
+	"CIExyY:0.5/0.5/0.5": "f7f7/b3b3/0e0e",
+	"CIELab:1/1/1":       "6c6c/6767/6767",
+	"CIELab:0.5/0.5/0.5": "5252/4f4f/4f4f",
+	"CIELuv:1/1/1":       "1616/1414/0e0e",
+	"CIELuv:0.5/0.5/0.5": "0e0e/1313/0e0e",
+	"TekHVC:1/1/1":       "1a1a/1313/0f0f",
+	"TekHVC:0.5/0.5/0.5": "1111/1313/0e0e",
+}
+
+func normalizeColorSpec(spec string) (string, bool) {
+	if alias, ok := colorSpecAliases[spec]; ok {
+		return "rgb:" + alias, true
+	}
+	if strings.HasPrefix(spec, "rgb:") {
+		parts := strings.Split(spec[4:], "/")
+		if len(parts) != 3 {
+			return "", false
+		}
+		return fmt.Sprintf("rgb:%s/%s/%s", normalizeHexComponent(parts[0]), normalizeHexComponent(parts[1]), normalizeHexComponent(parts[2])), true
+	}
+	if strings.HasPrefix(spec, "#") {
+		hex := spec[1:]
+		if len(hex)%3 != 0 {
+			return "", false
+		}
+		size := len(hex) / 3
+		if size < 1 || size > 4 {
+			return "", false
+		}
+		return fmt.Sprintf("rgb:%s/%s/%s", normalizeHexComponent(hex[0:size]), normalizeHexComponent(hex[size:2*size]), normalizeHexComponent(hex[2*size:])), true
+	}
+	return "", false
+}
+
+func normalizeHexComponent(component string) string {
+	value, err := strconv.ParseInt(component, 16, 32)
+	if err != nil {
+		return "0000"
+	}
+	byteValue := 0
+	switch len(component) {
+	case 1:
+		byteValue = int(value) << 4
+	case 2:
+		byteValue = int(value)
+	case 3:
+		byteValue = int(value) >> 4
+	default:
+		byteValue = int(value) >> 8
+	}
+	if byteValue < 0 {
+		byteValue = 0
+	}
+	if byteValue > 255 {
+		byteValue = 255
+	}
+	full := (byteValue << 8) | byteValue
+	return fmt.Sprintf("%04x", full)
+}
+
+func (s *Screen) applyTitleModes(param string) string {
+	value := param
+	if s.titleHexInput {
+		decoded, ok := decodeHexString(param)
+		if ok {
+			value = decoded
+		}
+	}
+	if s.titleHexOutput {
+		value = encodeHexString(value)
+	}
+	return value
+}
+
+func decodeHexString(input string) (string, bool) {
+	if len(input)%2 != 0 {
+		return "", false
+	}
+	bytes := make([]byte, len(input)/2)
+	for i := 0; i < len(input); i += 2 {
+		b, err := strconv.ParseUint(input[i:i+2], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		bytes[i/2] = byte(b)
+	}
+	return string(bytes), true
+}
+
+func encodeHexString(input string) string {
+	var b strings.Builder
+	for _, r := range []byte(input) {
+		fmt.Fprintf(&b, "%02x", r)
+	}
+	return b.String()
+}
+
+// SetTitleMode updates title query/set behavior.
+func (s *Screen) SetTitleMode(params []int, reset bool) {
+	if len(params) == 0 {
+		return
+	}
+	apply := func(param int) {
+		switch param {
+		case 0:
+			if reset {
+				s.titleHexInput = false
+			} else {
+				s.titleHexInput = true
+			}
+		case 2:
+			s.titleHexInput = false
+		case 1:
+			if reset {
+				s.titleHexOutput = false
+			} else {
+				s.titleHexOutput = true
+			}
+		case 3:
+			s.titleHexOutput = false
+		}
+	}
+	for _, param := range params {
+		apply(param)
+	}
+}
+
+// SetConformance updates the VT conformance level.
+func (s *Screen) SetConformance(level int, sevenBit int) {
+	if level >= 60 {
+		level -= 60
+	}
+	if level <= 0 {
+		return
+	}
+	s.Reset()
+	s.Savepoints = nil
+	s.conformanceLevel = level
+	s.conformanceExplicit = true
+	_ = sevenBit
+}
+
+// WindowOp handles window operations.
+func (s *Screen) WindowOp(params []int) {
+	if len(params) == 0 {
+		return
+	}
+	switch params[0] {
+	case 1:
+		s.windowIconified = false
+	case 2:
+		s.windowIconified = true
+	case 3:
+		if len(params) > 1 && params[1] >= 0 {
+			s.windowPosX = params[1]
+		}
+		if len(params) > 2 && params[2] >= 0 {
+			s.windowPosY = params[2]
+		}
+		if len(params) == 2 {
+			s.windowPosY = 0
+		}
+	case 4:
+		if len(params) > 1 && params[1] >= 0 {
+			height := params[1]
+			if height == 0 {
+				height = s.screenPixelHeight
+			}
+			if height > 0 {
+				s.windowPixelHeight = height
+			}
+		}
+		if len(params) > 2 && params[2] >= 0 {
+			width := params[2]
+			if width == 0 {
+				width = s.screenPixelWidth
+			}
+			if width > 0 {
+				s.windowPixelWidth = width
+			}
+		}
+	case 8:
+		if len(params) == 1 {
+			if params[0] > 0 {
+				s.Resize(params[0], s.Columns)
+			}
+			return
+		}
+		if len(params) == 2 {
+			if params[1] > 0 {
+				s.Resize(params[1], s.Columns)
+			}
+			return
+		}
+		rows := s.Lines
+		cols := s.Columns
+		if len(params) > 1 && params[1] >= 0 {
+			rows = params[1]
+			if rows == 0 {
+				rows = s.Lines
+			}
+		}
+		if len(params) > 2 && params[2] >= 0 {
+			cols = params[2]
+			if cols == 0 {
+				cols = s.Columns
+			}
+		}
+		if rows > 0 && cols > 0 {
+			s.Resize(rows, cols)
+		}
+	case 9:
+		// maximize - no-op for now
+	case 10:
+		// fullscreen - no-op for now
+	case 11:
+		state := 1
+		if s.windowIconified {
+			state = 2
+		}
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("%dt", state))
+	case 13:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("3;%d;%dt", s.windowPosX, s.windowPosY))
+	case 14:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("4;%d;%dt", s.windowPixelHeight, s.windowPixelWidth))
+	case 15:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("5;%d;%dt", s.screenPixelHeight, s.screenPixelWidth))
+	case 16:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("6;%d;%dt", s.charPixelHeight, s.charPixelWidth))
+	case 18:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("8;%d;%dt", s.Lines, s.Columns))
+	case 19:
+		s.WriteProcessInput(ControlCSI + fmt.Sprintf("9;%d;%dt", s.Lines, s.Columns))
+	case 20:
+		s.WriteProcessInput(ControlOSC + "L" + s.IconName + ControlST)
+	case 21:
+		s.WriteProcessInput(ControlOSC + "l" + s.Title + ControlST)
+	case 22:
+		sub := 0
+		if len(params) > 1 {
+			sub = params[1]
+		}
+		switch sub {
+		case 0:
+			s.titleStack = append(s.titleStack, s.Title)
+			s.iconStack = append(s.iconStack, s.IconName)
+		case 1:
+			s.iconStack = append(s.iconStack, s.IconName)
+		case 2:
+			s.titleStack = append(s.titleStack, s.Title)
+		}
+	case 23:
+		sub := 0
+		if len(params) > 1 {
+			sub = params[1]
+		}
+		switch sub {
+		case 0:
+			if len(s.titleStack) > 0 {
+				s.Title = s.titleStack[len(s.titleStack)-1]
+				s.titleStack = s.titleStack[:len(s.titleStack)-1]
+			}
+			if len(s.iconStack) > 0 {
+				s.IconName = s.iconStack[len(s.iconStack)-1]
+				s.iconStack = s.iconStack[:len(s.iconStack)-1]
+			}
+		case 1:
+			if len(s.iconStack) > 0 {
+				s.IconName = s.iconStack[len(s.iconStack)-1]
+				s.iconStack = s.iconStack[:len(s.iconStack)-1]
+			}
+			s.titleStack = nil
+		case 2:
+			if len(s.titleStack) > 0 {
+				s.Title = s.titleStack[len(s.titleStack)-1]
+				s.titleStack = s.titleStack[:len(s.titleStack)-1]
+			}
+			s.iconStack = nil
+		}
+	}
+}
+
+// Debug handles debug control sequences.
+func (s *Screen) Debug(_ ...interface{}) {
+}
+
+// DefineCharset executes the define charset operation.
+func (s *Screen) DefineCharset(code, mode string) {
+	mapping, ok := charsetMaps[code]
+	if !ok {
+		return
+	}
+	if mode == "(" {
+		s.G0 = mapping
+	} else if mode == ")" {
+		s.G1 = mapping
+	}
+}
+
+// ShiftIn selects the G0 character set.
+func (s *Screen) ShiftIn() {
+	s.Charset = 0
+}
+
+// ShiftOut selects the G1 character set.
+func (s *Screen) ShiftOut() {
+	s.Charset = 1
+}
+
+// SetMargins sets the top and bottom scrolling margins.
+func (s *Screen) SetMargins(params ...int) {
+	top := 0
+	bottom := 0
+	if len(params) > 0 {
+		top = params[0]
+	}
+	if len(params) > 1 {
+		bottom = params[1]
+	}
+	if (top == 0 || top == -1) && bottom == 0 {
+		s.Margins = nil
+		return
+	}
+	margins := s.Margins
+	if margins == nil {
+		margins = &Margins{Top: 0, Bottom: s.Lines - 1}
+	}
+	if top == 0 {
+		top = margins.Top + 1
+	}
+	if bottom == 0 {
+		bottom = margins.Bottom + 1
+	}
+
+	top = maxInt(0, minInt(top-1, s.Lines-1))
+	bottom = maxInt(0, minInt(bottom-1, s.Lines-1))
+
+	if bottom-top >= 1 {
+		s.Margins = &Margins{Top: top, Bottom: bottom}
+		s.CursorPosition(0, 0)
+	}
+}
+
+// SetLeftRightMargins sets left/right scrolling margins.
+func (s *Screen) SetLeftRightMargins(left, right int) {
+	if !s.isModeSet(ModeDECLRMM) {
+		return
+	}
+	if (left == 0 || left == -1) && right == 0 {
+		s.leftMargin = 0
+		s.rightMargin = s.Columns - 1
+		s.CursorPosition(0, 0)
+		return
+	}
+	if left == 0 {
+		left = 1
+	}
+	if right == 0 {
+		right = s.Columns
+	}
+	left = maxInt(1, minInt(left, s.Columns))
+	right = maxInt(1, minInt(right, s.Columns))
+	if right-left >= 1 {
+		s.leftMargin = left - 1
+		s.rightMargin = right - 1
+		s.CursorPosition(0, 0)
+	}
+}
+
+// SetMode enables one or more terminal modes.
+func (s *Screen) SetMode(modes []int, private bool) {
+	for _, mode := range modes {
+		s.applySetMode(mode, private)
+	}
+}
+
+// ResetMode disables one or more terminal modes.
+func (s *Screen) ResetMode(modes []int, private bool) {
+	for _, mode := range modes {
+		s.applyResetMode(mode, private)
+	}
+}
+
+func (s *Screen) applySetMode(mode int, private bool) {
+	if private {
+		mode = mode << 5
+	}
+	if s.Mode == nil {
+		s.Mode = make(map[int]struct{})
+	}
+	s.Mode[mode] = struct{}{}
+	if mode == ModeDECLRMM && s.conformanceExplicit && s.conformanceLevel < 4 {
+		delete(s.Mode, mode)
+		return
+	}
+	if mode == ModeDECNCSM && s.conformanceExplicit && s.conformanceLevel < 5 {
+		delete(s.Mode, mode)
+		return
+	}
+
+	if mode == ModeDECCOLM {
+		if !s.isModeSet(ModeAllow80To132) {
+			return
+		}
+		saved := s.Columns
+		s.SavedColumns = &saved
+		s.Resize(s.Lines, 132)
+		if !s.isModeSet(ModeDECNCSM) {
+			s.EraseInDisplay(2, false)
+		}
+		s.CursorPosition(0, 0)
+	}
+
+	if mode == ModeDECSaveCursor {
+		s.SaveCursorDEC()
+	}
+
+	if mode == ModeAltBuf || mode == ModeAltBufOpt || mode == ModeAltBufCursor {
+		s.enterAltScreen(mode == ModeAltBufCursor, mode == ModeAltBufCursor, mode == ModeAltBufCursor)
+	}
+
+	if mode == ModeDECOM {
+		s.CursorPosition(0, 0)
+	}
+
+	if mode == ModeDECSCNM {
+		s.markDirtyRange(0, s.Lines-1)
+		for row := 0; row < s.Lines; row++ {
+			for col := 0; col < s.Columns; col++ {
+				cell := s.Buffer[row][col]
+				cell.Attr.Reverse = true
+				s.Buffer[row][col] = cell
+			}
+		}
+		s.SelectGraphicRendition([]int{7}, false)
+	}
+
+	if mode == ModeDECTCEM {
+		s.Cursor.Hidden = false
+	}
+
+	if mode == ModeDECLRMM {
+		s.leftMargin = 0
+		s.rightMargin = s.Columns - 1
+		s.CursorPosition(0, 0)
+	}
+}
+
+func (s *Screen) applyResetMode(mode int, private bool) {
+	if private {
+		mode = mode << 5
+	}
+	delete(s.Mode, mode)
+
+	if mode == ModeDECCOLM {
+		if s.Columns == 132 && s.SavedColumns != nil {
+			if !s.isModeSet(ModeAllow80To132) {
+				return
+			}
+			s.Resize(s.Lines, *s.SavedColumns)
+			s.SavedColumns = nil
+		}
+		if !s.isModeSet(ModeDECNCSM) {
+			s.EraseInDisplay(2, false)
+		}
+		s.CursorPosition(0, 0)
+	}
+
+	if mode == ModeDECSaveCursor {
+		s.RestoreCursorDEC()
+	}
+
+	if mode == ModeAltBuf {
+		s.exitAltScreen(false, false)
+	}
+	if mode == ModeAltBufOpt {
+		s.exitAltScreen(true, false)
+	}
+	if mode == ModeAltBufCursor {
+		s.exitAltScreen(true, true)
+	}
+
+	if mode == ModeDECOM {
+		s.CursorPosition(0, 0)
+	}
+
+	if mode == ModeDECSCNM {
+		s.markDirtyRange(0, s.Lines-1)
+		for row := 0; row < s.Lines; row++ {
+			for col := 0; col < s.Columns; col++ {
+				cell := s.Buffer[row][col]
+				cell.Attr.Reverse = false
+				s.Buffer[row][col] = cell
+			}
+		}
+		s.SelectGraphicRendition([]int{27}, false)
+	}
+
+	if mode == ModeDECTCEM {
+		s.Cursor.Hidden = true
+	}
+
+	if mode == ModeDECLRMM {
+		s.leftMargin = 0
+		s.rightMargin = s.Columns - 1
+	}
+}
+
+func (s *Screen) defaultAttr() Attr {
+	reverse := s.isModeSet(ModeDECSCNM)
+	return Attr{
+		Fg:      Color{Name: "default", Mode: ColorDefault},
+		Bg:      Color{Name: "default", Mode: ColorDefault},
+		Reverse: reverse,
+	}
+}
+
+func (s *Screen) defaultCell() Cell {
+	return Cell{Data: " ", Attr: s.defaultAttr()}
+}
+
+func (s *Screen) copyRowSegment(srcRow, dstRow, left, right int) {
+	if srcRow < 0 || srcRow >= s.Lines || dstRow < 0 || dstRow >= s.Lines {
+		return
+	}
+	for col := left; col <= right && col < s.Columns; col++ {
+		if col < 0 {
+			continue
+		}
+		s.Buffer[dstRow][col] = s.Buffer[srcRow][col]
+	}
+}
+
+func (s *Screen) clearRowSegment(row, left, right int) {
+	if row < 0 || row >= s.Lines {
+		return
+	}
+	for col := left; col <= right && col < s.Columns; col++ {
+		if col < 0 {
+			continue
+		}
+		s.Buffer[row][col] = s.defaultCell()
+	}
+}
+
+func (s *Screen) shiftHorizontal(left, right, top, bottom, direction int) {
+	if left < 0 {
+		left = 0
+	}
+	if right >= s.Columns {
+		right = s.Columns - 1
+	}
+	if left > right {
+		return
+	}
+	for row := top; row <= bottom && row < s.Lines; row++ {
+		if row < 0 {
+			continue
+		}
+		if direction < 0 {
+			for col := left; col < right; col++ {
+				s.Buffer[row][col] = s.Buffer[row][col+1]
+			}
+			s.Buffer[row][right] = s.defaultCell()
+		} else {
+			for col := right; col > left; col-- {
+				s.Buffer[row][col] = s.Buffer[row][col-1]
+			}
+			s.Buffer[row][left] = s.defaultCell()
+		}
+	}
+}
+
+func (s *Screen) scrollRegion() (int, int) {
+	if s.Margins != nil {
+		return s.Margins.Top, s.Margins.Bottom
+	}
+	return 0, s.Lines - 1
+}
+
+func (s *Screen) horizontalMargins() (int, int) {
+	if s.isModeSet(ModeDECLRMM) {
+		return s.leftMargin, s.rightMargin
+	}
+	return 0, s.Columns - 1
+}
+
+func (s *Screen) canScrollHorizontal() bool {
+	if !s.isModeSet(ModeDECLRMM) {
+		return true
+	}
+	left, right := s.horizontalMargins()
+	return s.Cursor.Col >= left && s.Cursor.Col <= right
+}
+
+func (s *Screen) ensureHB() {
+	if s.isModeSet(ModeDECLRMM) {
+		left, right := s.horizontalMargins()
+		switch {
+		case s.Cursor.Col < left:
+			s.Cursor.Col = maxInt(0, s.Cursor.Col)
+		case s.Cursor.Col > right:
+			s.Cursor.Col = minInt(s.Cursor.Col, s.Columns-1)
+		default:
+			s.Cursor.Col = minInt(maxInt(s.Cursor.Col, left), right)
+		}
+		return
+	}
+	if s.Cursor.Col < 0 {
+		s.Cursor.Col = 0
+	}
+	if s.Cursor.Col >= s.Columns {
+		s.Cursor.Col = s.Columns - 1
+	}
+}
+
+func (s *Screen) ensureVB(useMargins bool) {
+	if (useMargins || s.isModeSet(ModeDECOM)) && s.Margins != nil {
+		if s.Cursor.Row < s.Margins.Top {
+			s.Cursor.Row = s.Margins.Top
+		}
+		if s.Cursor.Row > s.Margins.Bottom {
+			s.Cursor.Row = s.Margins.Bottom
+		}
+		return
+	}
+	if s.Cursor.Row < 0 {
+		s.Cursor.Row = 0
+	}
+	if s.Cursor.Row >= s.Lines {
+		s.Cursor.Row = s.Lines - 1
+	}
+}
+
+func (s *Screen) isModeSet(mode int) bool {
+	_, ok := s.Mode[mode]
+	return ok
+}
+
+func (s *Screen) translate(data string) string {
+	mapping := s.G0
+	if s.Charset == 1 {
+		mapping = s.G1
+	}
+	var b strings.Builder
+	for _, r := range data {
+		if r >= 0 && r < 256 {
+			b.WriteRune(mapping[r])
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func sortedStops(stops map[int]struct{}) []int {
+	values := make([]int, 0, len(stops))
+	for value := range stops {
+		values = append(values, value)
+	}
+	for i := 0; i < len(values)-1; i++ {
+		for j := i + 1; j < len(values); j++ {
+			if values[j] < values[i] {
+				values[i], values[j] = values[j], values[i]
+			}
+		}
+	}
+	return values
+}
+
+func colorFromName(name string, mode ColorMode, index uint8) Color {
+	if name == "default" {
+		return Color{Name: name, Mode: ColorDefault}
+	}
+	return Color{Name: name, Mode: mode, Index: index}
+}
+
+func blankLine(cols int, cell Cell) []Cell {
+	line := make([]Cell, cols)
+	for col := 0; col < cols; col++ {
+		line[col] = cell
+	}
+	return line
+}
+
+func makeBlankCells(lines, cols int) [][]Cell {
+	cells := make([][]Cell, lines)
+	cell := Cell{Data: " ", Attr: Attr{Fg: Color{Name: "default", Mode: ColorDefault}, Bg: Color{Name: "default", Mode: ColorDefault}}}
+	for row := 0; row < lines; row++ {
+		cells[row] = blankLine(cols, cell)
+	}
+	return cells
+}
+
+func (s *Screen) markDirtyRange(start, end int) {
+	if start < 0 {
+		start = 0
+	}
+	if end >= s.Lines {
+		end = s.Lines - 1
+	}
+	for row := start; row <= end; row++ {
+		s.Dirty[row] = struct{}{}
+	}
+}
+
+func isCombiningCluster(cluster string) bool {
+	if cluster == "" {
+		return false
+	}
+	for _, r := range cluster {
+		if !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Me, r) {
+			return false
+		}
+	}
+	return true
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

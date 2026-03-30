@@ -14,7 +14,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
-	"github.com/rcarmo/go-te/pkg/te"
+	"termd/pkg/te"
 )
 
 // shellSGR converts ansi.SGR() output to shell printf \e notation.

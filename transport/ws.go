@@ -14,6 +14,7 @@ import (
 // connections to WebSocket. Each accepted WebSocket is wrapped as a net.Conn.
 type wsListener struct {
 	httpServer *http.Server
+	tcpLn      net.Listener
 	conns      chan net.Conn
 	addr       net.Addr
 	closeOnce  sync.Once
@@ -21,13 +22,17 @@ type wsListener struct {
 }
 
 func listenWS(host string) (net.Listener, error) {
-	// Bind the TCP listener first to get the assigned port.
 	tcpLn, err := net.Listen("tcp", host)
 	if err != nil {
 		return nil, fmt.Errorf("ws listen: %w", err)
 	}
+	return listenWSFromListener(tcpLn)
+}
 
+// listenWSFromListener creates a WebSocket listener from an existing TCP listener.
+func listenWSFromListener(tcpLn net.Listener) (net.Listener, error) {
 	wl := &wsListener{
+		tcpLn: tcpLn,
 		conns: make(chan net.Conn, 16),
 		addr:  tcpLn.Addr(),
 		done:  make(chan struct{}),

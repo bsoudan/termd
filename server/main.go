@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -71,6 +72,11 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 				Usage:   "enable debug logging",
 				Sources: cli.EnvVars("TERMD_DEBUG"),
 			},
+			&cli.IntFlag{
+				Name:   "upgrade-fd",
+				Usage:  "internal: FD for live upgrade handoff",
+				Hidden: true,
+			},
 		},
 		Action: runServer,
 		Commands: []*cli.Command{
@@ -101,6 +107,11 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 				SkipFlagParsing: true,
 				Action:          cmdTail,
 			},
+			{
+				Name:  "live-upgrade",
+				Usage: "upgrade the running termd server without dropping sessions",
+				Action: cmdLiveUpgrade,
+			},
 		},
 	}
 
@@ -129,6 +140,22 @@ func listenSpecs(cmd *cli.Command, cfg config.ServerConfig) ([]string, error) {
 	return specs, nil
 }
 
+func sshConfig(cmd *cli.Command, cfg config.ServerConfig) transport.SSHListenerConfig {
+	sshHostKey := cmd.String("ssh-host-key")
+	if sshHostKey == "" {
+		sshHostKey = cfg.SSH.HostKey
+	}
+	sshAuthKeys := cmd.String("ssh-auth-keys")
+	if sshAuthKeys == "" {
+		sshAuthKeys = cfg.SSH.AuthorizedKeys
+	}
+	return transport.SSHListenerConfig{
+		HostKeyPath:        sshHostKey,
+		AuthorizedKeysPath: sshAuthKeys,
+		NoAuth:             cmd.Bool("ssh-no-auth") || cfg.SSH.NoAuth,
+	}
+}
+
 func runServer(_ context.Context, cmd *cli.Command) error {
 	// Load config file (provides defaults for unset flags)
 	cfg, err := config.LoadServerConfig(cmd.String("config"))
@@ -146,20 +173,17 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 
 	transport.InstallStackDump("termd")
 
+	sshCfg := sshConfig(cmd, cfg)
+
+	// Live upgrade receiver mode.
+	if upgradeFD := cmd.Int("upgrade-fd"); upgradeFD > 0 {
+		return runUpgradeReceiver(int(upgradeFD), sshCfg)
+	}
+
 	specs, err := listenSpecs(cmd, cfg)
 	if err != nil {
 		return err
 	}
-
-	sshHostKey := cmd.String("ssh-host-key")
-	if sshHostKey == "" {
-		sshHostKey = cfg.SSH.HostKey
-	}
-	sshAuthKeys := cmd.String("ssh-auth-keys")
-	if sshAuthKeys == "" {
-		sshAuthKeys = cfg.SSH.AuthorizedKeys
-	}
-	sshNoAuth := cmd.Bool("ssh-no-auth") || cfg.SSH.NoAuth
 
 	listeners := make([]net.Listener, 0, len(specs))
 	for _, spec := range specs {
@@ -167,11 +191,7 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 		var err error
 		if strings.HasPrefix(spec, "ssh:") || strings.HasPrefix(spec, "ssh://") {
 			addr := strings.TrimPrefix(strings.TrimPrefix(spec, "ssh:"), "//")
-			ln, err = transport.ListenSSH(addr, transport.SSHListenerConfig{
-				HostKeyPath:        sshHostKey,
-				AuthorizedKeysPath: sshAuthKeys,
-				NoAuth:             sshNoAuth,
-			})
+			ln, err = transport.ListenSSH(addr, sshCfg)
 		} else {
 			ln, err = transport.Listen(spec)
 		}
@@ -191,12 +211,98 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 	defer disc.shutdown()
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR2)
 
 	go func() {
-		<-sigCh
-		slog.Info("received shutdown signal")
-		srv.Shutdown()
+		for sig := range sigCh {
+			switch sig {
+			case syscall.SIGUSR2:
+				slog.Info("received upgrade signal (SIGUSR2)")
+				if err := srv.HandleUpgrade(specs, sshCfg); err != nil {
+					slog.Error("live upgrade failed", "err", err)
+					continue // server keeps running
+				}
+				// Upgrade succeeded — stop the server.
+				srv.Shutdown()
+				return
+			default:
+				slog.Info("received shutdown signal")
+				srv.Shutdown()
+				return
+			}
+		}
+	}()
+
+	srv.Run()
+	return nil
+}
+
+func cmdLiveUpgrade(_ context.Context, cmd *cli.Command) error {
+	cfg, err := config.LoadServerConfig(cmd.String("config"))
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
+	specs, err := listenSpecs(cmd, cfg)
+	if err != nil {
+		return err
+	}
+
+	// Connect to the server using the first listen spec.
+	conn, err := transport.Dial(specs[0])
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", specs[0], err)
+	}
+	defer conn.Close()
+
+	// Read the Identify message to get the server PID.
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return fmt.Errorf("read identify: %w", err)
+	}
+	var ident struct {
+		Pid int `json:"pid"`
+	}
+	if err := json.Unmarshal(buf[:n], &ident); err != nil {
+		return fmt.Errorf("parse identify: %w", err)
+	}
+	if ident.Pid == 0 {
+		return fmt.Errorf("server did not report its PID")
+	}
+
+	fmt.Fprintf(os.Stderr, "sending SIGUSR2 to termd (pid %d)...\n", ident.Pid)
+	if err := syscall.Kill(ident.Pid, syscall.SIGUSR2); err != nil {
+		return fmt.Errorf("kill -USR2 %d: %w", ident.Pid, err)
+	}
+	fmt.Fprintf(os.Stderr, "upgrade signal sent\n")
+	return nil
+}
+
+func runUpgradeReceiver(fd int, sshCfg transport.SSHListenerConfig) error {
+	slog.Info("starting in upgrade receiver mode", "fd", fd)
+	srv, listeners, err := RecvUpgrade(fd, sshCfg)
+	if err != nil {
+		return fmt.Errorf("upgrade recv: %w", err)
+	}
+	_ = listeners // listeners are already inside srv
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR2)
+
+	go func() {
+		for sig := range sigCh {
+			switch sig {
+			case syscall.SIGUSR2:
+				slog.Info("received upgrade signal (SIGUSR2)")
+				// TODO: support chained upgrades
+				slog.Warn("chained upgrades not yet supported; ignoring")
+			default:
+				slog.Info("received shutdown signal")
+				srv.Shutdown()
+				return
+			}
+		}
 	}()
 
 	srv.Run()
