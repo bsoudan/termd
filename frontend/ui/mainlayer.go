@@ -42,7 +42,8 @@ type MainLayer struct {
 	upgradeServerVer    string
 	upgradeClientAvail  bool
 	upgradeClientVer    string
-	deferredCmd         tea.Cmd
+
+	tasks *TaskRunner
 
 	termWidth  int
 	termHeight int
@@ -297,15 +298,36 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 		return resp, cmd, true
 
 	case "upgrade":
-		m.checkForUpgrades(func() {
-			if !m.upgradeServerAvail && !m.upgradeClientAvail {
-				m.deferredCmd = ShowToast("Already up to date", 3*time.Second)
+		m.tasks.Run(func(t *Handle) {
+			// Fresh upgrade check.
+			resp, err := t.Request(protocol.UpgradeCheckRequest{
+				ClientVersion: m.version,
+				OS:            runtime.GOOS,
+				Arch:          runtime.GOARCH,
+			})
+			if err != nil {
 				return
 			}
-			ul := NewUpgradeLayer(m.server, m.requestFn, m.version,
-				m.upgradeServerAvail, m.upgradeServerVer,
-				m.upgradeClientAvail, m.upgradeClientVer)
-			m.deferredCmd = func() tea.Msg { return PushLayerMsg{Layer: ul} }
+			ucr, ok := resp.(protocol.UpgradeCheckResponse)
+			if !ok || ucr.Error {
+				return
+			}
+			m.upgradeServerAvail = ucr.ServerAvailable
+			m.upgradeServerVer = ucr.ServerVersion
+			m.upgradeClientAvail = ucr.ClientAvailable
+			m.upgradeClientVer = ucr.ClientVersion
+
+			if !ucr.ServerAvailable && !ucr.ClientAvailable {
+				toast := &ToastLayer{id: nextToastID + 1, text: "Already up to date"}
+				nextToastID++
+				t.PushLayer(toast)
+				time.Sleep(3 * time.Second)
+				t.PopLayer(toast)
+				return
+			}
+			upgradeTask(t, m.server,
+				ucr.ServerAvailable, ucr.ServerVersion,
+				ucr.ClientAvailable, ucr.ClientVersion, m.version)
 		})
 		return nil, nil, true
 
@@ -519,7 +541,7 @@ func (m *MainLayer) UpgradeAvailable() bool {
 	return m.upgradeServerAvail || m.upgradeClientAvail
 }
 
-func (m *MainLayer) checkForUpgrades(done ...func()) {
+func (m *MainLayer) checkForUpgrades() {
 	m.requestFn(protocol.UpgradeCheckRequest{
 		ClientVersion: m.version,
 		OS:            runtime.GOOS,
@@ -530,9 +552,6 @@ func (m *MainLayer) checkForUpgrades(done ...func()) {
 			m.upgradeServerVer = resp.ServerVersion
 			m.upgradeClientAvail = resp.ClientAvailable
 			m.upgradeClientVer = resp.ClientVersion
-		}
-		if len(done) > 0 && done[0] != nil {
-			done[0]()
 		}
 	})
 }

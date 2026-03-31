@@ -20,6 +20,7 @@ type Model struct {
 	layers   []Layer
 	registry *Registry
 	req      *requestState
+	Tasks    *TaskRunner
 	Detached bool
 	initDone chan struct{}
 }
@@ -37,17 +38,20 @@ func NewModel(s *Server, pipeW io.Writer, registry *Registry, ring *termlog.LogR
 	}
 	main := NewMainLayer(s, pipeW, requestFn, registry, ring, endpoint, version, changelog, hostname, sessionName, connectFn)
 	main.swapServerFn = func(newSrv *Server) { currentServer = newSrv }
+	tasks := NewTaskRunner(requestFn)
+	main.tasks = tasks
 	return Model{
 		layers:   []Layer{main},
 		registry: registry,
 		req:      req,
+		Tasks:    tasks,
 		initDone: make(chan struct{}),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
 	close(m.initDone)
-	return m.layers[0].(*MainLayer).Init()
+	return tea.Batch(m.layers[0].(*MainLayer).Init(), m.Tasks.ListenCmd())
 }
 
 // InitDone returns a channel that is closed when Init completes.
@@ -64,21 +68,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if reply, ok := m.req.pending[pmsg.ReqID]; ok {
 				delete(m.req.pending, pmsg.ReqID)
 				reply(pmsg.Payload)
-				// Check if the reply callback set a deferred command
-				// (e.g. upgrade check opening the upgrade layer).
-				main := m.layers[0].(*MainLayer)
-				if cmd := main.deferredCmd; cmd != nil {
-					main.deferredCmd = nil
-					return m, cmd
-				}
 				return m, nil
 			}
 		}
 		msg = pmsg.Payload
 	}
 
+	// Route task messages from task goroutines.
+	if tmsg, ok := msg.(taskMsg); ok {
+		cmd := m.Tasks.HandleMsg(tmsg)
+		return m, tea.Batch(cmd, m.Tasks.ListenCmd())
+	}
+
+	// Check task WaitFor filters before layer iteration.
+	if m.Tasks.CheckFilters(msg) {
+		return m, nil // message consumed by a task
+	}
+
 	if push, ok := msg.(PushLayerMsg); ok {
 		m.layers = append(m.layers, push.Layer)
+		return m, nil
+	}
+
+	if pop, ok := msg.(popLayerMsg); ok {
+		for i, l := range m.layers {
+			if l == pop.layer {
+				m.layers = slices.Delete(m.layers, i, i+1)
+				break
+			}
+		}
 		return m, nil
 	}
 
@@ -125,7 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) hasFocusLayer(main *MainLayer) bool {
 	for i := 1; i < len(m.layers); i++ {
 		switch m.layers[i].(type) {
-		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer, *CommandPaletteLayer, *UpgradeLayer:
+		case *CommandLayer, *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer, *CommandPaletteLayer, *Overlay:
 			return true
 		}
 	}
@@ -208,7 +226,7 @@ func (m Model) View() tea.View {
 			}
 		}
 		switch m.layers[i].(type) {
-		case *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer, *CommandPaletteLayer, *ConnectLayer, *UpgradeLayer:
+		case *ScrollableLayer, *StatusLayer, *HelpLayer, *ProgramPickerLayer, *SessionPickerLayer, *SessionNameLayer, *CommandPaletteLayer, *ConnectLayer, *Overlay:
 			hasOverlay = true
 		}
 	}
