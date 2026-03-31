@@ -165,6 +165,8 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		m.endpoint = msg.Endpoint
 		m.connStatus = "connected"
 		session := NewSessionLayer(m.server, m.requestFn, m.registry, m.logRing, m.endpoint, m.version, m.changelog, m.localHostname, m.sessionName)
+		session.termWidth = m.termWidth
+		session.termHeight = m.termHeight
 		m.sessions = []*SessionLayer{session}
 		m.activeSession = 0
 		session.server.Send(protocol.SessionConnectRequest{Session: session.sessionName})
