@@ -85,14 +85,20 @@ func RecvUpgrade(fd int, sshCfg transport.SSHListenerConfig, version string) (*S
 	}
 
 	// 5. Reconstruct server.
-	cfg := config.ServerConfig{}
-	cfg.Sessions.DefaultName = state.SessionsCfg.DefaultName
-	cfg.Sessions.DefaultPrograms = state.SessionsCfg.DefaultPrograms
-	cfg.Upgrade.BinariesDir = state.BinariesDir
-	for _, p := range state.Programs {
-		cfg.Programs = append(cfg.Programs, config.ProgramConfig{
-			Name: p.Name, Cmd: p.Cmd, Args: p.Args, Env: p.Env,
-		})
+	// Re-read the config file so configuration changes take effect
+	// without requiring a full restart.
+	cfg, err := config.LoadServerConfig("")
+	if err != nil {
+		slog.Warn("upgrade-recv: failed to reload config, using inherited state", "err", err)
+		cfg = config.ServerConfig{}
+		cfg.Sessions.DefaultName = state.SessionsCfg.DefaultName
+		cfg.Sessions.DefaultPrograms = state.SessionsCfg.DefaultPrograms
+		cfg.Upgrade.BinariesDir = state.BinariesDir
+		for _, p := range state.Programs {
+			cfg.Programs = append(cfg.Programs, config.ProgramConfig{
+				Name: p.Name, Cmd: p.Cmd, Args: p.Args, Env: p.Env,
+			})
+		}
 	}
 
 	srv := NewServer(listeners, version, cfg)
