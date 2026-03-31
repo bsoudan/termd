@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,7 +12,6 @@ import (
 	"sync"
 	"time"
 	"sync/atomic"
-	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -411,22 +409,6 @@ func (u *UpgradeLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	}
 }
 
-// replaceAndExec replaces the binary and exec's into it.
-// On Unix: rename tmp over target, then syscall.Exec.
-func replaceAndExec(tmpPath, targetPath string) error {
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		return fmt.Errorf("rename %s -> %s: %w", tmpPath, targetPath, err)
-	}
-
-	slog.Info("client upgrade: exec", "binary", targetPath)
-	argv := os.Args
-	if targetPath != os.Args[0] {
-		argv = make([]string, len(os.Args))
-		copy(argv, os.Args)
-		argv[0] = targetPath
-	}
-	return syscall.Exec(targetPath, argv, os.Environ())
-}
 
 func formatBytes(n int64) string {
 	switch {

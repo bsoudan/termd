@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -36,21 +37,29 @@ func (c *Client) handleUpgradeCheck(msg protocol.UpgradeCheckRequest, reply func
 	resp := protocol.UpgradeCheckResponse{Type: "upgrade_check_response"}
 
 	// Check server binary.
-	serverBin := filepath.Join(dir, fmt.Sprintf("termd-%s-%s", runtime.GOOS, runtime.GOARCH))
-	if v, err := binaryVersion(serverBin); err == nil && v != c.server.version {
+	serverBin := upgradeBinPath(dir, "termd", runtime.GOOS, runtime.GOARCH)
+	if v, err := binaryVersion(serverBin); err != nil {
+		slog.Warn("upgrade check: server binary version failed",
+			"path", serverBin, "err", err)
+	} else if v != c.server.version {
 		resp.ServerAvailable = true
 		resp.ServerVersion = v
 	}
 
 	// Check client binary.
-	clientBin := filepath.Join(dir, fmt.Sprintf("termd-tui-%s-%s", msg.OS, msg.Arch))
-	if v, err := binaryVersion(clientBin); err == nil && v != msg.ClientVersion {
+	clientBin := upgradeBinPath(dir, "termd-tui", msg.OS, msg.Arch)
+	if v, err := binaryVersion(clientBin); err != nil {
+		slog.Warn("upgrade check: client binary version failed",
+			"path", clientBin, "err", err)
+	} else if v != msg.ClientVersion {
 		resp.ClientAvailable = true
 		resp.ClientVersion = v
 	}
 
 	slog.Debug("upgrade check result", "client_id", c.id,
-		"server_available", resp.ServerAvailable, "client_available", resp.ClientAvailable)
+		"server_available", resp.ServerAvailable, "server_bin_ver", resp.ServerVersion,
+		"client_available", resp.ClientAvailable, "client_bin_ver", resp.ClientVersion,
+		"running_server_ver", c.server.version, "running_client_ver", msg.ClientVersion)
 	reply(resp)
 }
 
@@ -69,7 +78,7 @@ func (c *Client) handleServerUpgrade(reply func(any)) {
 		return
 	}
 
-	srcPath := filepath.Join(dir, fmt.Sprintf("termd-%s-%s", runtime.GOOS, runtime.GOARCH))
+	srcPath := upgradeBinPath(dir, "termd", runtime.GOOS, runtime.GOARCH)
 	dstPath, err := os.Executable()
 	if err != nil {
 		reply(protocol.ServerUpgradeResponse{
@@ -111,7 +120,7 @@ func (c *Client) handleClientBinaryDownload(msg protocol.ClientBinaryRequest, re
 		return
 	}
 
-	path := filepath.Join(dir, fmt.Sprintf("termd-tui-%s-%s", msg.OS, msg.Arch))
+	path := upgradeBinPath(dir, "termd-tui", msg.OS, msg.Arch)
 	f, err := os.Open(path)
 	if err != nil {
 		reply(protocol.ClientBinaryResponse{
@@ -199,8 +208,30 @@ func (c *Client) streamBinary(f *os.File, fileSize, startOffset int64, path stri
 		"path", path, "size", fileSize)
 }
 
-// binaryVersion runs a binary with --version and returns the version string.
+// upgradeBinPath returns the full path for an upgrade binary, adding
+// .exe for Windows targets.
+func upgradeBinPath(dir, base, goos, goarch string) string {
+	name := fmt.Sprintf("%s-%s-%s", base, goos, goarch)
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
+}
+
+// binaryVersion returns the version string embedded in the binary at path.
+// It first tries executing the binary with --version (fast, works for
+// same-platform binaries). If that fails (cross-platform binary, missing
+// interpreter, etc.), it falls back to reading Go build info from the
+// file, which works regardless of platform.
 func binaryVersion(path string) (string, error) {
+	if v, err := binaryVersionExec(path); err == nil {
+		return v, nil
+	}
+	return binaryVersionBuildInfo(path)
+}
+
+// binaryVersionExec runs the binary with --version and parses the output.
+func binaryVersionExec(path string) (string, error) {
 	out, err := exec.Command(path, "--version").Output()
 	if err != nil {
 		return "", err
@@ -213,6 +244,35 @@ func binaryVersion(path string) (string, error) {
 		return "", fmt.Errorf("empty version output from %s", path)
 	}
 	return fields[len(fields)-1], nil
+}
+
+// binaryVersionBuildInfo reads the Go build info embedded in the binary
+// and extracts the version from -ldflags "-X main.version=...".
+func binaryVersionBuildInfo(path string) (string, error) {
+	info, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read build info from %s: %w", path, err)
+	}
+	for _, s := range info.Settings {
+		if s.Key != "-ldflags" {
+			continue
+		}
+		// Parse "-X main.version=VALUE" from the ldflags string.
+		const prefix = "-X main.version="
+		idx := strings.Index(s.Value, prefix)
+		if idx < 0 {
+			break
+		}
+		v := s.Value[idx+len(prefix):]
+		// The value extends to the next space or end of string.
+		if sp := strings.IndexByte(v, ' '); sp >= 0 {
+			v = v[:sp]
+		}
+		if v != "" {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("no version in build info of %s", path)
 }
 
 // copyFile atomically replaces dst with the contents of src.
