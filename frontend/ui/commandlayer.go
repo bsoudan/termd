@@ -34,6 +34,7 @@ func (c *CommandLayer) Status() (string, lipgloss.Style)              { return "
 // upper right corner. It pops itself on hideHintMsg.
 type HintLayer struct {
 	registry *Registry
+	version  string
 }
 
 func (h *HintLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
@@ -60,8 +61,16 @@ func (h *HintLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	logo := blank + "\n" +
 		pad + logoStyle.Render(logoLines[0]) + pad + "\n" +
 		pad + logoStyle.Render(logoLines[1]) + pad + "\n" +
-		pad + logoStyle.Render(logoLines[2]) + pad + "\n" +
-		blank
+		pad + logoStyle.Render(logoLines[2]) + pad + "\n"
+	if h.version != "" {
+		ver := versionStyle.Render(h.version)
+		verPad := (logoWidth + 2 - lipgloss.Width(ver)) / 2
+		if verPad < 1 {
+			verPad = 1
+		}
+		logo += strings.Repeat(" ", verPad) + ver + "\n"
+	}
+	logo += blank
 
 	x := width - logoWidth - 3
 	if x < 0 {
@@ -70,6 +79,8 @@ func (h *HintLayer) View(width, height int, active bool) []*lipgloss.Layer {
 
 	return []*lipgloss.Layer{lipgloss.NewLayer(logo).X(x).Y(2).Z(1)}
 }
+
+var versionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 var logoStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
 

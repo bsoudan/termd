@@ -220,7 +220,7 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		return nil, nil, true
 
 	case showHintMsg:
-		pushCmd := func() tea.Msg { return PushLayerMsg{Layer: &HintLayer{registry: m.registry}} }
+		pushCmd := func() tea.Msg { return PushLayerMsg{Layer: &HintLayer{registry: m.registry, version: m.version}} }
 		hideCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hideHintMsg{} })
 		return nil, tea.Batch(pushCmd, hideCmd), true
 
