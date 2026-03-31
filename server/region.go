@@ -326,8 +326,21 @@ func (r *Region) GetScrollback() [][]protocol.ScreenCell {
 	}
 	cells := make([][]protocol.ScreenCell, len(history))
 	for i, row := range history {
-		cells[i] = make([]protocol.ScreenCell, len(row))
-		for j, c := range row {
+		// Find last non-blank cell to trim trailing empties.
+		last := len(row) - 1
+		for last >= 0 {
+			c := row[last]
+			if c.Data != "" && c.Data != " " && c.Data != "\x00" {
+				break
+			}
+			if c.Attr != (te.Attr{}) {
+				break
+			}
+			last--
+		}
+		trimmed := row[:last+1]
+		cells[i] = make([]protocol.ScreenCell, len(trimmed))
+		for j, c := range trimmed {
 			cells[i][j] = cellToProtocol(c)
 		}
 	}

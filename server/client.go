@@ -109,7 +109,7 @@ func (c *Client) ReadLoop() {
 	}()
 
 	scanner := bufio.NewScanner(c.conn)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		c.handleMessage(line)

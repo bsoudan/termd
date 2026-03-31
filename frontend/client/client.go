@@ -92,7 +92,7 @@ func (c *Client) readLoop() {
 	defer close(c.recvCh)
 
 	scanner := bufio.NewScanner(c.conn)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	scanner.Buffer(make([]byte, 1<<20), 16<<20)
 	for scanner.Scan() {
 		msg, err := protocol.ParseInbound(scanner.Bytes())
 		if err != nil {

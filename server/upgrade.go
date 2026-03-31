@@ -14,7 +14,7 @@ import (
 	"termd/transport"
 )
 
-const upgradeTimeout = 10 * time.Second
+const upgradeTimeout = 60 * time.Second
 
 // HandleUpgrade performs a live upgrade by spawning a new binary and
 // handing off all listeners, PTY FDs, and terminal state.
