@@ -71,9 +71,9 @@ func (s *Screen) MarshalState() *ScreenState {
 	return &ScreenState{
 		Columns: s.Columns,
 		Lines:   s.Lines,
-		Buffer:  deepCopyBuffer(s.Buffer),
+		Buffer:  trimBuffer(s.Buffer),
 
-		AltBuffer:      deepCopyBuffer(s.altBuffer),
+		AltBuffer:      trimBuffer(s.altBuffer),
 		AltActive:      s.altActive,
 		AltSavepoints:  copySavepoints(s.altSavepoints),
 		AltLineWrapped: copyBoolMap(s.altLineWrapped),
@@ -209,6 +209,31 @@ func deepCopyBuffer(buf [][]Cell) [][]Cell {
 	out := make([][]Cell, len(buf))
 	for i, row := range buf {
 		out[i] = append([]Cell(nil), row...)
+	}
+	return out
+}
+
+// trimBuffer returns a deep copy of buf with trailing blank cells
+// removed from each row. This dramatically reduces JSON serialization
+// size since most cells are blank spaces with default attributes.
+func trimBuffer(buf [][]Cell) [][]Cell {
+	if buf == nil {
+		return nil
+	}
+	out := make([][]Cell, len(buf))
+	for i, row := range buf {
+		last := len(row) - 1
+		for last >= 0 {
+			c := row[last]
+			if c.Data != "" && c.Data != " " && c.Data != "\x00" {
+				break
+			}
+			if c.Attr != (Attr{}) {
+				break
+			}
+			last--
+		}
+		out[i] = append([]Cell(nil), row[:last+1]...)
 	}
 	return out
 }

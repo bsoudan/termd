@@ -15,8 +15,8 @@ type HistoryState struct {
 func (h *HistoryScreen) MarshalState() *HistoryState {
 	return &HistoryState{
 		Screen:      *h.Screen.MarshalState(),
-		TopItems:    deepCopyBuffer(h.history.Top.items),
-		BottomItems: deepCopyBuffer(h.history.Bottom.items),
+		TopItems:    trimBuffer(h.history.Top.items),
+		BottomItems: trimBuffer(h.history.Bottom.items),
 		Ratio:       h.history.Ratio,
 		Size:        h.history.Size,
 		Position:    h.history.Position,

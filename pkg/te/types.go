@@ -16,30 +16,30 @@ const (
 
 // Color describes a terminal color.
 type Color struct {
-	Mode  ColorMode
-	Index uint8
-	Name  string
+	Mode  ColorMode `json:"Mode,omitempty"`
+	Index uint8     `json:"Index,omitempty"`
+	Name  string    `json:"Name,omitempty"`
 }
 
 // Attr describes character attributes and colors.
 type Attr struct {
-	Fg            Color
-	Bg            Color
-	Bold          bool
-	Italics       bool
-	Underline     bool
-	Strikethrough bool
-	Reverse       bool
-	Blink         bool
-	Conceal       bool
-	Protected     bool
-	ISOProtected  bool
+	Fg            Color `json:"Fg,omitzero"`
+	Bg            Color `json:"Bg,omitzero"`
+	Bold          bool  `json:"Bold,omitempty"`
+	Italics       bool  `json:"Italics,omitempty"`
+	Underline     bool  `json:"Underline,omitempty"`
+	Strikethrough bool  `json:"Strikethrough,omitempty"`
+	Reverse       bool  `json:"Reverse,omitempty"`
+	Blink         bool  `json:"Blink,omitempty"`
+	Conceal       bool  `json:"Conceal,omitempty"`
+	Protected     bool  `json:"Protected,omitempty"`
+	ISOProtected  bool  `json:"ISOProtected,omitempty"`
 }
 
 // Cell represents a single screen cell.
 type Cell struct {
-	Data string
-	Attr Attr
+	Data string `json:"Data,omitempty"`
+	Attr Attr   `json:"Attr,omitzero"`
 }
 
 // Cursor tracks cursor position and attributes.
