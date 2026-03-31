@@ -295,7 +295,7 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 
 	case "upgrade":
 		if !m.upgradeServerAvail && !m.upgradeClientAvail {
-			return nil, nil, true
+			return nil, ShowToast("Already up to date", 3*time.Second), true
 		}
 		ul := NewUpgradeLayer(m.server, m.requestFn, m.version,
 			m.upgradeServerAvail, m.upgradeServerVer,
