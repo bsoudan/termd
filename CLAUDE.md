@@ -54,6 +54,7 @@ Built on **bubbletea v2** with **lipgloss v2** for rendering.
 - **Raw input** (`ui/rawio.go`): after bubbletea Init completes, stdin is read directly and forwarded as `RawInputMsg` to avoid bubbletea's input parsing. This preserves exact terminal escape sequences for the remote PTY.
 - **Server connection** (`ui/server.go`): manages the WebSocket/Unix/TCP connection to the server, with automatic reconnection (exponential backoff, 100ms–60s).
 - **Overlay layers**: `connectlayer.go` (session picker), `commandlayer.go` (command palette), `helplayer.go`, `programlayer.go` (spawn program), `scrollablelayer.go` (scrollback), `statuslayer.go`.
+- **Tasks** (`ui/task.go`): synchronous goroutine abstraction over bubbletea's async event loop. A task is a goroutine that communicates with bubbletea through a channel bridge managed by `TaskRunner` in Model. Tasks call `Request()` to make server roundtrips, `WaitFor(filter)` to wait for messages, and `PushLayer()`/`PopLayer()` to manage overlays — all as blocking calls. The `WaitFor` filter returns `(deliver, handled bool)` mirroring the layer pattern: `deliver` routes the message to the task, `handled` controls whether layers also see it. Use tasks for multi-step async workflows (e.g. upgrade); simple single-step overlays (help, picker, input) should stay as plain layers.
 
 ### Protocol (`frontend/protocol/`, `protocol.md`)
 
