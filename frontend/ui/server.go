@@ -163,7 +163,38 @@ func (s *Server) reconnect(dialFn func() (net.Conn, error), p *tea.Program) *cli
 			continue
 		}
 
+		// Verify the server has accepted the connection by waiting for
+		// its identify message. During a live upgrade the TCP handshake
+		// can succeed against the inherited listener's kernel backlog
+		// before the new process has called Accept(). Without this
+		// check, ReconnectedMsg fires prematurely and subsequent
+		// requests hang because nobody is reading the connection.
 		c := client.New(conn)
+		timer := time.NewTimer(3 * time.Second)
+		select {
+		case _, ok := <-c.Recv():
+			timer.Stop()
+			if !ok {
+				slog.Debug("reconnect: connection closed before identify")
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+		case <-timer.C:
+			slog.Debug("reconnect: timed out waiting for server identify")
+			c.Close()
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		case <-s.done:
+			c.Close()
+			return nil
+		}
+
 		s.sendIdentify(c)
 		p.Send(ReconnectedMsg{})
 		return c
