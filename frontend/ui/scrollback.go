@@ -134,7 +134,7 @@ func scrollbarGeometry(height, totalLines, offset int) (thumbStart, thumbLen int
 	if totalLines <= height {
 		return 0, height
 	}
-	thumbLen = max(height*height/totalLines, 1)
+	thumbLen = max(height*height/totalLines, 3) // at least cap + body + cap
 	// offset=0 means bottom (viewport at end), offset=max means top.
 	maxOffset := totalLines - height
 	scrollFrac := 1.0
@@ -179,6 +179,11 @@ func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer
 		}
 	}
 
+	// Don't render the scrollbar until scrollback data has loaded.
+	if s.cells == nil {
+		return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
+	}
+
 	// Scrollbar layer — single column overlaid on the right edge.
 	thumbStart, thumbLen := scrollbarGeometry(height, totalLines, offset)
 	thumbEnd := thumbStart + thumbLen
@@ -212,6 +217,9 @@ func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer
 func (s *ScrollbackLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (s *ScrollbackLayer) Status() (string, lipgloss.Style) {
+	if s.cells == nil {
+		return "scrollback [...]", statusBold
+	}
 	offset := s.offset
 	total := len(s.cells)
 	if offset > total {
