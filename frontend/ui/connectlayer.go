@@ -238,7 +238,7 @@ func (c *ConnectLayer) View(width, height int, active bool) []*lipgloss.Layer {
 
 	x := max((width-overlayW)/2, 0)
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(0).Z(2)}
+	return overlayLayers(dialog, x, 0, 2)
 }
 
 func (c *ConnectLayer) buildContent(w, height int) string {

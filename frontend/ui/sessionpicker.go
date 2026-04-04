@@ -110,7 +110,7 @@ func (p *SessionPickerLayer) View(width, height int, active bool) []*lipgloss.La
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
+	return overlayLayers(dialog, x, y, 1)
 }
 
 func (p *SessionPickerLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

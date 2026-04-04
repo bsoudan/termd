@@ -162,7 +162,7 @@ func (h *HelpLayer) View(width, height int, active bool) []*lipgloss.Layer {
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialogLines).X(x).Y(y).Z(1)}
+	return overlayLayers(dialogLines, x, y, 1)
 }
 
 func (h *HelpLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

@@ -145,7 +145,7 @@ func (l *ScrollableLayer) View(width, height int, active bool) []*lipgloss.Layer
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
+	return overlayLayers(dialog, x, y, 1)
 }
 
 func (l *ScrollableLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

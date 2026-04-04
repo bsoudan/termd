@@ -93,7 +93,7 @@ func (p *ProgramPickerLayer) View(width, height int, active bool) []*lipgloss.La
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
+	return overlayLayers(dialog, x, y, 1)
 }
 
 func (p *ProgramPickerLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

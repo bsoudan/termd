@@ -191,7 +191,7 @@ func (p *CommandPaletteLayer) View(width, height int, active bool) []*lipgloss.L
 		x = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(0).Z(2)}
+	return overlayLayers(dialog, x, 0, 2)
 }
 
 // buildContent builds the palette content string (prompt + separator +

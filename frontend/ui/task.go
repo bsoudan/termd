@@ -86,7 +86,7 @@ func (o *Overlay) View(width, height int, active bool) []*lipgloss.Layer {
 		y = 0
 	}
 
-	return []*lipgloss.Layer{lipgloss.NewLayer(dialogFull).X(x).Y(y).Z(1)}
+	return overlayLayers(dialogFull, x, y, 1)
 }
 
 func (o *Overlay) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

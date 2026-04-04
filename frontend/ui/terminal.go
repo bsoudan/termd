@@ -196,8 +196,12 @@ func (t *TerminalLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	}
 
 	showCursor := active
+	dim := !active
 
 	var sb strings.Builder
+	if dim {
+		sb.WriteString("\x1b[2m")
+	}
 	if t.screen != nil {
 		cells := t.screen.LinesCells()
 		for i := range height {
@@ -205,7 +209,11 @@ func (t *TerminalLayer) View(width, height int, active bool) []*lipgloss.Layer {
 			if i < len(cells) {
 				row = cells[i]
 			}
-			renderCellLine(&sb, row, width, i, t.cursorRow, t.cursorCol, showCursor, t.disconnected)
+			if dim {
+				renderCellLineDim(&sb, row, width)
+			} else {
+				renderCellLine(&sb, row, width, i, t.cursorRow, t.cursorCol, showCursor, t.disconnected)
+			}
 			if i < height-1 {
 				sb.WriteByte('\n')
 			}
@@ -238,6 +246,9 @@ func (t *TerminalLayer) View(width, height int, active bool) []*lipgloss.Layer {
 				sb.WriteByte('\n')
 			}
 		}
+	}
+	if dim {
+		sb.WriteString("\x1b[0m")
 	}
 	return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
 }
@@ -408,6 +419,21 @@ func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow
 
 	if cur != (te.Attr{}) {
 		sb.WriteString(ansi.ResetStyle)
+	}
+}
+
+// renderCellLineDim renders a row as plain text with no colors or attributes,
+// for use when the terminal is dimmed behind an overlay.
+func renderCellLineDim(sb *strings.Builder, row []te.Cell, width int) {
+	for col := range width {
+		ch := " "
+		if col < len(row) {
+			ch = row[col].Data
+			if ch == "" || ch == "\x00" {
+				ch = " "
+			}
+		}
+		sb.WriteString(ch)
 	}
 }
 
