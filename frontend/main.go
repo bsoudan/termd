@@ -179,7 +179,12 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	}
 	ui.PreUpgradeCleanup = func() {
 		stdinDup.Close() // stop InputLoop
-		pipeW.Close()    // stop bubbletea's input reader → renderer winds down
+		// Do NOT close pipeW here. Closing it causes bubbletea's input
+		// reader to EOF → event loop exits → p.Run() returns → main()
+		// exits → os.Exit kills the task goroutine in cmd.Wait(). The
+		// parent shell then resumes reading stdin, competing with the
+		// new process. Instead, let bubbletea idle harmlessly (no server,
+		// no input) while the old process waits for the child.
 	}
 
 	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
