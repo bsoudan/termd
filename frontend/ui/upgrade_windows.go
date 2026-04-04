@@ -36,7 +36,17 @@ func replaceAndExec(tmpPath, targetPath string) error {
 		return fmt.Errorf("start new process: %w", err)
 	}
 
-	os.Exit(0)
+	// Close our stdin so InputLoop stops reading and only the new
+	// process receives console input. The child already has its own
+	// handle from CreateProcess — closing ours doesn't affect it.
+	os.Stdin.Close()
+
+	// Wait for the new process instead of exiting immediately.
+	// If we os.Exit(0) here, the parent shell (PowerShell/cmd) sees
+	// its child exited and resumes reading stdin, competing with the
+	// new ttui for console input.
+	cmd.Wait()
+	os.Exit(cmd.ProcessState.ExitCode())
 	return nil // unreachable
 }
 
