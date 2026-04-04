@@ -177,6 +177,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("dup stdin: %w", err)
 	}
+	ui.PreUpgradeCleanup = func() { stdinDup.Close() }
 
 	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
 

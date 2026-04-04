@@ -16,6 +16,13 @@ import (
 	"termd/frontend/protocol"
 )
 
+// PreUpgradeCleanup is called before starting the new process during a
+// client upgrade. The main package sets this to close the duplicated
+// stdin handle so InputLoop stops reading and only the new process
+// receives console input. On Unix this is unused (syscall.Exec replaces
+// the process).
+var PreUpgradeCleanup func()
+
 // Download accumulates binary chunks from the server goroutine.
 // It is written to by dispatchInbound (server goroutine) and read
 // by the task goroutine after the final response arrives.
