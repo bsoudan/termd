@@ -220,6 +220,7 @@ type GetScreenResponse struct {
 	CursorCol uint16         `json:"cursor_col"`
 	Lines     []string       `json:"lines"`
 	Cells     [][]ScreenCell `json:"cells,omitempty"`
+	Modes     map[int]bool   `json:"modes,omitempty"`
 	Error     bool           `json:"error"`
 	Message   string         `json:"message"`
 }

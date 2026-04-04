@@ -101,7 +101,7 @@ func (t *TerminalLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case protocol.ScreenUpdate:
 		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes), true
 	case protocol.GetScreenResponse:
-		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, nil), true
+		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes), true
 	case protocol.TerminalEvents:
 		return nil, t.handleTerminalEvents(msg.Events), true
 	case protocol.ResizeResponse:

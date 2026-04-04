@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/term"
@@ -49,11 +51,14 @@ type identify struct {
 	Process string `json:"process"`
 }
 
+func privateModeKey(mode int) int { return mode << 5 }
+
 var (
 	width    int
 	height   int
 	regionID string
 	input    string
+	mouse    string // last mouse event description
 	conn     net.Conn
 )
 
@@ -135,17 +140,86 @@ func main() {
 		if err != nil {
 			break
 		}
-		data := buf[:n]
-		for _, b := range data {
-			if b == 3 { // Ctrl-C
-				return
-			}
-			if b >= 0x20 && b < 0x7f {
-				input += string(b)
-				render()
+		handleInput(buf[:n])
+	}
+}
+
+func handleInput(data []byte) {
+	i := 0
+	for i < len(data) {
+		if data[i] == 3 { // Ctrl-C
+			os.Exit(0)
+		}
+
+		// Check for SGR mouse sequence: ESC [ < ...
+		if data[i] == 0x1b && i+2 < len(data) && data[i+1] == '[' && data[i+2] == '<' {
+			n := handleSGRMouse(data[i:])
+			if n > 0 {
+				i += n
+				continue
 			}
 		}
+
+		// Skip other escape sequences.
+		if data[i] == 0x1b {
+			i++
+			continue
+		}
+
+		// Printable character.
+		if data[i] >= 0x20 && data[i] < 0x7f {
+			input += string(data[i])
+			render()
+		}
+		i++
 	}
+}
+
+func handleSGRMouse(data []byte) int {
+	if len(data) < 9 {
+		return 0
+	}
+	end := -1
+	for j := 3; j < len(data); j++ {
+		if data[j] == 'M' || data[j] == 'm' {
+			end = j + 1
+			break
+		}
+		if data[j] != ';' && (data[j] < '0' || data[j] > '9') {
+			return 0
+		}
+	}
+	if end < 0 {
+		return 0
+	}
+
+	terminator := data[end-1]
+	parts := strings.Split(string(data[3:end-1]), ";")
+	if len(parts) != 3 {
+		return 0
+	}
+	btn, e1 := strconv.Atoi(parts[0])
+	col, e2 := strconv.Atoi(parts[1])
+	row, e3 := strconv.Atoi(parts[2])
+	if e1 != nil || e2 != nil || e3 != nil {
+		return 0
+	}
+	col-- // 1-based → 0-based
+	row--
+
+	action := "press"
+	if terminator == 'm' {
+		action = "release"
+	}
+	if btn&32 != 0 {
+		action = "drag"
+	}
+	button := btn & 3
+
+	mouse = fmt.Sprintf("MOUSE:%s:%d:%d:%d", action, button, col, row)
+	render()
+
+	return end
 }
 
 func render() {
@@ -167,12 +241,21 @@ func render() {
 		putString(cells, 2, 0, "INPUT:"+input, "", 0)
 	}
 
+	// Row 3: mouse event.
+	if mouse != "" {
+		putString(cells, 3, 0, mouse, "", 0)
+	}
+
 	sendJSON(overlayRender{
 		Type:      "overlay_render",
 		RegionID:  regionID,
 		Cells:     cells,
 		CursorRow: 0,
 		CursorCol: 0,
+		Modes: map[int]bool{
+			privateModeKey(1000): true, // mouse normal tracking
+			privateModeKey(1006): true, // SGR mouse encoding
+		},
 	})
 }
 

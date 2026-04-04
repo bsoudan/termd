@@ -1,10 +1,13 @@
 package e2e
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestNativeOverlayRender(t *testing.T) {
@@ -61,16 +64,31 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 	pio.Write([]byte("nativeapp\r"))
 	pio.WaitFor(t, "NATIVE", 10*time.Second)
 
+	// Mouse click before refresh — row 3 in outer terminal = row 2 in child
+	// (tab bar occupies row 0). Left click at col 10, row 3.
+	pio.Write([]byte(fmt.Sprintf("%c[<0;10;3M", ansi.ESC)))
+	pio.WaitFor(t, "MOUSE:press:0:9:1", 10*time.Second)
+
 	// termctl region view uses get_screen_request — overlay must be included.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		out := runTermctl(t, socketPath, "region", "view", regionID)
+		out = runTermctl(t, socketPath, "region", "view", regionID)
 		if strings.Contains(out, "NATIVE") {
-			return
+			break
 		}
 		runtime.Gosched()
 	}
-	t.Fatal("get_screen_request did not include overlay (expected 'NATIVE')")
+	if !strings.Contains(out, "NATIVE") {
+		t.Fatal("get_screen_request did not include overlay (expected 'NATIVE')")
+	}
+
+	// After get_screen, keyboard input must still work (modes survived refresh).
+	pio.Write([]byte("world"))
+	pio.WaitFor(t, "INPUT:world", 10*time.Second)
+
+	// Mouse click after refresh — modes must still be active.
+	pio.Write([]byte(fmt.Sprintf("%c[<0;20;4M", ansi.ESC)))
+	pio.WaitFor(t, "MOUSE:press:0:19:2", 10*time.Second)
 }
 
 func TestNativeOverlayExit(t *testing.T) {
