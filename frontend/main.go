@@ -177,7 +177,10 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("dup stdin: %w", err)
 	}
-	ui.PreUpgradeCleanup = func() { stdinDup.Close() }
+	ui.PreUpgradeCleanup = func() {
+		stdinDup.Close() // stop InputLoop
+		pipeW.Close()    // stop bubbletea's input reader → renderer winds down
+	}
 
 	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
 

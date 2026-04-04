@@ -170,7 +170,7 @@ func upgradeTask(t *TermdHandle, server *Server,
 	server.SetDownload(nil)
 
 	// Verify and apply.
-	applyClientUpgrade(overlay, t, dl, cbr.SHA256, cbr.Size)
+	applyClientUpgrade(overlay, t, dl, server, cbr.SHA256, cbr.Size)
 }
 
 func setupDownload(server *Server) (*Download, error) {
@@ -198,7 +198,7 @@ func setupDownload(server *Server) (*Download, error) {
 	return dl, nil
 }
 
-func applyClientUpgrade(overlay *Overlay, t *TermdHandle, dl *Download, expectedHash string, expectedSize int64) {
+func applyClientUpgrade(overlay *Overlay, t *TermdHandle, dl *Download, server *Server, expectedHash string, expectedSize int64) {
 	overlay.Lines = []string{"  Applying update..."}
 	overlay.StatusText = "applying client update..."
 
@@ -238,6 +238,12 @@ func applyClientUpgrade(overlay *Overlay, t *TermdHandle, dl *Download, expected
 		}
 		targetPath = filepath.Join(filepath.Dir(tmpPath), name)
 	}
+
+	// Disconnect from the server before exec'ing the new process.
+	// On Windows the old process stays alive (waiting for the child),
+	// so without this both processes would be connected to the server
+	// and rendering to stdout, causing doubled keystrokes and output.
+	server.Close()
 
 	if err := replaceAndExec(tmpPath, targetPath); err != nil {
 		ShowError(overlay, t.Handle, fmt.Sprintf("replace: %v", err))
