@@ -124,6 +124,77 @@ func TestScrollbackNavigation(t *testing.T) {
 	}, "prompt visible, scrollback gone from tab bar", 5*time.Second)
 }
 
+// TestScrollbackPageUpDown verifies that PageUp and PageDown keys activate
+// scrollback mode directly from the terminal (without the prefix key).
+func TestScrollbackPageUpDown(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "termd$", 10*time.Second)
+
+	// Generate enough output to fill scrollback
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	// Send PageUp (\x1b[5~) — should activate scrollback
+	pio.Write([]byte("\x1b[5~"))
+
+	// Tab bar should show "scrollback"
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback activated by PageUp", 5*time.Second)
+
+	// Send more PageUp keys to scroll further back
+	for range 20 {
+		pio.Write([]byte("\x1b[5~"))
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	// Verify early numbers appear on screen
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines[1:] {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "1" || trimmed == "2" || trimmed == "3" {
+				return true
+			}
+		}
+		return false
+	}, "early numbers visible via PageUp", 5*time.Second)
+
+	// Exit scrollback with q
+	pio.Write([]byte("q"))
+
+	pio.WaitForScreen(t, func(lines []string) bool {
+		if strings.Contains(lines[0], "scrollback") {
+			return false
+		}
+		for _, line := range lines {
+			if strings.Contains(line, "termd$") {
+				return true
+			}
+		}
+		return false
+	}, "prompt visible after scrollback exit", 5*time.Second)
+
+	// Now test PageDown — should also activate scrollback (at offset 0)
+	pio.Write([]byte("\x1b[6~"))
+
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback activated by PageDown", 5*time.Second)
+
+	// Exit with q
+	pio.Write([]byte("q"))
+
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited after PageDown test", 5*time.Second)
+}
+
 func TestScrollbackScrollWheel(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()

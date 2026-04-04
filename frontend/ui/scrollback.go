@@ -149,7 +149,7 @@ func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer
 	return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
 }
 
-func (s *ScrollbackLayer) WantsKeyboardInput() bool { return true }
+func (s *ScrollbackLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (s *ScrollbackLayer) Status() (string, lipgloss.Style) {
 	offset := s.offset

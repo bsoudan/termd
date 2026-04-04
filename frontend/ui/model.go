@@ -102,12 +102,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// RawInputMsg: Model handles focus mode routing and prefix key detection.
-	// This must happen before the normal layer iteration because:
-	//  - Focus mode needs to feed one sequence at a time through pipeW
-	//    so overlay/command layers can pop between keystrokes.
+	// RawInputMsg: Model handles focus mode routing, prefix key detection,
+	// and key filter interception before the normal layer iteration.
+	//  - Focus mode feeds one sequence at a time through pipeW so
+	//    overlay/command layers can pop between keystrokes.
 	//  - Prefix key detection pushes CommandLayer before delivering the
 	//    remaining bytes, ensuring proper sequencing.
+	//  - Key filters intercept specific sequences (e.g. PageUp/PageDown)
+	//    and route them through bubbletea's key parser while forwarding
+	//    the rest to the server.
 	if raw, ok := msg.(RawInputMsg); ok {
 		main := m.stack.Layers()[0].(*MainLayer)
 		if needsFocusRouting(m.stack) {
@@ -115,6 +118,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if idx := bytes.IndexByte([]byte(raw), m.registry.PrefixKey); idx >= 0 {
 			return m.handlePrefixDetected(raw, idx, main)
+		}
+		if filters := collectKeyFilters(m.stack); len(filters) > 0 {
+			if cmd := m.handleFilteredInput(raw, filters, main); cmd != nil {
+				return m, cmd
+			}
 		}
 		// Normal mode — fall through to layer iteration.
 		// MainLayer forwards to active session for mouse routing and server forwarding.
@@ -172,6 +180,46 @@ func (m Model) handlePrefixDetected(raw RawInputMsg, idx int, main *MainLayer) (
 	return m, pushCmd
 }
 
+// handleFilteredInput scans raw input for sequences matching key filters.
+// When a match is found, bytes before it are forwarded to the server,
+// the matching sequence is written to pipeW (so bubbletea delivers it
+// as a tea.KeyPressMsg), and remaining bytes are re-sent as RawInputMsg.
+// Returns nil if no filtered keys were found.
+func (m Model) handleFilteredInput(raw RawInputMsg, filters [][]byte, main *MainLayer) tea.Cmd {
+	buf := []byte(raw)
+	pos := 0
+	for pos < len(buf) {
+		_, _, n, _ := ansi.DecodeSequence(buf[pos:], ansi.NormalState, nil)
+		if n == 0 {
+			break
+		}
+		seq := buf[pos : pos+n]
+		for _, f := range filters {
+			if bytes.Equal(seq, f) {
+				if pos > 0 {
+					main.sendRawToServer(buf[:pos])
+				}
+				filtered := make([]byte, n)
+				copy(filtered, seq)
+				writeCmd := func() tea.Msg {
+					main.pipeW.Write(filtered)
+					return nil
+				}
+				rest := buf[pos+n:]
+				if len(rest) > 0 {
+					restCopy := make([]byte, len(rest))
+					copy(restCopy, rest)
+					resendCmd := func() tea.Msg { return RawInputMsg(restCopy) }
+					return tea.Sequence(writeCmd, resendCmd)
+				}
+				return writeCmd
+			}
+		}
+		pos += n
+	}
+	return nil
+}
+
 func (m Model) View() tea.View {
 	main := m.stack.Layers()[0].(*MainLayer)
 
@@ -200,7 +248,7 @@ func (m Model) View() tea.View {
 					statusStyle = s
 				}
 			}
-			if i > 0 && tl.WantsKeyboardInput() {
+			if i > 0 && tl.WantsKeyboardInput() != nil {
 				hasOverlay = true
 			}
 		}

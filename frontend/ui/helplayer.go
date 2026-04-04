@@ -165,5 +165,5 @@ func (h *HelpLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	return []*lipgloss.Layer{lipgloss.NewLayer(dialogLines).X(x).Y(y).Z(1)}
 }
 
-func (h *HelpLayer) WantsKeyboardInput() bool         { return true }
+func (h *HelpLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 func (h *HelpLayer) Status() (string, lipgloss.Style) { return "help", lipgloss.Style{} }

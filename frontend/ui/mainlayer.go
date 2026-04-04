@@ -146,6 +146,31 @@ func (m *MainLayer) detach() (tea.Msg, tea.Cmd) {
 
 func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
+	// ── PageUp/PageDown → enter scrollback ──────────────────────────────
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "pgup":
+			if s := m.activeSessionLayer(); s != nil {
+				if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
+					halfPage := t.contentHeight() / 2
+					if halfPage < 1 {
+						halfPage = 1
+					}
+					t.EnterScrollback(halfPage)
+					return nil, nil, true
+				}
+			}
+		case "pgdown":
+			if s := m.activeSessionLayer(); s != nil {
+				if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
+					t.EnterScrollback(0)
+					return nil, nil, true
+				}
+			}
+		}
+		return m.forwardToActiveSession(msg)
+
 	// ── Keybinding commands (MainCmd) ───────────────────────────────────
 
 	case MainCmd:
@@ -539,11 +564,21 @@ func (m *MainLayer) Status() (string, lipgloss.Style) {
 	return text, style
 }
 
-func (m *MainLayer) WantsKeyboardInput() bool {
-	if t := m.ActiveTerm(); t != nil && t.ScrollbackActive() {
-		return true
+// Raw byte sequences for PageUp (\x1b[5~) and PageDown (\x1b[6~).
+var (
+	rawPgUp             = []byte{0x1b, '[', '5', '~'}
+	rawPgDown           = []byte{0x1b, '[', '6', '~'}
+	scrollbackKeyFilter = &KeyboardFilter{Keys: [][]byte{rawPgUp, rawPgDown}}
+)
+
+func (m *MainLayer) WantsKeyboardInput() *KeyboardFilter {
+	if t := m.ActiveTerm(); t != nil {
+		if t.ScrollbackActive() {
+			return allKeysFilter
+		}
+		return scrollbackKeyFilter
 	}
-	return false
+	return nil
 }
 
 // UpgradeAvailable reports whether any upgrade is available.

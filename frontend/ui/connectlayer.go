@@ -348,7 +348,7 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-func (c *ConnectLayer) WantsKeyboardInput() bool { return false }
+func (c *ConnectLayer) WantsKeyboardInput() *KeyboardFilter { return nil }
 
 func (c *ConnectLayer) Status() (string, lipgloss.Style) {
 	return "connect to server", lipgloss.Style{}

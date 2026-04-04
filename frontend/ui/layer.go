@@ -5,15 +5,25 @@ import (
 	"termd/pkg/tui"
 )
 
+// KeyboardFilter specifies what keyboard input a layer wants routed
+// through bubbletea's key parser rather than forwarded raw to the server.
+type KeyboardFilter struct {
+	All  bool     // intercept all keyboard input
+	Keys [][]byte // intercept only these specific raw byte sequences
+}
+
+// allKeysFilter is returned by layers that want all keyboard input.
+var allKeysFilter = &KeyboardFilter{All: true}
+
 // TermdLayer extends tui.Layer with termd-specific capabilities.
 // All termd layers implement this interface.
 type TermdLayer interface {
 	tui.Layer
 
-	// WantsKeyboardInput returns true if this layer needs keyboard
-	// input routed through bubbletea's key parser rather than
-	// forwarded raw to the server.
-	WantsKeyboardInput() bool
+	// WantsKeyboardInput returns a filter describing which keys this
+	// layer wants routed through bubbletea's key parser. Returns nil
+	// if the layer doesn't need any keyboard input.
+	WantsKeyboardInput() *KeyboardFilter
 
 	// Status returns text and style for the status bar.
 	Status() (text string, style lipgloss.Style)
@@ -42,12 +52,29 @@ type requestState struct {
 }
 
 // needsFocusRouting iterates the layer stack and returns true if any
-// TermdLayer reports WantsKeyboardInput().
+// TermdLayer wants all keyboard input routed through bubbletea.
 func needsFocusRouting(stack *tui.Stack) bool {
 	for _, l := range stack.Layers() {
-		if tl, ok := l.(TermdLayer); ok && tl.WantsKeyboardInput() {
-			return true
+		if tl, ok := l.(TermdLayer); ok {
+			if f := tl.WantsKeyboardInput(); f != nil && f.All {
+				return true
+			}
 		}
 	}
 	return false
 }
+
+// collectKeyFilters gathers specific raw byte sequences that layers
+// want intercepted from raw input and delivered through bubbletea.
+func collectKeyFilters(stack *tui.Stack) [][]byte {
+	var keys [][]byte
+	for _, l := range stack.Layers() {
+		if tl, ok := l.(TermdLayer); ok {
+			if f := tl.WantsKeyboardInput(); f != nil && !f.All {
+				keys = append(keys, f.Keys...)
+			}
+		}
+	}
+	return keys
+}
+

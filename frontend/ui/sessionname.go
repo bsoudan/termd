@@ -116,7 +116,7 @@ func (l *SessionNameLayer) View(width, height int, active bool) []*lipgloss.Laye
 	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
 }
 
-func (l *SessionNameLayer) WantsKeyboardInput() bool { return true }
+func (l *SessionNameLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (l *SessionNameLayer) Status() (string, lipgloss.Style) {
 	return "new session", lipgloss.Style{}

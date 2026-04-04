@@ -314,7 +314,7 @@ func (p *CommandPaletteLayer) buildContent(overlayW, height int) string {
 	return content
 }
 
-func (p *CommandPaletteLayer) WantsKeyboardInput() bool { return true }
+func (p *CommandPaletteLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (p *CommandPaletteLayer) Status() (string, lipgloss.Style) {
 	return "run command", lipgloss.Style{}

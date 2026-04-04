@@ -96,7 +96,7 @@ func (p *ProgramPickerLayer) View(width, height int, active bool) []*lipgloss.La
 	return []*lipgloss.Layer{lipgloss.NewLayer(dialog).X(x).Y(y).Z(1)}
 }
 
-func (p *ProgramPickerLayer) WantsKeyboardInput() bool { return true }
+func (p *ProgramPickerLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (p *ProgramPickerLayer) Status() (string, lipgloss.Style) {
 	return "select program", lipgloss.Style{}
