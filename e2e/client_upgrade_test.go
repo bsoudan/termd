@@ -342,9 +342,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 
 	// ── Step 3: Open upgrade dialog (ctrl+b u) ────────────────────────
 	pio.WaitForSilence(200 * time.Millisecond)
-	pio.Write([]byte{0x02}) // ctrl+b
-	pio.WaitForSilence(100 * time.Millisecond)
-	pio.Write([]byte("u"))
+	pio.Write([]byte{0x02, 'u'})
 
 	pio.WaitFor(t, "Press enter to upgrade", 5*time.Second)
 	t.Log("upgrade dialog visible")
@@ -398,9 +396,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 
 	// ── Step 8: Verify both versions via the status pane ──────────────
 	pio.WaitForSilence(500 * time.Millisecond)
-	pio.Write([]byte{0x02}) // ctrl+b
-	pio.WaitForSilence(100 * time.Millisecond)
-	pio.Write([]byte("s"))
+	pio.Write([]byte{0x02, 's'})
 
 	// The status pane shows both client and server versions.
 	// Both should be upgrade-test-v2. We check the "Version:" label

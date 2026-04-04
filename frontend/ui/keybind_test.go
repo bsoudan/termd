@@ -271,6 +271,13 @@ func TestIsAlwaysKey(t *testing.T) {
 	}
 }
 
+// lookupChord is a test helper that looks up a space-separated chord
+// key sequence in the registry trie.
+func lookupChord(r *Registry, key string) (*resolvedBinding, bool) {
+	b, _ := r.MatchChord(strings.Fields(key))
+	return b, b != nil
+}
+
 func TestRegistryNative(t *testing.T) {
 	r := NewRegistry("native", "", nil)
 
@@ -289,8 +296,8 @@ func TestRegistryNative(t *testing.T) {
 		{"c", "open-tab"},
 		{"x", "close-tab"},
 		{"?", "show-help"},
-		{"S", "open-session"},
-		{"X", "close-session"},
+		{"S o", "open-session"},
+		{"S c", "close-session"},
 		{"w", "switch-session"},
 		{"[", "enter-scrollback"},
 		{"r", "refresh-screen"},
@@ -302,7 +309,7 @@ func TestRegistryNative(t *testing.T) {
 		{"ctrl+b", "send-prefix"},
 	}
 	for _, tt := range chordTests {
-		b, ok := r.chords[tt.key]
+		b, ok := lookupChord(r, tt.key)
 		if !ok {
 			t.Errorf("native: chord %q not found", tt.key)
 			continue
@@ -312,7 +319,7 @@ func TestRegistryNative(t *testing.T) {
 		}
 	}
 
-	if b := r.chords["1"]; b.args != "1" {
+	if b, _ := lookupChord(r, "1"); b.args != "1" {
 		t.Errorf("native: switch-tab 1 args = %q, want %q", b.args, "1")
 	}
 
@@ -350,22 +357,22 @@ func TestRegistryTmux(t *testing.T) {
 	if r.PrefixKey != 0x02 {
 		t.Fatalf("tmux prefix = 0x%02x, want 0x02", r.PrefixKey)
 	}
-	if b, ok := r.chords["n"]; !ok || b.command.Name != "next-tab" {
+	if b, ok := lookupChord(r, "n"); !ok || b.command.Name != "next-tab" {
 		t.Errorf("tmux: chord 'n' should be next-tab, got %v", b)
 	}
-	if b, ok := r.chords["p"]; !ok || b.command.Name != "prev-tab" {
+	if b, ok := lookupChord(r, "p"); !ok || b.command.Name != "prev-tab" {
 		t.Errorf("tmux: chord 'p' should be prev-tab, got %v", b)
 	}
-	if b, ok := r.chords["&"]; !ok || b.command.Name != "close-tab" {
+	if b, ok := lookupChord(r, "&"); !ok || b.command.Name != "close-tab" {
 		t.Errorf("tmux: chord '&' should be close-tab, got %v", b)
 	}
 	if len(r.always) != 0 {
 		t.Errorf("tmux: %d always bindings, want 0", len(r.always))
 	}
-	if b, ok := r.chords[")"]; !ok || b.command.Name != "next-session" {
+	if b, ok := lookupChord(r, ")"); !ok || b.command.Name != "next-session" {
 		t.Errorf("tmux: chord ')' should be next-session, got %v", b)
 	}
-	if b, ok := r.chords["("]; !ok || b.command.Name != "prev-session" {
+	if b, ok := lookupChord(r, "("); !ok || b.command.Name != "prev-session" {
 		t.Errorf("tmux: chord '(' should be prev-session, got %v", b)
 	}
 }
@@ -379,10 +386,10 @@ func TestRegistryScreen(t *testing.T) {
 	if r.PrefixStr != "ctrl+a" {
 		t.Fatalf("screen prefix str = %q, want %q", r.PrefixStr, "ctrl+a")
 	}
-	if b, ok := r.chords["k"]; !ok || b.command.Name != "close-tab" {
+	if b, ok := lookupChord(r, "k"); !ok || b.command.Name != "close-tab" {
 		t.Errorf("screen: chord 'k' should be close-tab, got %v", b)
 	}
-	if b, ok := r.chords["ctrl+a"]; !ok || b.command.Name != "send-prefix" {
+	if b, ok := lookupChord(r, "ctrl+a"); !ok || b.command.Name != "send-prefix" {
 		t.Errorf("screen: chord 'ctrl+a' should be send-prefix, got %v", b)
 	}
 }
@@ -410,7 +417,7 @@ func TestRegistryOverride(t *testing.T) {
 	}
 	r := NewRegistry("native", "", overrides)
 
-	b, ok := r.chords["x"]
+	b, ok := lookupChord(r, "x")
 	if !ok {
 		t.Fatal("override: chord 'x' not found")
 	}
@@ -436,7 +443,7 @@ func TestRegistryUnbind(t *testing.T) {
 	r := NewRegistry("native", "", overrides)
 
 	// Native normally has "x" bound to close-tab — should be gone.
-	if b, ok := r.chords["x"]; ok && b.command.Name == "close-tab" {
+	if b, ok := lookupChord(r, "x"); ok && b.command.Name == "close-tab" {
 		t.Error("unbind: chord 'x' should not be bound to close-tab")
 	}
 }
@@ -447,7 +454,7 @@ func TestRegistryMultipleBindings(t *testing.T) {
 	}
 	r := NewRegistry("native", "", overrides)
 
-	if b, ok := r.chords["d"]; !ok || b.command.Name != "detach" {
+	if b, ok := lookupChord(r, "d"); !ok || b.command.Name != "detach" {
 		t.Error("multi: chord 'd' should be detach")
 	}
 	found := false
@@ -467,10 +474,10 @@ func TestRegistryPrefixOverride(t *testing.T) {
 	if r.PrefixKey != 0x01 {
 		t.Fatalf("prefix override = 0x%02x, want 0x01", r.PrefixKey)
 	}
-	if b, ok := r.chords["ctrl+a"]; !ok || b.command.Name != "send-prefix" {
+	if b, ok := lookupChord(r, "ctrl+a"); !ok || b.command.Name != "send-prefix" {
 		t.Errorf("prefix override: send-prefix chord should be 'ctrl+a', got %v", b)
 	}
-	if _, ok := r.chords["ctrl+b"]; ok {
+	if _, ok := lookupChord(r, "ctrl+b"); ok {
 		t.Error("prefix override: ctrl+b should not be bound after changing prefix to ctrl+a")
 	}
 }
@@ -503,6 +510,83 @@ func TestRegistryDispatch(t *testing.T) {
 	}
 	if cmd := r.Dispatch("Z"); cmd != nil {
 		t.Error("Dispatch('Z') should return nil for unbound key")
+	}
+}
+
+func TestMatchChordMultiKey(t *testing.T) {
+	r := NewRegistry("native", "", nil)
+
+	// "S" is a prefix for "S o" and "S c" but not a complete match.
+	b, isPrefix := r.MatchChord([]string{"S"})
+	if b != nil {
+		t.Error("MatchChord(['S']) should not be a complete match")
+	}
+	if !isPrefix {
+		t.Error("MatchChord(['S']) should be a valid prefix")
+	}
+
+	// "S o" is a complete match for open-session.
+	b, isPrefix = r.MatchChord([]string{"S", "o"})
+	if b == nil {
+		t.Fatal("MatchChord(['S','o']) should match open-session")
+	}
+	if b.command.Name != "open-session" {
+		t.Errorf("MatchChord(['S','o']) = %q, want open-session", b.command.Name)
+	}
+	if isPrefix {
+		t.Error("MatchChord(['S','o']) should not be a prefix")
+	}
+
+	// "S c" is a complete match for close-session.
+	b, isPrefix = r.MatchChord([]string{"S", "c"})
+	if b == nil {
+		t.Fatal("MatchChord(['S','c']) should match close-session")
+	}
+	if b.command.Name != "close-session" {
+		t.Errorf("MatchChord(['S','c']) = %q, want close-session", b.command.Name)
+	}
+
+	// "S z" has no match and is not a prefix.
+	b, isPrefix = r.MatchChord([]string{"S", "z"})
+	if b != nil || isPrefix {
+		t.Error("MatchChord(['S','z']) should have no match and no prefix")
+	}
+
+	// "d" is a single-key match (detach), not a prefix.
+	b, isPrefix = r.MatchChord([]string{"d"})
+	if b == nil || b.command.Name != "detach" {
+		t.Error("MatchChord(['d']) should match detach")
+	}
+	if isPrefix {
+		t.Error("MatchChord(['d']) should not be a prefix")
+	}
+
+	// Unknown key has no match.
+	b, isPrefix = r.MatchChord([]string{"Z"})
+	if b != nil || isPrefix {
+		t.Error("MatchChord(['Z']) should have no match")
+	}
+}
+
+func TestRawSeqToChordKey(t *testing.T) {
+	tests := []struct {
+		input []byte
+		want  string
+	}{
+		{[]byte{'d'}, "d"},
+		{[]byte{'S'}, "S"},
+		{[]byte{'?'}, "?"},
+		{[]byte{0x02}, "ctrl+b"},
+		{[]byte{0x01}, "ctrl+a"},
+		{[]byte{0x1b, '[', 'A'}, ""},   // escape sequence → no match
+		{[]byte{0x00}, ""},              // null → no match
+		{[]byte{0x7f}, ""},              // DEL → no match
+	}
+	for _, tt := range tests {
+		got := rawSeqToChordKey(tt.input)
+		if got != tt.want {
+			t.Errorf("rawSeqToChordKey(%v) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
 

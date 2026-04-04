@@ -274,10 +274,8 @@ func getStatusPID(t *testing.T, fe *frontend) int {
 	t.Helper()
 	// Let the TUI settle before sending keys.
 	fe.WaitForSilence(200 * time.Millisecond)
-	// Open status pane: prefix (ctrl+b) then 's'.
-	fe.Write([]byte{0x02}) // ctrl+b
-	fe.WaitForSilence(100 * time.Millisecond)
-	fe.Write([]byte("s"))
+	// Open status pane: ctrl+b s
+	fe.Write([]byte{0x02, 's'})
 
 	// Wait for the PID line to appear on screen. The line looks like
 	// "│   PID:       12345                           │" with border chars.

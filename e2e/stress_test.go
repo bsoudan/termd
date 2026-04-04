@@ -204,10 +204,8 @@ func (tc *tuiClient) tryRecover() {
 	tc.fe.WaitForSilence(300 * time.Millisecond)
 }
 
-func (tc *tuiClient) ctrlB(key byte) {
-	tc.fe.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	tc.fe.Write([]byte{key})
+func (tc *tuiClient) ctrlB(keys ...byte) {
+	tc.fe.Write(append([]byte{0x02}, keys...))
 }
 
 func (tc *tuiClient) run(ctx context.Context) {
@@ -374,7 +372,7 @@ func (tc *tuiClient) opSendLiteralCtrlB() {
 }
 
 func (tc *tuiClient) opCreateSession() {
-	tc.ctrlB('S')
+	tc.ctrlB('S', 'o')
 	if !tc.tryWaitFor("Session name:", opTimeout) {
 		tc.errs.add("[%s] create_session: timeout waiting for name prompt", tc.name)
 		tc.tryRecover()
@@ -406,7 +404,7 @@ func (tc *tuiClient) opKillSession() {
 	if tc.sessionCount <= 1 {
 		return
 	}
-	tc.ctrlB('X')
+	tc.ctrlB('S', 'c')
 	tc.fe.WaitForSilence(500 * time.Millisecond)
 	tc.sessionCount--
 }
@@ -794,7 +792,7 @@ func TestStress(t *testing.T) {
 		}
 		tc.fe.WaitForSilence(200 * time.Millisecond)
 
-		tc.ctrlB('S')
+		tc.ctrlB('S', 'o')
 		if !tc.tryWaitFor("Session name:", 5*time.Second) {
 			t.Fatalf("[%s] session name prompt never appeared", name)
 		}

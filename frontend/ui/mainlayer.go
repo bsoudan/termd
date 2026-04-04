@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	termlog "termd/frontend/log"
 	"termd/frontend/protocol"
 	"termd/pkg/tui"
@@ -52,6 +53,11 @@ type MainLayer struct {
 	connectFn    func(string) // dials a server and sends ConnectedMsg
 	sessionName  string       // initial session name, used after deferred connect
 	swapServerFn func(*Server) // updates the requestFn's server reference
+
+	// Command mode: active after the prefix key is pressed, buffering
+	// chord keys until a match or mismatch is found.
+	commandMode   bool
+	commandBuffer []string
 }
 
 func NewMainLayer(
@@ -101,6 +107,89 @@ func (m *MainLayer) sendRawToServer(raw []byte) {
 	if s := m.activeSessionLayer(); s != nil {
 		s.sendRawToServer(raw)
 	}
+}
+
+// enterCommandMode is called when the prefix key is detected. It sets
+// command mode so subsequent raw input is buffered and matched against
+// the chord trie instead of being forwarded to the server.
+func (m *MainLayer) enterCommandMode() {
+	m.commandMode = true
+	m.commandBuffer = m.commandBuffer[:0]
+}
+
+func (m *MainLayer) exitCommandMode() {
+	m.commandMode = false
+	m.commandBuffer = m.commandBuffer[:0]
+}
+
+// rawSeqToChordKey converts a single raw terminal token to a chord key
+// string for trie matching. Printable bytes map to themselves ("d", "S"),
+// ctrl+letter maps to "ctrl+x". Escape sequences and other bytes return
+// "" (no match, exits command mode).
+func rawSeqToChordKey(seq []byte) string {
+	if len(seq) == 1 {
+		b := seq[0]
+		if b >= 0x20 && b <= 0x7e {
+			return string(rune(b))
+		}
+		if b >= 1 && b <= 26 {
+			return "ctrl+" + string(rune('a'+b-1))
+		}
+	}
+	return ""
+}
+
+// handleCommandInput processes raw bytes while in command mode. It
+// iterates one ANSI token at a time, converts each to a chord key,
+// and checks the trie. On a full match the command is dispatched;
+// on a prefix match we stay in command mode; otherwise we exit.
+// Any unprocessed bytes after command mode exits are re-sent as a
+// new RawInputMsg for normal processing.
+func (m *MainLayer) handleCommandInput(raw []byte) tea.Cmd {
+	pos := 0
+	for pos < len(raw) {
+		_, _, n, _ := ansi.DecodeSequence(raw[pos:], ansi.NormalState, nil)
+		if n == 0 {
+			break
+		}
+		seq := raw[pos : pos+n]
+		pos += n
+
+		key := rawSeqToChordKey(seq)
+		if key == "" {
+			m.exitCommandMode()
+			return resendRemainder(raw, pos)
+		}
+
+		m.commandBuffer = append(m.commandBuffer, key)
+
+		match, isPrefix := m.registry.MatchChord(m.commandBuffer)
+		if match != nil && !isPrefix {
+			m.exitCommandMode()
+			cmd := cmdForBinding(match.command, match.args)
+			if resend := resendRemainder(raw, pos); resend != nil {
+				return tea.Batch(cmd, resend)
+			}
+			return cmd
+		}
+		if !isPrefix && match == nil {
+			m.exitCommandMode()
+			return resendRemainder(raw, pos)
+		}
+		// isPrefix → stay in command mode, wait for more keys
+	}
+	return nil
+}
+
+// resendRemainder returns a tea.Cmd that re-sends unprocessed bytes
+// as a new RawInputMsg, or nil if there are none.
+func resendRemainder(raw []byte, pos int) tea.Cmd {
+	if pos >= len(raw) {
+		return nil
+	}
+	rest := make([]byte, len(raw)-pos)
+	copy(rest, raw[pos:])
+	return func() tea.Msg { return RawInputMsg(rest) }
 }
 
 // Init delegates to the first session and starts the hint timer.
@@ -543,6 +632,13 @@ func (m *MainLayer) viewNoSession(width, height int) []*lipgloss.Layer {
 // Status returns the active session's status, overlaid with reconnecting
 // info when the connection is down.
 func (m *MainLayer) Status() (string, lipgloss.Style) {
+	if m.commandMode {
+		if len(m.commandBuffer) > 0 {
+			return "? " + strings.Join(m.commandBuffer, " "), lipgloss.Style{}
+		}
+		return "?", lipgloss.Style{}
+	}
+
 	if m.connStatus == "reconnecting" {
 		secs := int(time.Until(m.retryAt).Seconds()) + 1
 		return fmt.Sprintf("reconnecting to %s in %ds...", m.endpoint, secs), statusBoldRed

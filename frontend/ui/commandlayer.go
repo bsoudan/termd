@@ -7,29 +7,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// CommandLayer is a temporary layer pushed when the prefix key is detected.
-// It captures the next KeyPressMsg, looks up the chord in the registry,
-// dispatches the command, and pops itself.
-type CommandLayer struct {
-	registry *Registry
-}
-
-func (c *CommandLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return nil, nil, false
-	}
-
-	cmd := c.registry.Dispatch(key.String())
-	return QuitLayerMsg{}, cmd, true
-}
-
-func (c *CommandLayer) Activate() tea.Cmd                            { return nil }
-func (c *CommandLayer) Deactivate()                                   {}
-func (c *CommandLayer) View(width, height int, active bool) []*lipgloss.Layer { return nil }
-func (c *CommandLayer) WantsKeyboardInput() *KeyboardFilter            { return allKeysFilter }
-func (c *CommandLayer) Status() (string, lipgloss.Style)              { return "?", lipgloss.Style{} }
-
 // HintLayer is a temporary layer pushed after startup to show
 // "ctrl+b ? for help" in the status bar and the termd logo in the
 // upper right corner. It pops itself on hideHintMsg.

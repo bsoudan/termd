@@ -204,9 +204,7 @@ func TestKeybindOpenSessionTmux(t *testing.T) {
 	fe.WaitFor(t, "termd$", 10*time.Second)
 
 	// ctrl+b $ (open-session in tmux) should open the connect overlay.
-	fe.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	fe.Write([]byte("$"))
+	fe.Write([]byte{0x02, '$'})
 	fe.WaitFor(t, "type a server address", 5*time.Second)
 
 	// Cancel and verify we're back.

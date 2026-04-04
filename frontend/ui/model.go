@@ -92,17 +92,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// RawInputMsg: Model handles focus mode routing, prefix key detection,
-	// and key filter interception before the normal layer iteration.
+	// RawInputMsg: Model handles command mode, focus mode routing,
+	// prefix key detection, and key filter interception before the
+	// normal layer iteration.
+	//  - Command mode buffers keys after the prefix and matches
+	//    against the chord trie (handled synchronously in MainLayer).
 	//  - Focus mode feeds one sequence at a time through pipeW so
-	//    overlay/command layers can pop between keystrokes.
-	//  - Prefix key detection pushes CommandLayer before delivering the
-	//    remaining bytes, ensuring proper sequencing.
+	//    overlay layers can pop between keystrokes.
+	//  - Prefix key detection enters command mode and passes any
+	//    remaining bytes to the chord buffer.
 	//  - Key filters intercept specific sequences (e.g. PageUp/PageDown)
 	//    and route them through bubbletea's key parser while forwarding
 	//    the rest to the server.
 	if raw, ok := msg.(RawInputMsg); ok {
 		main := m.stack.Layers()[0].(*MainLayer)
+		if main.commandMode {
+			return m, main.handleCommandInput([]byte(raw))
+		}
 		if needsFocusRouting(m.stack) {
 			return m.handleFocusInput(raw, main.pipeW)
 		}
@@ -124,9 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // handleFocusInput routes raw input through pipeW one sequence at a time.
-// This allows layers to pop between keystrokes — for example, CommandLayer
-// handles one key and pops, then remaining bytes arrive as a new RawInputMsg
-// in the next Update cycle where CommandLayer is no longer on the stack.
+// This allows overlay layers (help, scrollback, etc.) to receive
+// tea.KeyPressMsg events. Each sequence is written to pipeW individually;
+// remaining bytes are re-sent as a new RawInputMsg for the next cycle.
 func (m Model) handleFocusInput(raw RawInputMsg, pipeW io.Writer) (tea.Model, tea.Cmd) {
 	_, _, n, _ := ansi.DecodeSequence([]byte(raw), ansi.NormalState, nil)
 	if n <= 0 {
@@ -149,25 +155,20 @@ func (m Model) handleFocusInput(raw RawInputMsg, pipeW io.Writer) (tea.Model, te
 	return m, writeCmd
 }
 
-// handlePrefixDetected handles a RawInputMsg that contains ctrl+b.
-// Bytes before ctrl+b are forwarded to the server. A CommandLayer is
-// pushed, then any bytes after ctrl+b are re-sent as a new RawInputMsg
-// for CommandLayer to process. tea.Sequence guarantees the push happens
-// before the re-send.
+// handlePrefixDetected handles a RawInputMsg that contains the prefix key.
+// Bytes before the prefix are forwarded to the server. MainLayer enters
+// command mode synchronously, and any remaining bytes are passed to the
+// chord buffer immediately — no async layer push needed.
 func (m Model) handlePrefixDetected(raw RawInputMsg, idx int, main *MainLayer) (tea.Model, tea.Cmd) {
 	if idx > 0 {
 		main.sendRawToServer(raw[:idx])
 	}
-
-	pushCmd := func() tea.Msg { return tui.PushLayerMsg{Layer: &CommandLayer{registry: m.registry}} }
+	main.enterCommandMode()
 	rest := raw[idx+1:]
 	if len(rest) > 0 {
-		restCopy := make([]byte, len(rest))
-		copy(restCopy, rest)
-		resendCmd := func() tea.Msg { return RawInputMsg(restCopy) }
-		return m, tea.Sequence(pushCmd, resendCmd)
+		return m, main.handleCommandInput(rest)
 	}
-	return m, pushCmd
+	return m, nil
 }
 
 // handleFilteredInput scans raw input for sequences matching key filters.

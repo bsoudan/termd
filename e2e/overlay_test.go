@@ -21,9 +21,7 @@ func TestHelpOverlay(t *testing.T) {
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open help overlay: ctrl+b ?
-	pio.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	pio.Write([]byte("?"))
+	pio.Write([]byte{0x02, '?'})
 
 	// Wait for the help overlay to render with keybinding content.
 	pio.WaitFor(t, "detach", 5*time.Second)
@@ -137,9 +135,7 @@ func TestCommandPalette(t *testing.T) {
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open command palette: ctrl+b :
-	pio.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	pio.Write([]byte(":"))
+	pio.Write([]byte{0x02, ':'})
 
 	// Should show the palette with commands listed.
 	pio.WaitFor(t, "detach", 5*time.Second)
@@ -164,9 +160,7 @@ func TestCommandPaletteEsc(t *testing.T) {
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open command palette.
-	pio.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	pio.Write([]byte(":"))
+	pio.Write([]byte{0x02, ':'})
 	pio.WaitFor(t, "detach", 5*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 

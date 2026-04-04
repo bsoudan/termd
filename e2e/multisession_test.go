@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// connectViaUI sends ctrl+b S to open the connect overlay, types the
+// connectViaUI sends ctrl+b S o to open the connect overlay, types the
 // socket address, and presses enter. Waits for a shell prompt.
 func connectViaUI(t *testing.T, pio *ptyIO, socketPath string) {
 	t.Helper()
-	pio.Write([]byte("\x02S"))
+	pio.Write([]byte("\x02So"))
 	pio.WaitFor(t, "type a server address", 5*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 	pio.Write([]byte(socketPath))
@@ -44,9 +44,7 @@ func TestKillSession(t *testing.T) {
 
 	pio.WaitFor(t, "termd$", 10*time.Second)
 
-	pio.Write([]byte{0x02})
-	time.Sleep(50 * time.Millisecond)
-	pio.Write([]byte("X"))
+	pio.Write([]byte{0x02, 'S', 'c'})
 
 	pio.WaitFor(t, "no session", 10*time.Second)
 }
@@ -60,7 +58,7 @@ func TestConnectOverlayCancel(t *testing.T) {
 
 	pio.WaitFor(t, "termd$", 10*time.Second)
 
-	pio.Write([]byte("\x02S"))
+	pio.Write([]byte("\x02So"))
 	pio.WaitFor(t, "type a server address", 5*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 

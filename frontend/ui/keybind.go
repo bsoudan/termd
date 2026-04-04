@@ -41,11 +41,60 @@ type alwaysBinding struct {
 	key     string
 }
 
+// chordNode is a trie node for matching multi-key chord sequences.
+// Single-key chords like "d" are a trie of depth 1; multi-key chords
+// like "S o" (press S then o) are deeper.
+type chordNode struct {
+	binding  *resolvedBinding
+	children map[string]*chordNode
+}
+
+func (n *chordNode) insert(keys []string, b resolvedBinding) {
+	cur := n
+	for _, k := range keys {
+		if cur.children == nil {
+			cur.children = make(map[string]*chordNode)
+		}
+		child, ok := cur.children[k]
+		if !ok {
+			child = &chordNode{}
+			cur.children[k] = child
+		}
+		cur = child
+	}
+	cur.binding = &b
+}
+
+func (n *chordNode) match(keys []string) (binding *resolvedBinding, isPrefix bool) {
+	cur := n
+	for _, k := range keys {
+		if cur.children == nil {
+			return nil, false
+		}
+		child, ok := cur.children[k]
+		if !ok {
+			return nil, false
+		}
+		cur = child
+	}
+	return cur.binding, len(cur.children) > 0
+}
+
+// walk calls fn for each terminal binding in the trie.
+func (n *chordNode) walk(path []string, fn func(keyStr string, b *resolvedBinding)) {
+	if n.binding != nil {
+		fn(strings.Join(path, " "), n.binding)
+	}
+	for k, child := range n.children {
+		child.walk(append(path, k), fn)
+	}
+}
+
 // Registry holds all commands and resolved bindings.
 type Registry struct {
 	commands     []*Command
 	byName       map[string]*Command
-	chords       map[string]resolvedBinding
+	chordRoot    chordNode
 	always       []alwaysBinding
 	displayOrder []displayEntry
 
@@ -78,9 +127,17 @@ func cmdForBinding(cmd *Command, args string) tea.Cmd {
 	}
 }
 
-// Dispatch looks up a chord key and returns the command's tea.Cmd, or nil.
+// MatchChord checks the chord trie for the given key sequence.
+// Returns the matched binding (nil if no exact match) and whether
+// the sequence is a valid prefix of a longer chord.
+func (r *Registry) MatchChord(keys []string) (*resolvedBinding, bool) {
+	return r.chordRoot.match(keys)
+}
+
+// Dispatch looks up a single chord key and returns the command's tea.Cmd, or nil.
 func (r *Registry) Dispatch(key string) tea.Cmd {
-	if b, ok := r.chords[key]; ok {
+	b, _ := r.MatchChord([]string{key})
+	if b != nil {
 		return cmdForBinding(b.command, b.args)
 	}
 	return nil
@@ -119,12 +176,12 @@ func (r *Registry) PaletteEntries() []PaletteEntry {
 	entries = nil
 	// Walk all bindings (chords first, then always) to get first key per invocation.
 	firstKey := make(map[string]string)
-	for key, b := range r.chords {
+	r.chordRoot.walk(nil, func(keyStr string, b *resolvedBinding) {
 		inv := commandInvocation(b.command.Name, b.args)
 		if _, ok := firstKey[inv]; !ok {
-			firstKey[inv] = r.PrefixStr + ", " + key
+			firstKey[inv] = r.PrefixStr + ", " + strings.ReplaceAll(keyStr, " ", ", ")
 		}
-	}
+	})
 	for _, ab := range r.always {
 		inv := commandInvocation(ab.command.Name, ab.args)
 		if _, ok := firstKey[inv]; !ok {
@@ -244,8 +301,8 @@ func nativePreset() stylePreset {
 			{"ctrl+f7", "switch-tab", "7"},
 			{"ctrl+f8", "switch-tab", "8"},
 			{"ctrl+f9", "switch-tab", "9"},
-			{"S", "open-session", ""},
-			{"X", "close-session", ""},
+			{"S o", "open-session", ""},
+			{"S c", "close-session", ""},
 			{"ctrl+.", "next-session", ""},
 			{"ctrl+,", "prev-session", ""},
 			{"w", "switch-session", ""},
@@ -539,7 +596,7 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 		}
 	}
 
-	chords := make(map[string]resolvedBinding)
+	var chordRoot chordNode
 	var always []alwaysBinding
 
 	type catBinding struct {
@@ -560,7 +617,8 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 			}
 			always = append(always, alwaysBinding{raw: raw, command: cmd, args: b.args, key: b.key})
 		} else {
-			chords[b.key] = resolvedBinding{command: cmd, args: b.args, key: b.key}
+			keys := strings.Fields(b.key)
+			chordRoot.insert(keys, resolvedBinding{command: cmd, args: b.args, key: b.key})
 		}
 		catBindings[cmd.Category] = append(catBindings[cmd.Category], catBinding{b: b, cmd: cmd})
 	}
@@ -579,7 +637,7 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 			}
 			keyDisp := cb.b.key
 			if !isAlwaysKey(cb.b.key) {
-				keyDisp = prefixStr + ", " + cb.b.key
+				keyDisp = prefixStr + ", " + strings.ReplaceAll(cb.b.key, " ", ", ")
 			}
 			de := displayEntry{
 				keyDisplay:  keyDisp,
@@ -596,7 +654,7 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 	return &Registry{
 		commands:     cmds,
 		byName:       byName,
-		chords:       chords,
+		chordRoot:    chordRoot,
 		always:       always,
 		displayOrder: display,
 		PrefixKey:    prefixByte,

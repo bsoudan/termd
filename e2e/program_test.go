@@ -154,8 +154,7 @@ func TestProgramPickerSingleAutoSpawn(t *testing.T) {
 	pio.WaitFor(t, "$", 10*time.Second)
 
 	// Press ctrl+b c — with only 1 program, should spawn immediately (no picker)
-	pio.Write([]byte{0x02}) // ctrl+b
-	pio.Write([]byte("c"))
+	pio.Write([]byte{0x02, 'c'})
 
 	// Should get a second tab without seeing a picker dialog
 	pio.WaitForScreen(t, func(lines []string) bool {
