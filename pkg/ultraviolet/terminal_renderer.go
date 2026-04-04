@@ -937,8 +937,7 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 					oLastCell--
 				}
 			} else if n >= firstCell && newLine.At(n) != nil && newLine.At(n).Width > 1 {
-				next := newLine.At(n + 1)
-				for next != nil && next.IsZero() {
+				for next := newLine.At(n + 1); next != nil && next.IsZero(); next = newLine.At(n + 1) {
 					n++
 					oLastCell++
 				}

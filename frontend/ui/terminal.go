@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
@@ -382,7 +383,8 @@ func (t *TerminalLayer) MouseModes() string {
 
 func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow, cursorCol int, showCursor bool, disconnected bool) {
 	var cur te.Attr // tracks current SGR state (zero = default)
-	for col := range width {
+	col := 0
+	for col < width {
 		var cell te.Cell
 		if col < len(row) {
 			cell = row[col]
@@ -413,6 +415,13 @@ func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow
 		ch := cell.Data
 		if ch == "" || ch == "\x00" {
 			ch = " "
+			col++
+		} else {
+			w := runewidth.StringWidth(ch)
+			if w < 1 {
+				w = 1
+			}
+			col += w
 		}
 		sb.WriteString(ch)
 	}
@@ -425,13 +434,23 @@ func renderCellLine(sb *strings.Builder, row []te.Cell, width, rowIdx, cursorRow
 // renderCellLineDim renders a row as plain text with no colors or attributes,
 // for use when the terminal is dimmed behind an overlay.
 func renderCellLineDim(sb *strings.Builder, row []te.Cell, width int) {
-	for col := range width {
+	col := 0
+	for col < width {
 		ch := " "
 		if col < len(row) {
 			ch = row[col].Data
 			if ch == "" || ch == "\x00" {
 				ch = " "
+				col++
+			} else {
+				w := runewidth.StringWidth(ch)
+				if w < 1 {
+					w = 1
+				}
+				col += w
 			}
+		} else {
+			col++
 		}
 		sb.WriteString(ch)
 	}
