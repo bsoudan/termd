@@ -8,7 +8,7 @@ import (
 )
 
 // HintLayer is a temporary layer pushed after startup to show
-// "ctrl+b ? for help" in the status bar and the termd logo in the
+// "ctrl+b ? for help" in the status bar and the nxtermd logo in the
 // upper right corner. It pops itself on hideHintMsg.
 type HintLayer struct {
 	registry *Registry

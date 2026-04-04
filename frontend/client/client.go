@@ -1,4 +1,4 @@
-// Package client provides a JSON-over-newline codec for termd server connections.
+// Package client provides a JSON-over-newline codec for nxtermd server connections.
 package client
 
 import (
@@ -11,8 +11,8 @@ import (
 	"os/user"
 	"path/filepath"
 
-	termlog "termd/frontend/log"
-	"termd/frontend/protocol"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/protocol"
 )
 
 // Client wraps a net.Conn with JSON framing. It starts a read goroutine

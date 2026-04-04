@@ -1,5 +1,5 @@
-# termd-tui keybindings configuration
-# Place this file at ~/.config/termd-tui/keybindings.toml
+# nxterm keybindings configuration
+# Place this file at ~/.config/nxterm/keybindings.toml
 #
 # style sets the base keybinding preset. All bindings below override the preset.
 # Options: "native" (default), "tmux", "screen", "zellij"

@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	te "termd/pkg/te"
-	"termd/frontend/protocol"
+	te "nxtermd/pkg/te"
+	"nxtermd/frontend/protocol"
 )
 
 // protocolCellsToTe converts protocol ScreenCell data to te.Cell for rendering.

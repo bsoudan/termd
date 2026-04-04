@@ -12,7 +12,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const serviceName = "termd.service"
+const serviceName = "nxtermd.service"
 
 func serviceUnitPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -49,7 +49,7 @@ func generateUnit(execPath string, cmd *cli.Command) string {
 	execLine := strings.Join(args, " ")
 
 	return fmt.Sprintf(`[Unit]
-Description=termd %s
+Description=nxtermd %s
 
 [Service]
 Type=notify
@@ -57,7 +57,7 @@ NotifyAccess=all
 ExecStart=%s
 ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
-Environment=TERMD_VERSION=%s
+Environment=NXNXTERMD_VERSION=%s
 Environment=PATH=%s
 
 [Install]
@@ -65,15 +65,15 @@ WantedBy=default.target
 `, version, execLine, version, os.Getenv("PATH"))
 }
 
-// readUnitVersion reads the TERMD_VERSION from an installed unit file.
+// readUnitVersion reads the NXTERMD_VERSION from an installed unit file.
 func readUnitVersion(unitPath string) string {
 	data, err := os.ReadFile(unitPath)
 	if err != nil {
 		return ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "Environment=TERMD_VERSION=") {
-			return strings.TrimPrefix(line, "Environment=TERMD_VERSION=")
+		if strings.HasPrefix(line, "Environment=NXTERMD_VERSION=") {
+			return strings.TrimPrefix(line, "Environment=NXTERMD_VERSION=")
 		}
 	}
 	return ""
@@ -93,7 +93,7 @@ func cmdStart(_ context.Context, cmd *cli.Command) error {
 
 	execPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("cannot find termd binary path: %w", err)
+		return fmt.Errorf("cannot find nxtermd binary path: %w", err)
 	}
 	execPath, err = filepath.Abs(execPath)
 	if err != nil {
@@ -106,12 +106,12 @@ func cmdStart(_ context.Context, cmd *cli.Command) error {
 		if installedVersion == version {
 			// Check if actually running
 			if _, err := systemctl("is-active", "--quiet", serviceName); err == nil {
-				fmt.Printf("termd %s is already running\n", version)
+				fmt.Printf("nxtermd %s is already running\n", version)
 				return nil
 			}
 			// Installed but not running — start it
 		} else {
-			return fmt.Errorf("termd %s is installed but current binary is %s; run 'termd stop' first", installedVersion, version)
+			return fmt.Errorf("nxtermd %s is installed but current binary is %s; run 'nxtermd stop' first", installedVersion, version)
 		}
 	}
 
@@ -152,7 +152,7 @@ func cmdStop(_ context.Context, cmd *cli.Command) error {
 	// Reload
 	systemctl("daemon-reload")
 
-	fmt.Println("termd stopped and service removed")
+	fmt.Println("nxtermd stopped and service removed")
 	return nil
 }
 
@@ -181,7 +181,7 @@ func cmdRestart(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if readUnitVersion(unitPath) == "" {
-		return fmt.Errorf("termd service is not installed; use 'termd start' first")
+		return fmt.Errorf("nxtermd service is not installed; use 'nxtermd start' first")
 	}
 
 	// Grab args from the existing unit before stopping
@@ -196,7 +196,7 @@ func cmdRestart(ctx context.Context, cmd *cli.Command) error {
 	// Reinstall with previous args + current binary
 	execPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("cannot find termd binary path: %w", err)
+		return fmt.Errorf("cannot find nxtermd binary path: %w", err)
 	}
 	execPath, err = filepath.Abs(execPath)
 	if err != nil {
@@ -209,7 +209,7 @@ func cmdRestart(ctx context.Context, cmd *cli.Command) error {
 	args = append(args, prevArgs...)
 	execLine := strings.Join(args, " ")
 
-	unit := fmt.Sprintf("[Unit]\nDescription=termd %s\n\n[Service]\nType=notify\nNotifyAccess=all\nExecStart=%s\nExecReload=/bin/kill -USR2 $MAINPID\nRestart=on-failure\nEnvironment=TERMD_VERSION=%s\nEnvironment=PATH=%s\n\n[Install]\nWantedBy=default.target\n",
+	unit := fmt.Sprintf("[Unit]\nDescription=nxtermd %s\n\n[Service]\nType=notify\nNotifyAccess=all\nExecStart=%s\nExecReload=/bin/kill -USR2 $MAINPID\nRestart=on-failure\nEnvironment=NXNXTERMD_VERSION=%s\nEnvironment=PATH=%s\n\n[Install]\nWantedBy=default.target\n",
 		version, execLine, version, os.Getenv("PATH"))
 
 	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
@@ -236,7 +236,7 @@ func cmdStatus(_ context.Context, cmd *cli.Command) error {
 
 	installedVersion := readUnitVersion(unitPath)
 	if installedVersion == "" {
-		fmt.Println("termd service is not installed")
+		fmt.Println("nxtermd service is not installed")
 		return nil
 	}
 

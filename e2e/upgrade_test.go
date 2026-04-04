@@ -23,11 +23,11 @@ func TestLiveUpgrade(t *testing.T) {
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
 
-	socketPath := filepath.Join(dir, "termd.sock")
+	socketPath := filepath.Join(dir, "nxtermd.sock")
 	hostKeyPath := filepath.Join(dir, "host_key")
 
 	// Start server with all transport types.
-	cmd := exec.Command("termd",
+	cmd := exec.Command("nxtermd",
 		"--ssh-host-key", hostKeyPath,
 		"--ssh-no-auth",
 		"unix:"+socketPath,
@@ -135,7 +135,7 @@ func TestLiveUpgrade(t *testing.T) {
 	// SSH — clear SSH_AUTH_SOCK so the client doesn't try to contact
 	// a real agent (which adds latency and is unnecessary with --ssh-no-auth).
 	{
-		feCmd := exec.Command("termd-tui", "--socket", "ssh://"+sshAddr)
+		feCmd := exec.Command("nxterm", "--socket", "ssh://"+sshAddr)
 		feCmd.Env = append(env, "TERM=dumb", "SSH_AUTH_SOCK=")
 		ptmx, err := pty.StartWithSize(feCmd, &pty.Winsize{Rows: 24, Cols: 80})
 		if err != nil {
@@ -152,7 +152,7 @@ func TestLiveUpgrade(t *testing.T) {
 
 	// Wait for all frontends to see the prompt.
 	for _, fe := range frontends {
-		fe.pio.WaitFor(t, "termd$", 10*time.Second)
+		fe.pio.WaitFor(t, "nxterm$", 10*time.Second)
 	}
 
 	// Type a unique marker in the Unix frontend's shell.
@@ -198,9 +198,9 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
 
-	socketPath := filepath.Join(dir, "termd.sock")
+	socketPath := filepath.Join(dir, "nxtermd.sock")
 
-	cmd := exec.Command("termd", "unix:"+socketPath)
+	cmd := exec.Command("nxtermd", "unix:"+socketPath)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -223,7 +223,7 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	// Start a frontend and wait for the shell prompt.
 	fe := startFrontendWithEnv(t, socketPath, env)
 	defer fe.Kill()
-	fe.WaitFor(t, "termd$", 10*time.Second)
+	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	oldPID := cmd.Process.Pid
 	t.Logf("old server PID: %d", oldPID)
@@ -305,7 +305,7 @@ func getStatusPID(t *testing.T, fe *frontend) int {
 // startFrontendWithSpec starts a frontend connected to any transport spec.
 func startFrontendWithSpec(t *testing.T, spec string, env []string) *frontend {
 	t.Helper()
-	cmd := exec.Command("termd-tui", "--socket", spec)
+	cmd := exec.Command("nxterm", "--socket", spec)
 	cmd.Env = append(env, "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {

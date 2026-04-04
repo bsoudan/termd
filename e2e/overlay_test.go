@@ -17,7 +17,7 @@ func TestHelpOverlay(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open help overlay: ctrl+b ?
@@ -54,14 +54,14 @@ func TestHelpOverlay(t *testing.T) {
 
 	// Close with q.
 	pio.Write([]byte("q"))
-	pio.WaitFor(t, "termd$", 5*time.Second)
+	pio.WaitFor(t, "nxterm$", 5*time.Second)
 }
 
 func TestLogViewerOverlay(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	cmd := exec.Command("termd-tui", "--socket", socketPath, "--debug", )
+	cmd := exec.Command("nxterm", "--socket", socketPath, "--debug", )
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -118,7 +118,7 @@ func TestLogViewerOverlay(t *testing.T) {
 		return row < 0
 	}, "overlay gone", 10*time.Second)
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("echo logview_closed\r"))
 	pio.WaitFor(t, "logview_closed", 10*time.Second)
 }
@@ -131,7 +131,7 @@ func TestCommandPalette(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open command palette: ctrl+b :
@@ -156,7 +156,7 @@ func TestCommandPaletteEsc(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Open command palette.
@@ -169,7 +169,7 @@ func TestCommandPaletteEsc(t *testing.T) {
 	pio.Write([]byte{0x07})
 
 	// Should return to normal prompt.
-	pio.WaitFor(t, "termd$", 5*time.Second)
+	pio.WaitFor(t, "nxterm$", 5*time.Second)
 
 	// Verify palette is gone — type something and it should go to the shell.
 	pio.Write([]byte("echo PALETTE_CLOSED\r"))

@@ -12,16 +12,16 @@ import (
 	"syscall"
 
 	"github.com/urfave/cli/v3"
-	"termd/config"
-	tlog "termd/frontend/log"
-	"termd/transport"
+	"nxtermd/config"
+	tlog "nxtermd/frontend/log"
+	"nxtermd/transport"
 )
 
 var version = "dev"
 
 func main() {
 	app := &cli.Command{
-		Name:      "termd",
+		Name:      "nxtermd",
 		Usage:     "terminal multiplexer server",
 		ArgsUsage: "[listen-spec ...]",
 		Description: `LISTEN SPECS:
@@ -30,7 +30,7 @@ func main() {
   ws://host:port         WebSocket
   ssh://host:port        SSH (requires --ssh-host-key)
 
-  Default: unix:/tmp/termd.sock`,
+  Default: unix:/tmp/nxtermd.sock`,
 		Version: version,
 		CustomRootCommandHelpTemplate: `NAME:
    {{template "helpNameTemplate" .}}
@@ -52,7 +52,7 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "config",
-				Usage: "config file path (default: ~/.config/termd/server.toml)",
+				Usage: "config file path (default: ~/.config/nxtermd/server.toml)",
 			},
 			&cli.StringFlag{
 				Name:  "ssh-host-key",
@@ -70,7 +70,7 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 				Name:    "debug",
 				Aliases: []string{"d"},
 				Usage:   "enable debug logging",
-				Sources: cli.EnvVars("TERMD_DEBUG"),
+				Sources: cli.EnvVars("NXTERMD_DEBUG"),
 			},
 			&cli.StringFlag{
 				Name:  "pprof",
@@ -86,34 +86,34 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 		Commands: []*cli.Command{
 			{
 				Name:      "start",
-				Usage:     "install and start termd as a systemd user service",
+				Usage:     "install and start nxtermd as a systemd user service",
 				ArgsUsage: "[listen-spec ...]",
 				Action:    cmdStart,
 			},
 			{
 				Name:   "stop",
-				Usage:  "stop and remove the termd systemd user service",
+				Usage:  "stop and remove the nxtermd systemd user service",
 				Action: cmdStop,
 			},
 			{
 				Name:   "restart",
-				Usage:  "restart the termd systemd user service",
+				Usage:  "restart the nxtermd systemd user service",
 				Action: cmdRestart,
 			},
 			{
 				Name:   "status",
-				Usage:  "show the termd systemd user service status",
+				Usage:  "show the nxtermd systemd user service status",
 				Action: cmdStatus,
 			},
 			{
 				Name:            "tail",
-				Usage:           "tail the termd service logs (extra args passed to journalctl)",
+				Usage:           "tail the nxtermd service logs (extra args passed to journalctl)",
 				SkipFlagParsing: true,
 				Action:          cmdTail,
 			},
 			{
 				Name:  "live-upgrade",
-				Usage: "upgrade the running termd server without dropping sessions",
+				Usage: "upgrade the running nxtermd server without dropping sessions",
 				Action: cmdLiveUpgrade,
 			},
 		},
@@ -134,7 +134,7 @@ func listenSpecs(cmd *cli.Command, cfg config.ServerConfig) ([]string, error) {
 	} else if len(cfg.Listen) > 0 {
 		specs = cfg.Listen
 	} else {
-		return []string{"unix:/tmp/termd.sock"}, nil
+		return []string{"unix:/tmp/nxtermd.sock"}, nil
 	}
 	for _, s := range specs {
 		if !strings.Contains(s, ":") {
@@ -175,7 +175,7 @@ func runServer(_ context.Context, cmd *cli.Command) error {
 	handler := tlog.NewHandler(os.Stderr, level, nil)
 	slog.SetDefault(slog.New(handler))
 
-	transport.InstallStackDump("termd")
+	transport.InstallStackDump("nxtermd")
 
 	pprofAddr := cmd.String("pprof")
 	if pprofAddr == "" {
@@ -288,7 +288,7 @@ func cmdLiveUpgrade(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("server did not report its PID")
 	}
 
-	fmt.Fprintf(os.Stderr, "sending SIGUSR2 to termd (pid %d)...\n", ident.Pid)
+	fmt.Fprintf(os.Stderr, "sending SIGUSR2 to nxtermd (pid %d)...\n", ident.Pid)
 	if err := syscall.Kill(ident.Pid, syscall.SIGUSR2); err != nil {
 		return fmt.Errorf("kill -USR2 %d: %w", ident.Pid, err)
 	}

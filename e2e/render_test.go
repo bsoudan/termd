@@ -37,7 +37,7 @@ func TestCursorPosition(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	pio.Write([]byte("xy"))
 
@@ -50,7 +50,7 @@ func TestCursorPosition(t *testing.T) {
 	t.Logf("'xy' at content row %d, col %d", row, col)
 
 	// Verify the server also has "xy" via termctl
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	var regionID string
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
@@ -62,7 +62,7 @@ func TestCursorPosition(t *testing.T) {
 	if regionID == "" {
 		t.Fatal("could not find region ID")
 	}
-	view := runTermctl(t, socketPath, "region", "view", regionID)
+	view := runNxtermctl(t, socketPath, "region", "view", regionID)
 	viewRow, viewCol := findOnScreen(strings.Split(view, "\n"), "xy")
 	t.Logf("server view: 'xy' at row %d, col %d", viewRow, viewCol)
 	if viewRow < 0 {
@@ -78,33 +78,33 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Type several lines so there's content on screen
 	pio.Write([]byte("echo line_a\r"))
 	pio.WaitFor(t, "line_a", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("echo line_b\r"))
 	pio.WaitFor(t, "line_b", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Run a command that writes to many rows (like top does).
 	// Use seq to fill several lines, then verify the prompt appears
 	// AFTER the seq output, not overlapping it.
 	pio.Write([]byte("seq 1 10\r"))
 	pio.WaitFor(t, "10", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// The prompt should be on a row AFTER "10"
 	lines := pio.ScreenLines()
 	seqRow, _ := findOnScreen(lines, "10")
-	promptRow, _ := findOnScreen(lines, "termd$")
-	t.Logf("'10' at row %d, last 'termd$ ' at row %d", seqRow, promptRow)
+	promptRow, _ := findOnScreen(lines, "nxterm$")
+	t.Logf("'10' at row %d, last 'nxterm$ ' at row %d", seqRow, promptRow)
 
-	// Find the LAST occurrence of "termd$" (the current prompt)
+	// Find the LAST occurrence of "nxterm$" (the current prompt)
 	lastPrompt := -1
 	for i, line := range lines {
-		if strings.Contains(line, "termd$") {
+		if strings.Contains(line, "nxterm$") {
 			lastPrompt = i
 		}
 	}
@@ -123,7 +123,7 @@ func TestColorRendering(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Produce colored output via printf using ansi constants converted to shell notation.
 	pio.Write([]byte("printf '" +
@@ -231,7 +231,7 @@ func TestActiveTabBold(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Spawn a second region so we have active and inactive tabs
 	pio.Write([]byte("\x02c"))
@@ -274,7 +274,7 @@ func TestActiveTabBold(t *testing.T) {
 
 	// Switch to tab 1 and verify bold flips
 	pio.Write([]byte("\x021"))
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	cells = pio.ScreenCells()
@@ -307,7 +307,7 @@ func TestResize(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("tput cols\r"))
 
 	lines := pio.WaitForScreen(t, func(lines []string) bool {
@@ -326,7 +326,7 @@ func TestResizeMidSession(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Verify initial 80 columns
 	pio.Write([]byte("tput cols\r"))
@@ -339,7 +339,7 @@ func TestResizeMidSession(t *testing.T) {
 		return false
 	}, "'80' at col 0 on a content row", 10*time.Second)
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Resize to 120x40
 	pio.Resize(120, 40)
@@ -357,7 +357,7 @@ func TestResizeMidSession(t *testing.T) {
 	}, "'120' at col 0 on a content row", 10*time.Second)
 
 	// Verify new row count (40 - 1 for tab bar = 39)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("tput lines\r"))
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for i := 1; i < len(lines); i++ {
@@ -373,15 +373,15 @@ func TestAltScreenRestore(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	// Use termctl to verify server-side screen state (avoids bubbletea
+	// Use nxtermctl to verify server-side screen state (avoids bubbletea
 	// rendering diff issues in the test's go-te Screen).
 	id := spawnRegion(t, socketPath, "shell")
 
 	// Type a marker
-	runTermctl(t, socketPath, "region", "send", "-e", id, `echo alt_screen_marker\r`)
+	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo alt_screen_marker\r`)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		view := runTermctl(t, socketPath, "region", "view", id)
+		view := runNxtermctl(t, socketPath, "region", "view", id)
 		if strings.Contains(view, "alt_screen_marker") {
 			break
 		}
@@ -389,37 +389,37 @@ func TestAltScreenRestore(t *testing.T) {
 	}
 
 	// Enter alt screen via less
-	runTermctl(t, socketPath, "region", "send", "-e", id, `echo 'line1\nline2\nline3' | less\r`)
+	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo 'line1\nline2\nline3' | less\r`)
 
 	// Wait for less to show "line1" AND marker to be gone (alt screen active)
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		view := runTermctl(t, socketPath, "region", "view", id)
+		view := runNxtermctl(t, socketPath, "region", "view", id)
 		if strings.Contains(view, "line1") && !strings.Contains(view, "alt_screen_marker") {
 			goto inAlt
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	{
-		view := runTermctl(t, socketPath, "region", "view", id)
+		view := runNxtermctl(t, socketPath, "region", "view", id)
 		t.Fatalf("timeout waiting for less to enter alt screen\nscreen:\n%s", view)
 	}
 
 inAlt:
 	// Quit less
-	runTermctl(t, socketPath, "region", "send", id, "q")
+	runNxtermctl(t, socketPath, "region", "send", id, "q")
 
 	// The marker should reappear (alt screen exited, main buffer restored)
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		view := runTermctl(t, socketPath, "region", "view", id)
+		view := runNxtermctl(t, socketPath, "region", "view", id)
 		if strings.Contains(view, "alt_screen_marker") {
 			return // success
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	{
-		view := runTermctl(t, socketPath, "region", "view", id)
+		view := runNxtermctl(t, socketPath, "region", "view", id)
 		t.Fatalf("timeout waiting for marker to reappear after less exits\nscreen:\n%s", view)
 	}
 }
@@ -431,7 +431,7 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Run top briefly then quit
 	pio.Write([]byte("top\r"))
@@ -439,11 +439,11 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	pio.Write([]byte("q"))
 
 	// Wait for prompt to reappear
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.WaitForSilence(500 * time.Millisecond)
 
 	// Get server screen via termctl
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	var regionID string
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
@@ -455,13 +455,13 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	if regionID == "" {
 		t.Fatal("no region found")
 	}
-	serverView := runTermctl(t, socketPath, "region", "view", regionID)
+	serverView := runNxtermctl(t, socketPath, "region", "view", regionID)
 	serverLines := strings.Split(strings.TrimRight(serverView, "\n"), "\n")
 
 	// Find prompt row on server (view trims trailing spaces)
 	serverPromptRow := -1
 	for i := len(serverLines) - 1; i >= 0; i-- {
-		if strings.Contains(serverLines[i], "termd$") {
+		if strings.Contains(serverLines[i], "nxterm$") {
 			serverPromptRow = i
 			break
 		}
@@ -471,7 +471,7 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	frontendLines := pio.ScreenLines()
 	frontendPromptRow := -1
 	for i := len(frontendLines) - 1; i >= 0; i-- {
-		if strings.Contains(frontendLines[i], "termd$") {
+		if strings.Contains(frontendLines[i], "nxterm$") {
 			frontendPromptRow = i
 			break
 		}

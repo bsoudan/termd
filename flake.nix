@@ -1,5 +1,5 @@
 {
-  description = "termd — terminal multiplexer with proper separation of concerns";
+  description = "nxtermd — terminal multiplexer with proper separation of concerns";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
@@ -20,8 +20,8 @@
           else if self ? dirtyShortRev then self.dirtyShortRev
           else "dev";
 
-        termd = pkgs.buildGoModule {
-          pname = "termd";
+        nxtermd = pkgs.buildGoModule {
+          pname = "nxtermd";
           inherit version;
           src = ./.;
           vendorHash = "sha256-e/h3yweXasAeuNuVhIOGUXkuSySvohc+lbjIrNA7O8A=";
@@ -35,27 +35,27 @@
           '';
 
           postInstall = ''
-            mv $out/bin/server $out/bin/termd
-            mv $out/bin/frontend $out/bin/termd-tui
-            ln -s termd-tui $out/bin/ttui
+            mv $out/bin/server $out/bin/nxtermd
+            mv $out/bin/frontend $out/bin/nxterm
+            mv $out/bin/termctl $out/bin/nxtermctl
           '';
         };
 
         mkRpm = dist: pkgs.stdenv.mkDerivation {
-          pname = "termd-rpm-${dist}";
+          pname = "nxtermd-rpm-${dist}";
           inherit version;
           dontUnpack = true;
           nativeBuildInputs = [ pkgs.nfpm ];
 
           buildPhase = ''
             # Stage binaries and service file
-            cp ${termd}/bin/termd .
-            cp ${termd}/bin/termd-tui .
-            cp ${termd}/bin/termctl .
-            cp ${./dist/termd.service} termd.service
+            cp ${nxtermd}/bin/nxtermd .
+            cp ${nxtermd}/bin/nxterm .
+            cp ${nxtermd}/bin/nxtermctl .
+            cp ${./dist/nxtermd.service} nxtermd.service
 
             # Read version from the built binary
-            export VERSION=$(./termd --version 2>&1 | awk '{print $NF}')
+            export VERSION=$(./nxtermd --version 2>&1 | awk '{print $NF}')
             export GOARCH="${pkgs.go.GOARCH}"
             export DIST=".${dist}"
             ${pkgs.envsubst}/bin/envsubst < ${./dist/nfpm.yaml} > nfpm.yaml
@@ -70,15 +70,15 @@
         };
       in
       {
-        packages.default = termd;
+        packages.default = nxtermd;
 
         packages.rpm = pkgs.symlinkJoin {
-          name = "termd-rpms-${version}";
+          name = "nxtermd-rpms-${version}";
           paths = [ (mkRpm "fc43") (mkRpm "el9") ];
         };
 
         devShells.default = pkgs.mkShell {
-          name = "termd-dev";
+          name = "nxtermd-dev";
 
           packages = with pkgs; [
             bash
@@ -108,10 +108,10 @@
             export PATH="$PWD/.local/bin:$PATH"
             export GOPATH="$PWD/.local/go"
             export GOCACHE="$PWD/.local/var/cache/go"
-            export NIX_SHELL=termd
+            export NIX_SHELL=nxtermd
 
             echo
-            echo "entering termd dev environment"
+            echo "entering nxtermd dev environment"
             echo "  * go  $(go version)"
             echo "  * gcc $(gcc --version | awk 'NR==1{print $NF}')"
             if [ -z "$IN_SANDBOXED_SHELL" ]; then

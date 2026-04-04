@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"termd/frontend/client"
-	"termd/frontend/protocol"
-	"termd/transport"
+	"nxtermd/frontend/client"
+	"nxtermd/frontend/protocol"
+	"nxtermd/transport"
 )
 
 // upgradeBinariesDir returns the path to the pre-built upgrade test binaries.
@@ -29,8 +29,8 @@ func upgradeBinariesDir(t *testing.T) string {
 		t.Skip("UPGRADE_BINARIES_DIR not set; run 'make test-e2e' to include upgrade tests")
 	}
 	// Verify the expected binaries exist.
-	serverBin := filepath.Join(dir, fmt.Sprintf("termd-%s-%s", runtime.GOOS, runtime.GOARCH))
-	clientBin := filepath.Join(dir, fmt.Sprintf("termd-tui-%s-%s", runtime.GOOS, runtime.GOARCH))
+	serverBin := filepath.Join(dir, fmt.Sprintf("nxtermd-%s-%s", runtime.GOOS, runtime.GOARCH))
+	clientBin := filepath.Join(dir, fmt.Sprintf("nxterm-%s-%s", runtime.GOOS, runtime.GOARCH))
 	if _, err := os.Stat(serverBin); err != nil {
 		t.Fatalf("server upgrade binary not found: %s", serverBin)
 	}
@@ -59,8 +59,8 @@ func startServerWithUpgradeDir(t *testing.T, binDir string) (socketPath string, 
 	env = testEnv(t)
 	writeTestServerConfigCustom(t, env, upgradeServerConfig(t, binDir))
 
-	socketPath = filepath.Join(t.TempDir(), "termd.sock")
-	cmd = exec.Command("termd", "unix:"+socketPath)
+	socketPath = filepath.Join(t.TempDir(), "nxtermd.sock")
+	cmd = exec.Command("nxtermd", "unix:"+socketPath)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -276,16 +276,16 @@ func TestTUIUpgradeE2E(t *testing.T) {
 	// Copy server and client binaries to a temp dir so the upgrade
 	// replaces these copies, not the shared .local/bin/ originals.
 	tmpBin := t.TempDir()
-	serverBinSrc, err := exec.LookPath("termd")
+	serverBinSrc, err := exec.LookPath("nxtermd")
 	if err != nil {
-		t.Fatalf("lookup termd: %v", err)
+		t.Fatalf("lookup nxtermd: %v", err)
 	}
-	tuiBinSrc, err := exec.LookPath("termd-tui")
+	tuiBinSrc, err := exec.LookPath("nxterm")
 	if err != nil {
-		t.Fatalf("lookup termd-tui: %v", err)
+		t.Fatalf("lookup nxterm: %v", err)
 	}
-	serverBin := filepath.Join(tmpBin, "termd")
-	tuiBin := filepath.Join(tmpBin, "termd-tui")
+	serverBin := filepath.Join(tmpBin, "nxtermd")
+	tuiBin := filepath.Join(tmpBin, "nxterm")
 	copyBinary(t, serverBinSrc, serverBin)
 	copyBinary(t, tuiBinSrc, tuiBin)
 
@@ -293,7 +293,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 	env := testEnv(t)
 	writeTestServerConfigCustom(t, env, upgradeServerConfig(t, binDir))
 
-	socketPath := filepath.Join(t.TempDir(), "termd.sock")
+	socketPath := filepath.Join(t.TempDir(), "nxtermd.sock")
 	serverCmd := exec.Command(serverBin, "unix:"+socketPath)
 	serverCmd.Env = env
 	serverCmd.Stderr = os.Stderr
@@ -333,7 +333,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 	defer func() { feCmd.Process.Kill(); feCmd.Wait(); ptmx.Close() }()
 
 	// ── Step 1: Wait for shell prompt ──────────────────────────────────
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	t.Log("shell prompt visible")
 
 	// ── Step 2: Verify upgrade notification in status bar ──────────────
@@ -386,7 +386,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 			if strings.Contains(line, "Upgrade") || strings.Contains(line, "Downloading") {
 				return false // dialog still visible → old client
 			}
-			if strings.Contains(line, "termd$") {
+			if strings.Contains(line, "nxterm$") {
 				hasPrompt = true
 			}
 		}

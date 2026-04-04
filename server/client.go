@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"termd/config"
-	"termd/frontend/protocol"
+	"nxtermd/config"
+	"nxtermd/frontend/protocol"
 )
 
 type clientIdentity struct {
@@ -354,7 +354,7 @@ func (c *Client) sendIdentify() {
 	c.SendMessage(protocol.Identify{
 		Type:     "identify",
 		Hostname: hostname,
-		Process:  "termd",
+		Process:  "nxtermd",
 		Pid:      os.Getpid(),
 	})
 }

@@ -2,7 +2,7 @@
 
 package main
 
-const defaultSocket = "/tmp/termd.sock"
+const defaultSocket = "/tmp/nxtermd.sock"
 
 // inferEndpoint returns the endpoint as-is on Unix. The transport
 // package's parseSpec handles bare paths (defaulting to unix:).

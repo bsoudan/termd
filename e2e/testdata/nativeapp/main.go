@@ -1,4 +1,4 @@
-// nativeapp is a test program that uses the termd overlay protocol.
+// nativeapp is a test program that uses the nxtermd overlay protocol.
 // It connects to the server socket, registers as an overlay on the
 // current region, and renders a cell grid. Input arrives via overlay_input
 // messages on the server socket.
@@ -70,10 +70,10 @@ var (
 )
 
 func main() {
-	socketPath := os.Getenv("TERMD_SOCKET")
-	regionID = os.Getenv("TERMD_REGIONID")
+	socketPath := os.Getenv("NXTERMD_SOCKET")
+	regionID = os.Getenv("NXTERMD_REGIONID")
 	if socketPath == "" || regionID == "" {
-		fmt.Fprintf(os.Stderr, "nativeapp: TERMD_SOCKET and TERMD_REGIONID must be set\n")
+		fmt.Fprintf(os.Stderr, "nativeapp: NXTERMD_SOCKET and NXTERMD_REGIONID must be set\n")
 		os.Exit(1)
 	}
 

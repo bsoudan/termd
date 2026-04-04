@@ -6,7 +6,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	termlog "termd/frontend/log"
+	termlog "nxtermd/frontend/log"
 )
 
 // ScrollableLayer is a layer that displays scrollable content in a centered

@@ -14,10 +14,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/urfave/cli/v3"
-	"termd/config"
-	termlog "termd/frontend/log"
-	"termd/frontend/ui"
-	"termd/transport"
+	"nxtermd/config"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/ui"
+	"nxtermd/transport"
 )
 
 var version = "dev"
@@ -27,26 +27,26 @@ var changelog string
 
 func main() {
 	app := &cli.Command{
-		Name:    "termd-tui",
+		Name:    "nxterm",
 		Usage:   "terminal multiplexer TUI client",
 		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "config",
-				Usage: "config file path (default: ~/.config/termd-tui/config.toml)",
+				Usage: "config file path (default: ~/.config/nxterm/config.toml)",
 			},
 			&cli.StringFlag{
 				Name:    "socket",
 				Aliases: []string{"s"},
 				Value:   defaultSocket,
 				Usage:   "server address (unix path or transport spec)",
-				Sources: cli.EnvVars("TERMD_SOCKET"),
+				Sources: cli.EnvVars("NXTERMD_SOCKET"),
 			},
 			&cli.StringFlag{
 				Name:    "session",
 				Aliases: []string{"S"},
 				Usage:   "session name (default: server's default, typically 'main')",
-				Sources: cli.EnvVars("TERMD_SESSION"),
+				Sources: cli.EnvVars("NXTERMD_SESSION"),
 			},
 			&cli.BoolFlag{
 				Name:    "browse",
@@ -57,7 +57,7 @@ func main() {
 				Name:    "debug",
 				Aliases: []string{"d"},
 				Usage:   "enable debug logging",
-				Sources: cli.EnvVars("TERMD_DEBUG"),
+				Sources: cli.EnvVars("NXTERMD_DEBUG"),
 			},
 			&cli.BoolFlag{
 				Name:  "log-stderr",
@@ -99,7 +99,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	logHandler := termlog.NewHandler(logW, level, logRing)
 	slog.SetDefault(slog.New(logHandler))
 
-	transport.InstallStackDump("termd-tui")
+	transport.InstallStackDump("nxterm")
 
 	// CLI --socket > config connect > platform default
 	socketVal := cmd.String("socket")
@@ -138,7 +138,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 
 	pipeR, pipeW := io.Pipe()
 	sessionName := cmd.String("session")
-	server := ui.NewServer(64, "termd-tui")
+	server := ui.NewServer(64, "nxterm")
 
 	// p is declared here so the connectFn closure can capture it.
 	// It is assigned after NewModel below.
@@ -156,7 +156,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 				return
 			}
 			df := func() (net.Conn, error) { return transport.Dial(ep) }
-			newSrv := ui.NewServer(64, "termd-tui")
+			newSrv := ui.NewServer(64, "nxterm")
 			p.Send(ui.ConnectedMsg{Endpoint: ep, Server: newSrv})
 			newSrv.Run(c, df, p)
 		}()

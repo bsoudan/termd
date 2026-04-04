@@ -12,9 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	termlog "termd/frontend/log"
-	"termd/frontend/protocol"
-	"termd/pkg/tui"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/protocol"
+	"nxtermd/pkg/tui"
 )
 
 // MainLayer sits at index 0 in the layer stack and manages multiple

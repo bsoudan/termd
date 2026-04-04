@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	te "termd/pkg/te"
+	te "nxtermd/pkg/te"
 )
 
 // feedChunks simulates readLoop by feeding data through sequenceSafe and then

@@ -8,11 +8,11 @@ import (
 	"os"
 	"syscall"
 
-	"termd/config"
-	"termd/transport"
+	"nxtermd/config"
+	"nxtermd/transport"
 )
 
-// RecvUpgrade receives a live upgrade handoff from an old termd process.
+// RecvUpgrade receives a live upgrade handoff from an old nxtermd process.
 // The version parameter is the new binary's compiled-in version, which
 // takes precedence over the version in the upgrade state (from the old binary).
 func RecvUpgrade(fd int, sshCfg transport.SSHListenerConfig, version string) (*Server, []net.Listener, []string, error) {

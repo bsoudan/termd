@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
-	te "termd/pkg/te"
-	"termd/frontend/protocol"
+	te "nxtermd/pkg/te"
+	"nxtermd/frontend/protocol"
 )
 
 // modeAltScreenLegacy is the original xterm alternate screen mode (DEC private 47).

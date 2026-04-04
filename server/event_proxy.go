@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/charmbracelet/x/ansi"
-	te "termd/pkg/te"
-	"termd/frontend/protocol"
+	te "nxtermd/pkg/te"
+	"nxtermd/frontend/protocol"
 )
 
 type EventProxy struct {

@@ -1,9 +1,9 @@
-# termd server configuration
-# Place at ~/.config/termd/server.toml
+# nxtermd server configuration
+# Place at ~/.config/nxtermd/server.toml
 
 # Listen addresses (same as --listen flag, repeatable)
-# listen = ["unix:/tmp/termd.sock"]
-# listen = ["unix:/tmp/termd.sock", "tcp:0.0.0.0:9090"]
+# listen = ["unix:/tmp/nxtermd.sock"]
+# listen = ["unix:/tmp/nxtermd.sock", "tcp:0.0.0.0:9090"]
 
 # Enable debug logging
 # debug = false
@@ -41,12 +41,12 @@
 # Advertises network listeners (TCP, WS, SSH) on the local network.
 # enabled = true
 
-# Custom display name (default: "termd on <hostname>")
+# Custom display name (default: "nxtermd on <hostname>")
 # name = "my dev server"
 
 [ssh]
 # SSH host key file (auto-generated if missing)
-# host-key = "~/.config/termd/host_key"
+# host-key = "~/.config/nxtermd/host_key"
 
 # SSH authorized_keys file (default: ~/.ssh/authorized_keys)
 # authorized-keys = "~/.ssh/authorized_keys"
@@ -55,8 +55,8 @@
 # no-auth = false
 
 [termctl]
-# Default server address for termctl commands
-# connect = "unix:/tmp/termd.sock"
+# Default server address for nxtermctl commands
+# connect = "unix:/tmp/nxtermd.sock"
 
-# Enable debug logging for termctl
+# Enable debug logging for nxtermctl
 # debug = false

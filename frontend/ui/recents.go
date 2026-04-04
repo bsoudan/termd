@@ -65,8 +65,8 @@ func SaveRecent(address, label string) error {
 func recentsPath() string {
 	xdg := os.Getenv("XDG_DATA_HOME")
 	if xdg != "" {
-		return filepath.Join(xdg, "termd-tui", "recents.json")
+		return filepath.Join(xdg, "nxterm", "recents.json")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "termd-tui", "recents.json")
+	return filepath.Join(home, ".local", "share", "nxterm", "recents.json")
 }

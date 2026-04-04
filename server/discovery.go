@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/grandcat/zeroconf"
-	"termd/config"
+	"nxtermd/config"
 )
 
-const mdnsService = "_termd._tcp"
+const mdnsService = "_nxtermd._tcp"
 
 // discovery manages mDNS service registration for the server.
 type discovery struct {
@@ -67,7 +67,7 @@ func startDiscovery(cfg config.DiscoveryConfig, specs []string, listeners []net.
 		if hostname == "" {
 			hostname = "unknown"
 		}
-		instanceName = "termd on " + hostname
+		instanceName = "nxtermd on " + hostname
 	}
 
 	slog.Info("discovery: registering mDNS service",

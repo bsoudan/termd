@@ -20,19 +20,19 @@ func TestScrollbackBuffer(t *testing.T) {
 	// Wait for shell prompt
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Output 200 lines — in a 24-row terminal, early lines scroll off
 	pio.Write([]byte("seq 1 200\r"))
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
-	// Poll scrollback via termctl until early numbers are present.
+	// Poll scrollback via nxtermctl until early numbers are present.
 	// The server's terminal emulator may still be processing output
 	// even after the frontend shows the prompt.
 	want := []string{"1", "2", "3", "10", "50"}
 	deadline := time.After(10 * time.Second)
 	for {
-		out := runTermctl(t, socketPath, "region", "scrollback", regionID)
+		out := runNxtermctl(t, socketPath, "region", "scrollback", regionID)
 		lines := strings.Split(strings.TrimSpace(out), "\n")
 
 		found := make(map[string]bool)
@@ -76,11 +76,11 @@ func TestScrollbackNavigation(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Generate enough output to fill scrollback
 	pio.Write([]byte("seq 1 200\r"))
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Enter scrollback mode with ctrl+b [
 	pio.Write([]byte{0x02, '['})
@@ -118,7 +118,7 @@ func TestScrollbackNavigation(t *testing.T) {
 			return false
 		}
 		for _, line := range lines {
-			if strings.Contains(line, "termd$") {
+			if strings.Contains(line, "nxterm$") {
 				return true
 			}
 		}
@@ -135,11 +135,11 @@ func TestScrollbackPageUpDown(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Generate enough output to fill scrollback
 	pio.Write([]byte("seq 1 200\r"))
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Send PageUp (\x1b[5~) — should activate scrollback
@@ -176,7 +176,7 @@ func TestScrollbackPageUpDown(t *testing.T) {
 			return false
 		}
 		for _, line := range lines {
-			if strings.Contains(line, "termd$") {
+			if strings.Contains(line, "nxterm$") {
 				return true
 			}
 		}
@@ -205,11 +205,11 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Generate output that scrolls off screen
 	pio.Write([]byte("seq 1 200\r"))
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Send a scroll wheel up event to activate scrollback
@@ -252,7 +252,7 @@ func TestScrollbackScrollWheel(t *testing.T) {
 			return false
 		}
 		for _, line := range lines {
-			if strings.Contains(line, "termd$") {
+			if strings.Contains(line, "nxterm$") {
 				return true
 			}
 		}

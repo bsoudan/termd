@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	te "termd/pkg/te"
-	"termd/frontend/protocol"
-	"termd/frontend/ui"
+	te "nxtermd/pkg/te"
+	"nxtermd/frontend/protocol"
+	"nxtermd/frontend/ui"
 )
 
 // roundTripEvents serializes events to JSON and back, simulating the network.
@@ -41,7 +41,7 @@ func TestEventProxyReplay(t *testing.T) {
 
 	// Simulate: prompt, then top-like redraw cycle
 	input := ""
-	input += "termd$ " // Draw prompt
+	input += "nxterm$ " // Draw prompt
 	input += "top\r\n" // Type "top" + enter
 
 	// Top startup: home, clear, draw header
@@ -73,7 +73,7 @@ func TestEventProxyReplay(t *testing.T) {
 
 	// Bash prompt after top exits
 	input += "\r\n"
-	input += "termd$ "
+	input += "nxterm$ "
 
 	stream.FeedBytes([]byte(input))
 	allEvents, _ := proxy.Flush()
@@ -128,7 +128,7 @@ func TestEventProxyReplayWithAltScreen(t *testing.T) {
 	stream := te.NewStream(proxy, false)
 
 	input := ""
-	input += "termd$ " // Initial prompt
+	input += "nxterm$ " // Initial prompt
 
 	// Enter alt screen
 	input += ansi.SetModeAltScreenSaveCursor
@@ -145,7 +145,7 @@ func TestEventProxyReplayWithAltScreen(t *testing.T) {
 	input += ansi.ResetModeAltScreenSaveCursor
 
 	// New prompt
-	input += "termd$ "
+	input += "nxterm$ "
 
 	stream.FeedBytes([]byte(input))
 	allEvents, _ := proxy.Flush()

@@ -2,7 +2,7 @@ package ui
 
 import (
 	"charm.land/lipgloss/v2"
-	"termd/pkg/tui"
+	"nxtermd/pkg/tui"
 )
 
 // KeyboardFilter specifies what keyboard input a layer wants routed
@@ -15,8 +15,8 @@ type KeyboardFilter struct {
 // allKeysFilter is returned by layers that want all keyboard input.
 var allKeysFilter = &KeyboardFilter{All: true}
 
-// TermdLayer extends tui.Layer with termd-specific capabilities.
-// All termd layers implement this interface.
+// TermdLayer extends tui.Layer with nxtermd-specific capabilities.
+// All nxtermd layers implement this interface.
 type TermdLayer interface {
 	tui.Layer
 

@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"termd/config"
-	"termd/frontend/protocol"
+	"nxtermd/config"
+	"nxtermd/frontend/protocol"
 )
 
 type Server struct {
@@ -416,7 +416,7 @@ func (s *Server) getStatus() protocol.StatusResponse {
 }
 
 // socketAddr returns the address of the first listener, for passing to
-// child processes as TERMD_SOCKET.
+// child processes as NXTERMD_SOCKET.
 func (s *Server) socketAddr() string {
 	if len(s.listeners) > 0 {
 		return s.listeners[0].Addr().String()

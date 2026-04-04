@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"termd/frontend/protocol"
+	"nxtermd/frontend/protocol"
 )
 
 const chunkSize = 64 * 1024 // 64KB raw → ~85KB base64
@@ -37,7 +37,7 @@ func (c *Client) handleUpgradeCheck(msg protocol.UpgradeCheckRequest, reply func
 	resp := protocol.UpgradeCheckResponse{Type: "upgrade_check_response"}
 
 	// Check server binary.
-	serverBin := upgradeBinPath(dir, "termd", runtime.GOOS, runtime.GOARCH)
+	serverBin := upgradeBinPath(dir, "nxtermd", runtime.GOOS, runtime.GOARCH)
 	if v, err := binaryVersion(serverBin); err != nil {
 		slog.Warn("upgrade check: server binary version failed",
 			"path", serverBin, "err", err)
@@ -47,7 +47,7 @@ func (c *Client) handleUpgradeCheck(msg protocol.UpgradeCheckRequest, reply func
 	}
 
 	// Check client binary.
-	clientBin := upgradeBinPath(dir, "termd-tui", msg.OS, msg.Arch)
+	clientBin := upgradeBinPath(dir, "nxterm", msg.OS, msg.Arch)
 	if v, err := binaryVersion(clientBin); err != nil {
 		slog.Warn("upgrade check: client binary version failed",
 			"path", clientBin, "err", err)
@@ -78,7 +78,7 @@ func (c *Client) handleServerUpgrade(reply func(any)) {
 		return
 	}
 
-	srcPath := upgradeBinPath(dir, "termd", runtime.GOOS, runtime.GOARCH)
+	srcPath := upgradeBinPath(dir, "nxtermd", runtime.GOOS, runtime.GOARCH)
 	dstPath, err := os.Executable()
 	if err != nil {
 		reply(protocol.ServerUpgradeResponse{
@@ -120,7 +120,7 @@ func (c *Client) handleClientBinaryDownload(msg protocol.ClientBinaryRequest, re
 		return
 	}
 
-	path := upgradeBinPath(dir, "termd-tui", msg.OS, msg.Arch)
+	path := upgradeBinPath(dir, "nxterm", msg.OS, msg.Arch)
 	f, err := os.Open(path)
 	if err != nil {
 		reply(protocol.ClientBinaryResponse{
@@ -290,7 +290,7 @@ func copyFile(src, dst string) error {
 
 	// Write to a temp file in the same directory, then rename.
 	dir := filepath.Dir(dst)
-	tmp, err := os.CreateTemp(dir, ".termd-upgrade-*")
+	tmp, err := os.CreateTemp(dir, ".nxtermd-upgrade-*")
 	if err != nil {
 		return err
 	}

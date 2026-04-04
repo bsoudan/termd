@@ -17,7 +17,7 @@ func TestInputRoundTrip(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// "aGVsbG8K" is base64 for "hello\n".
 	pio.Write([]byte("echo aGVsbG8K | base64 -d\r"))
@@ -55,7 +55,7 @@ func TestRawInputPassthrough(t *testing.T) {
 
 	pio.WaitFor(t, "bash", 10*time.Second)
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("sleep 999\r"))
 	pio.Write([]byte("\x03"))
 
@@ -76,7 +76,7 @@ func TestMousePassthrough(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Run mousehelper which enables mouse tracking and prints mouse events
 	pio.Write([]byte("mousehelper\r"))
@@ -139,7 +139,7 @@ func TestMousePassthrough(t *testing.T) {
 
 	// Quit the helper
 	pio.Write([]byte("q"))
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 }
 
 func TestMouseAfterTabSwitch(t *testing.T) {
@@ -149,7 +149,7 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Run mousehelper in tab 1
 	pio.Write([]byte("mousehelper\r"))
@@ -164,7 +164,7 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 	pio.WaitForScreen(t, func(lines []string) bool {
 		return len(lines) > 0 && strings.Contains(lines[0], "2:")
 	}, "tab 2 to appear", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	// Switch back to tab 1 (mousehelper)
@@ -177,7 +177,7 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 
 	// Quit the helper
 	pio.Write([]byte("q"))
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 }
 
 func TestInputIsolation(t *testing.T) {
@@ -188,7 +188,7 @@ func TestInputIsolation(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type a marker in tab 1 so we can identify its screen
 	pio.Write([]byte("echo TAB1_HERE\r"))
@@ -197,7 +197,7 @@ func TestInputIsolation(t *testing.T) {
 	// Spawn second region
 	pio.Write([]byte("\x02c"))
 	pio.WaitFor(t, "2:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type in tab 2
 	pio.Write([]byte("echo ONLY_IN_TAB2\r"))

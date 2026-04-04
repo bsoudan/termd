@@ -5,10 +5,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"termd/pkg/tui"
+	"nxtermd/pkg/tui"
 )
 
-// TermdHandle wraps a tui.Handle with termd-specific request/response
+// TermdHandle wraps a tui.Handle with nxtermd-specific request/response
 // capability. Task goroutines use this to make protocol roundtrips.
 type TermdHandle struct {
 	*tui.Handle

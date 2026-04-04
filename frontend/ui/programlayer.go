@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"termd/frontend/protocol"
+	"nxtermd/frontend/protocol"
 )
 
 // ProgramPickerLayer shows available programs and lets the user select one.

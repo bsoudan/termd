@@ -1,6 +1,6 @@
-// native_scratchpad is a termd native overlay app that provides a drawable canvas.
+// native_scratchpad is a nxtermd native overlay app that provides a drawable canvas.
 //
-// It connects to the termd server and registers as an overlay on the current
+// It connects to the nxtermd server and registers as an overlay on the current
 // region. The underlying terminal content shows through transparent cells.
 //
 // Features:
@@ -14,7 +14,7 @@
 //
 //	go build -o native_scratchpad .
 //
-// Configure in server.toml or run from a shell inside termd:
+// Configure in server.toml or run from a shell inside nxtermd:
 //
 //	./native_scratchpad
 package main
@@ -111,11 +111,11 @@ var (
 )
 
 func main() {
-	socketPath := os.Getenv("TERMD_SOCKET")
-	regionID = os.Getenv("TERMD_REGIONID")
+	socketPath := os.Getenv("NXTERMD_SOCKET")
+	regionID = os.Getenv("NXTERMD_REGIONID")
 	if socketPath == "" || regionID == "" {
-		fmt.Fprintf(os.Stderr, "native_scratchpad: TERMD_SOCKET and TERMD_REGIONID must be set\n")
-		fmt.Fprintf(os.Stderr, "Run this from a shell inside termd.\n")
+		fmt.Fprintf(os.Stderr, "native_scratchpad: NXTERMD_SOCKET and NXTERMD_REGIONID must be set\n")
+		fmt.Fprintf(os.Stderr, "Run this from a shell inside nxtermd.\n")
 		os.Exit(1)
 	}
 

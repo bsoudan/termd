@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-	"termd/config"
-	"termd/transport"
+	"nxtermd/config"
+	"nxtermd/transport"
 )
 
 const upgradeTimeout = 60 * time.Second

@@ -20,12 +20,12 @@ func TestParseSpec(t *testing.T) {
 		wantScheme string
 		wantAddr   string
 	}{
-		{"/tmp/termd.sock", "unix", "/tmp/termd.sock"},
-		{"./termd.sock", "unix", "./termd.sock"},
-		{"unix:/tmp/termd.sock", "unix", "/tmp/termd.sock"},
+		{"/tmp/nxtermd.sock", "unix", "/tmp/nxtermd.sock"},
+		{"./nxtermd.sock", "unix", "./nxtermd.sock"},
+		{"unix:/tmp/nxtermd.sock", "unix", "/tmp/nxtermd.sock"},
 		{"tcp://127.0.0.1:9090", "tcp", "127.0.0.1:9090"},
 		{"tcp://0.0.0.0:0", "tcp", "0.0.0.0:0"},
-		{"unix:///tmp/termd.sock", "unix", "/tmp/termd.sock"},
+		{"unix:///tmp/nxtermd.sock", "unix", "/tmp/nxtermd.sock"},
 		{"ws://127.0.0.1:8080", "ws", "127.0.0.1:8080"},
 		{"wss://host:443/ws", "wss", "host:443/ws"},
 	}

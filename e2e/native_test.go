@@ -17,7 +17,7 @@ func TestNativeOverlayRender(t *testing.T) {
 	pio, feCleanup := startFrontend(t, socketPath)
 	defer feCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Run the overlay app from the shell.
 	pio.Write([]byte("nativeapp\r"))
@@ -33,7 +33,7 @@ func TestNativeOverlayInput(t *testing.T) {
 	pio, feCleanup := startFrontend(t, socketPath)
 	defer feCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("nativeapp\r"))
 	pio.WaitFor(t, "NATIVE", 10*time.Second)
@@ -50,10 +50,10 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 	pio, feCleanup := startFrontend(t, socketPath)
 	defer feCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Get the region ID.
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected region in list, got: %s", out)
@@ -69,10 +69,10 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 	pio.Write([]byte(fmt.Sprintf("%c[<0;10;3M", ansi.ESC)))
 	pio.WaitFor(t, "MOUSE:press:0:9:1", 10*time.Second)
 
-	// termctl region view uses get_screen_request — overlay must be included.
+	// nxtermctl region view uses get_screen_request — overlay must be included.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		out = runTermctl(t, socketPath, "region", "view", regionID)
+		out = runNxtermctl(t, socketPath, "region", "view", regionID)
 		if strings.Contains(out, "NATIVE") {
 			break
 		}
@@ -98,7 +98,7 @@ func TestNativeOverlayExit(t *testing.T) {
 	pio, feCleanup := startFrontend(t, socketPath)
 	defer feCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("nativeapp\r"))
 	pio.WaitFor(t, "NATIVE", 10*time.Second)
@@ -115,5 +115,5 @@ func TestNativeOverlayExit(t *testing.T) {
 	}, "NATIVE gone from screen after Ctrl-C", 10*time.Second)
 
 	// Shell prompt should reappear.
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 }

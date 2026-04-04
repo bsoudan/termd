@@ -11,37 +11,37 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v3"
-	"termd/config"
-	"termd/frontend/client"
-	termlog "termd/frontend/log"
-	"termd/frontend/protocol"
-	"termd/transport"
+	"nxtermd/config"
+	"nxtermd/frontend/client"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/protocol"
+	"nxtermd/transport"
 )
 
 var version = "dev"
 
 func main() {
 	app := &cli.Command{
-		Name:    "termctl",
-		Usage:   "control the termd server",
+		Name:    "nxtermctl",
+		Usage:   "control the nxtermd server",
 		Version: version,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "config",
-				Usage: "config file path (default: ~/.config/termd/server.toml)",
+				Usage: "config file path (default: ~/.config/nxtermd/server.toml)",
 			},
 			&cli.StringFlag{
 				Name:    "socket",
 				Aliases: []string{"s"},
-				Value:   "/tmp/termd.sock",
+				Value:   "/tmp/nxtermd.sock",
 				Usage:   "server address (unix path or transport spec)",
-				Sources: cli.EnvVars("TERMD_SOCKET"),
+				Sources: cli.EnvVars("NXTERMD_SOCKET"),
 			},
 			&cli.BoolFlag{
 				Name:    "debug",
 				Aliases: []string{"d"},
 				Usage:   "enable debug logging",
-				Sources: cli.EnvVars("TERMD_DEBUG"),
+				Sources: cli.EnvVars("NXTERMD_DEBUG"),
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
@@ -60,7 +60,7 @@ func main() {
 				level = slog.LevelDebug
 			}
 			slog.SetDefault(slog.New(termlog.NewHandler(os.Stderr, level, nil)))
-			transport.InstallStackDump("termctl")
+			transport.InstallStackDump("nxtermctl")
 			return ctx, nil
 		},
 		Commands: []*cli.Command{
@@ -154,7 +154,7 @@ func connect(cmd *cli.Command) (*client.Client, error) {
 		return nil, err
 	}
 	cl := client.New(conn)
-	cl.SendIdentify("termctl")
+	cl.SendIdentify("nxtermctl")
 	return cl, nil
 }
 
@@ -279,7 +279,7 @@ func cmdRegionSpawn(_ context.Context, cmd *cli.Command) error {
 
 func cmdRegionView(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl region view <region_id>")
+		return fmt.Errorf("usage: nxtermctl region view <region_id>")
 	}
 	regionID := cmd.Args().First()
 
@@ -336,7 +336,7 @@ func renderColoredLine(row []protocol.ScreenCell) string {
 
 func cmdRegionKill(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl region kill <region_id>")
+		return fmt.Errorf("usage: nxtermctl region kill <region_id>")
 	}
 	regionID := cmd.Args().First()
 
@@ -361,7 +361,7 @@ func cmdRegionKill(_ context.Context, cmd *cli.Command) error {
 
 func cmdRegionScrollback(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl region scrollback <region_id>")
+		return fmt.Errorf("usage: nxtermctl region scrollback <region_id>")
 	}
 	regionID := cmd.Args().First()
 
@@ -396,7 +396,7 @@ func cmdRegionScrollback(_ context.Context, cmd *cli.Command) error {
 
 func cmdRegionSend(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 2 {
-		return fmt.Errorf("usage: termctl region send [-e] <region_id> <input>")
+		return fmt.Errorf("usage: nxtermctl region send [-e] <region_id> <input>")
 	}
 	regionID := cmd.Args().Get(0)
 	input := cmd.Args().Get(1)
@@ -450,7 +450,7 @@ func cmdClientList(_ context.Context, cmd *cli.Command) error {
 
 func cmdClientKill(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl client kill <client_id>")
+		return fmt.Errorf("usage: nxtermctl client kill <client_id>")
 	}
 	id, err := strconv.ParseUint(cmd.Args().First(), 10, 32)
 	if err != nil {
@@ -506,7 +506,7 @@ func cmdProgramList(_ context.Context, cmd *cli.Command) error {
 
 func cmdProgramAdd(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 2 {
-		return fmt.Errorf("usage: termctl program add <name> <cmd> [args...]")
+		return fmt.Errorf("usage: nxtermctl program add <name> <cmd> [args...]")
 	}
 	name := cmd.Args().Get(0)
 	progCmd := cmd.Args().Get(1)
@@ -544,7 +544,7 @@ func cmdProgramAdd(_ context.Context, cmd *cli.Command) error {
 
 func cmdProgramRemove(_ context.Context, cmd *cli.Command) error {
 	if cmd.NArg() < 1 {
-		return fmt.Errorf("usage: termctl program remove <name>")
+		return fmt.Errorf("usage: nxtermctl program remove <name>")
 	}
 	name := cmd.Args().First()
 

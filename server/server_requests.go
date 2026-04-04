@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"termd/config"
-	"termd/frontend/protocol"
+	"nxtermd/config"
+	"nxtermd/frontend/protocol"
 )
 
 // ── Request types sent to the server event loop ──────────────────────────────

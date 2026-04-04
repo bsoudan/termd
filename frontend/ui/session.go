@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	termlog "termd/frontend/log"
-	"termd/frontend/protocol"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/protocol"
 )
 
 // tab represents a single terminal tab backed by a server region.

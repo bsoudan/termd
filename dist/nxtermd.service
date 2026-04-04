@@ -1,10 +1,10 @@
 [Unit]
-Description=termd terminal multiplexer server
+Description=nxtermd terminal multiplexer server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/termd
+ExecStart=/usr/bin/nxtermd
 ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=5

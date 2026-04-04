@@ -236,14 +236,14 @@ func (tc *tuiClient) run(ctx context.Context) {
 	}
 }
 
-// tryStartFrontend starts a termd-tui in a PTY, returning an error instead
+// tryStartFrontend starts an nxterm in a PTY, returning an error instead
 // of calling t.Fatal. Used for mid-test restarts from goroutines.
 func tryStartFrontend(t *testing.T, socketPath, session string) (*frontend, error) {
 	args := []string{"--socket", socketPath}
 	if session != "" {
 		args = append(args, "--session", session)
 	}
-	cmd := exec.Command("termd-tui", args...)
+	cmd := exec.Command("nxterm", args...)
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
@@ -684,7 +684,7 @@ func healthMonitor(ctx context.Context, t *testing.T, socketPath string, errs *e
 		case <-ticker.C:
 			out, err := stressRunTermctl(socketPath, "status")
 			if err != nil {
-				errs.add("[health] termctl status failed: %v — %s", err, strings.TrimSpace(out))
+				errs.add("[health] nxtermctl status failed: %v — %s", err, strings.TrimSpace(out))
 			} else {
 				t.Logf("[health] %s", strings.TrimSpace(out))
 			}
@@ -696,7 +696,7 @@ func stressRunTermctl(socketPath string, args ...string) (string, error) {
 	fullArgs := append([]string{"--socket", socketPath}, args...)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "termctl", fullArgs...)
+	cmd := exec.CommandContext(ctx, "nxtermctl", fullArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

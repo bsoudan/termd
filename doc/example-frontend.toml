@@ -1,11 +1,11 @@
-# termd-tui configuration
-# Place at ~/.config/termd-tui/config.toml
+# nxterm configuration
+# Place at ~/.config/nxterm/config.toml
 #
-# If this file does not exist, termd-tui falls back to the first listen
-# address from ~/.config/termd/server.toml (if present).
+# If this file does not exist, nxterm falls back to the first listen
+# address from ~/.config/nxtermd/server.toml (if present).
 
 # Server address (same as --socket flag)
-# connect = "unix:/tmp/termd.sock"
+# connect = "unix:/tmp/nxtermd.sock"
 # connect = "tcp:myserver:9090"
 # connect = "ssh://user@myserver:2222"
 

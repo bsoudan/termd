@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"termd/frontend/protocol"
+	"nxtermd/frontend/protocol"
 )
 
 // LogProtocolMsg logs a protocol message with structured key=value fields.

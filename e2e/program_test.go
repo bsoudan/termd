@@ -14,7 +14,7 @@ func TestProgramListDefault(t *testing.T) {
 	socketPath, cleanup := startServerCustom(t, "")
 	defer cleanup()
 
-	out := runTermctl(t, socketPath, "program", "list")
+	out := runNxtermctl(t, socketPath, "program", "list")
 	if !strings.Contains(out, "default") {
 		t.Fatalf("program list missing 'default':\n%s", out)
 	}
@@ -30,25 +30,25 @@ func TestProgramAddAndRemove(t *testing.T) {
 	}
 
 	// Add a program
-	out := runTermctl(t, socketPath, "program", "add", "--", "myshell", shell, "--norc")
+	out := runNxtermctl(t, socketPath, "program", "add", "--", "myshell", shell, "--norc")
 	if !strings.Contains(out, "added") {
 		t.Fatalf("expected 'added', got: %s", out)
 	}
 
 	// List should include it
-	out = runTermctl(t, socketPath, "program", "list")
+	out = runNxtermctl(t, socketPath, "program", "list")
 	if !strings.Contains(out, "myshell") {
 		t.Fatalf("program list missing 'myshell' after add:\n%s", out)
 	}
 
 	// Remove it
-	out = runTermctl(t, socketPath, "program", "remove", "myshell")
+	out = runNxtermctl(t, socketPath, "program", "remove", "myshell")
 	if !strings.Contains(out, "removed") {
 		t.Fatalf("expected 'removed', got: %s", out)
 	}
 
 	// List should not include it
-	out = runTermctl(t, socketPath, "program", "list")
+	out = runNxtermctl(t, socketPath, "program", "list")
 	if strings.Contains(out, "myshell") {
 		t.Fatalf("program list still contains 'myshell' after remove:\n%s", out)
 	}
@@ -61,7 +61,7 @@ func TestProgramSpawnByName(t *testing.T) {
 	// Spawn using the configured "shell" program name
 	id := spawnRegion(t, socketPath, "shell")
 
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	if !strings.Contains(out, id) {
 		t.Fatalf("region list missing spawned region:\n%s", out)
 	}
@@ -74,9 +74,9 @@ func TestProgramSpawnUnknown(t *testing.T) {
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
-	// Try to spawn a non-existent program — termctl should fail
+	// Try to spawn a non-existent program — nxtermctl should fail
 	args := []string{"--socket", socketPath, "region", "spawn", "nonexistent"}
-	cmd := exec.Command("termctl", args...)
+	cmd := exec.Command("nxtermctl", args...)
 	cmd.Env = testEnv(t)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -99,7 +99,7 @@ func TestProgramDefaultSession(t *testing.T) {
 	pio.WaitFor(t, "$", 10*time.Second)
 
 	// Verify the region was spawned with the shell program's cmd
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	if !strings.Contains(out, "bash") {
 		t.Fatalf("expected shell program to spawn bash, got:\n%s", out)
 	}
@@ -179,11 +179,11 @@ func TestProgramEnvVars(t *testing.T) {
 
 	id := spawnRegion(t, socketPath, "envtest")
 
-	runTermctl(t, socketPath, "region", "send", "-e", id, `echo $MY_TEST_VAR\r`)
+	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo $MY_TEST_VAR\r`)
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		out := runTermctl(t, socketPath, "region", "view", id)
+		out := runNxtermctl(t, socketPath, "region", "view", id)
 		if strings.Contains(out, "hello_from_program") {
 			return
 		}

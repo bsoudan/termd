@@ -27,7 +27,7 @@ func TestNewSession(t *testing.T) {
 	defer frontCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	connectViaUI(t, pio, socketPath)
 
@@ -42,7 +42,7 @@ func TestKillSession(t *testing.T) {
 	pio, frontCleanup := startFrontend(t, socketPath)
 	defer frontCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte{0x02, 'S', 'c'})
 
@@ -56,7 +56,7 @@ func TestConnectOverlayCancel(t *testing.T) {
 	pio, frontCleanup := startFrontend(t, socketPath)
 	defer frontCleanup()
 
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("\x02So"))
 	pio.WaitFor(t, "type a server address", 5*time.Second)
@@ -64,5 +64,5 @@ func TestConnectOverlayCancel(t *testing.T) {
 
 	pio.Write([]byte{0x1b})
 
-	pio.WaitFor(t, "termd$", 5*time.Second)
+	pio.WaitFor(t, "nxterm$", 5*time.Second)
 }

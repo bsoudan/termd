@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-	te "termd/pkg/te"
+	te "nxtermd/pkg/te"
 )
 
 // --- Upgrade state types ---

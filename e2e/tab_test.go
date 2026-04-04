@@ -15,7 +15,7 @@ func TestSpawnSecondRegion(t *testing.T) {
 
 	// Wait for initial tab and prompt
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// ctrl+b c to spawn a second region
 	pio.Write([]byte("\x02c"))
@@ -29,7 +29,7 @@ func TestSpawnSecondRegion(t *testing.T) {
 	}, "tab bar with '1:bash' and '2:bash'", 10*time.Second)
 
 	// New tab should have a prompt
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 }
 
 func TestSwitchTabs(t *testing.T) {
@@ -40,7 +40,7 @@ func TestSwitchTabs(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type a marker in tab 1
 	pio.Write([]byte("echo TAB1_MARKER\r"))
@@ -49,7 +49,7 @@ func TestSwitchTabs(t *testing.T) {
 	// Spawn second region
 	pio.Write([]byte("\x02c"))
 	pio.WaitFor(t, "2:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type a marker in tab 2
 	pio.Write([]byte("echo TAB2_MARKER\r"))
@@ -78,12 +78,12 @@ func TestRegionDestroyedRemovesTab(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Spawn second region
 	pio.Write([]byte("\x02c"))
 	pio.WaitFor(t, "2:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Exit the shell in tab 2
 	pio.Write([]byte("exit\r"))
@@ -97,7 +97,7 @@ func TestRegionDestroyedRemovesTab(t *testing.T) {
 	}, "tab bar with only '1:bash'", 10*time.Second)
 
 	// Verify terminal is still functional
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("echo ALIVE\r"))
 	pio.WaitFor(t, "ALIVE", 10*time.Second)
 }
@@ -110,12 +110,12 @@ func TestCloseTab(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Spawn second region
 	pio.Write([]byte("\x02c"))
 	pio.WaitFor(t, "2:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Close tab 2 with ctrl+b x
 	pio.Write([]byte("\x02x"))
@@ -129,7 +129,7 @@ func TestCloseTab(t *testing.T) {
 	}, "tab bar with only '1:bash'", 10*time.Second)
 
 	// Verify terminal is still functional
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("echo STILL_ALIVE\r"))
 	pio.WaitFor(t, "STILL_ALIVE", 10*time.Second)
 }

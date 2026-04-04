@@ -33,7 +33,7 @@ type ConnectErrorMsg struct {
 	Error    string
 }
 
-// DiscoveredServerMsg is sent when mDNS discovers a termd server.
+// DiscoveredServerMsg is sent when mDNS discovers an nxtermd server.
 type DiscoveredServerMsg struct {
 	Name     string
 	Endpoint string

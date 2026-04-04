@@ -8,8 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"termd/frontend/client"
-	"termd/frontend/protocol"
+	"nxtermd/frontend/client"
+	"nxtermd/frontend/protocol"
 )
 
 // InputMsg is sent to the server goroutine to forward raw bytes to the

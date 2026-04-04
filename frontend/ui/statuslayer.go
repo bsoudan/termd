@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"termd/frontend/protocol"
+	"nxtermd/frontend/protocol"
 )
 
 // StatusLayer displays server and terminal status in a centered dialog.
@@ -63,7 +63,7 @@ func (s *StatusLayer) Deactivate()       {}
 func (s *StatusLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	var lines []string
 
-	header := "termd-tui:"
+	header := "nxterm:"
 	if s.caps.ClientUpgradeAvail {
 		header += " (upgrade available: " + s.caps.ClientUpgradeVer + ")"
 	}
@@ -120,7 +120,7 @@ func (s *StatusLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	}
 	lines = append(lines, "")
 
-	srvHeader := "termd:"
+	srvHeader := "nxtermd:"
 	if s.caps.ServerUpgradeAvail {
 		srvHeader += " (upgrade available: " + s.caps.ServerUpgradeVer + ")"
 	}

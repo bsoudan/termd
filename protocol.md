@@ -1,4 +1,4 @@
-# termd Protocol Specification
+# nxtermd Protocol Specification
 
 ## Transport Layer
 
@@ -49,7 +49,7 @@ Server-initiated messages (`region_created`, `screen_update`, `terminal_events`,
 Identify the connecting client to the server. Fire-and-forget; no response.
 
 ```json
-{ "type": "identify", "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-tui" }
+{ "type": "identify", "hostname": "myhost", "username": "alice", "pid": 12345, "process": "nxterm" }
 ```
 
 | Field    | Type   | Description                    |
@@ -261,7 +261,7 @@ Query the server's status.
 ### status_response
 
 ```json
-{ "type": "status_response", "pid": 1234, "uptime_seconds": 3600, "socket_path": "/tmp/termd.sock", "num_clients": 2, "num_regions": 1, "error": false, "message": "" }
+{ "type": "status_response", "pid": 1234, "uptime_seconds": 3600, "socket_path": "/tmp/nxtermd.sock", "num_clients": 2, "num_regions": 1, "error": false, "message": "" }
 ```
 
 | Field          | Type   | Description                        |
@@ -353,7 +353,7 @@ List all connected clients.
 ### list_clients_response
 
 ```json
-{ "type": "list_clients_response", "clients": [{"client_id": 1, "hostname": "myhost", "username": "alice", "pid": 12345, "process": "termd-tui", "subscribed_region_id": "abc123"}], "error": false, "message": "" }
+{ "type": "list_clients_response", "clients": [{"client_id": 1, "hostname": "myhost", "username": "alice", "pid": 12345, "process": "nxterm", "subscribed_region_id": "abc123"}], "error": false, "message": "" }
 ```
 
 | Field   | Type           | Description                           |

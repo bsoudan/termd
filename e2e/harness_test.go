@@ -14,7 +14,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
-	"termd/pkg/te"
+	"nxtermd/pkg/te"
 )
 
 // shellSGR converts ansi.SGR() output to shell printf \e notation.
@@ -44,12 +44,12 @@ func startServerReturnEnv(t *testing.T) (string, []string, func()) {
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
 
-	socketPath := filepath.Join(t.TempDir(), "termd.sock")
-	cmd := exec.Command("termd", "unix:"+socketPath)
+	socketPath := filepath.Join(t.TempDir(), "nxtermd.sock")
+	cmd := exec.Command("nxtermd", "unix:"+socketPath)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start server: %v (is termd in PATH?)", err)
+		t.Fatalf("start server: %v (is nxtermd in PATH?)", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -82,7 +82,7 @@ func writeTestServerConfig(t *testing.T, env []string) {
 	if shell == "" {
 		shell = "bash"
 	}
-	cfgDir := filepath.Join(xdg, "termd")
+	cfgDir := filepath.Join(xdg, "nxtermd")
 	os.MkdirAll(cfgDir, 0o755)
 	cfgContent := fmt.Sprintf("[[programs]]\nname = \"shell\"\ncmd = %q\nargs = [\"--norc\"]\n\n[sessions]\ndefault-programs = [\"shell\"]\n", shell)
 	os.WriteFile(filepath.Join(cfgDir, "server.toml"), []byte(cfgContent), 0o644)
@@ -95,7 +95,7 @@ func writeTestServerConfigCustom(t *testing.T, env []string, content string) {
 	if xdg == "" {
 		return
 	}
-	cfgDir := filepath.Join(xdg, "termd")
+	cfgDir := filepath.Join(xdg, "nxtermd")
 	os.MkdirAll(cfgDir, 0o755)
 	os.WriteFile(filepath.Join(cfgDir, "server.toml"), []byte(content), 0o644)
 }
@@ -107,7 +107,7 @@ func writeTestKeybindConfig(t *testing.T, env []string, content string) {
 	if xdg == "" {
 		return
 	}
-	cfgDir := filepath.Join(xdg, "termd-tui")
+	cfgDir := filepath.Join(xdg, "nxterm")
 	os.MkdirAll(cfgDir, 0o755)
 	os.WriteFile(filepath.Join(cfgDir, "keybindings.toml"), []byte(content), 0o644)
 }
@@ -128,12 +128,12 @@ func startServerCustom(t *testing.T, configContent string) (string, func()) {
 	env := testEnv(t)
 	writeTestServerConfigCustom(t, env, configContent)
 
-	socketPath := filepath.Join(t.TempDir(), "termd.sock")
-	cmd := exec.Command("termd", "unix:"+socketPath)
+	socketPath := filepath.Join(t.TempDir(), "nxtermd.sock")
+	cmd := exec.Command("nxtermd", "unix:"+socketPath)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start server: %v (is termd in PATH?)", err)
+		t.Fatalf("start server: %v (is nxtermd in PATH?)", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -163,10 +163,10 @@ func startServerWithListeners(t *testing.T, extraListens ...string) (socketPath 
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
 
-	socketPath = filepath.Join(t.TempDir(), "termd.sock")
+	socketPath = filepath.Join(t.TempDir(), "nxtermd.sock")
 	args := []string{"unix:" + socketPath}
 	args = append(args, extraListens...)
-	cmd := exec.Command("termd", args...)
+	cmd := exec.Command("nxtermd", args...)
 	cmd.Env = env
 
 	// Capture stderr to extract listen addresses
@@ -240,7 +240,7 @@ func startServerWithTCP(t *testing.T) (socketPath, tcpAddr string, cleanup func(
 	return sock, tcpAddr, cl
 }
 
-// frontend holds the state of a running termd-tui process in a PTY.
+// frontend holds the state of a running nxterm process in a PTY.
 type frontend struct {
 	*ptyIO
 	cmd  *exec.Cmd
@@ -281,7 +281,7 @@ func startFrontendFull(t *testing.T, socketPath string) *frontend {
 func startFrontendWithEnv(t *testing.T, socketPath string, env []string) *frontend {
 	t.Helper()
 
-	cmd := exec.Command("termd-tui", "--socket", socketPath)
+	cmd := exec.Command("nxterm", "--socket", socketPath)
 	// TERM=dumb prevents bubbletea's package init() from sending an OSC
 	// terminal query that times out after 5 seconds in a raw PTY with no
 	// terminal emulator behind it.
@@ -289,7 +289,7 @@ func startFrontendWithEnv(t *testing.T, socketPath string, env []string) *fronte
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {
-		t.Fatalf("start frontend in pty: %v (is termd-tui in PATH?)", err)
+		t.Fatalf("start frontend in pty: %v (is nxterm in PATH?)", err)
 	}
 
 	return &frontend{
@@ -434,11 +434,11 @@ func (p *ptyIO) WaitForSilence(duration time.Duration) {
 	}
 }
 
-// runTermctl runs the termctl binary with the given args and returns stdout.
-func runTermctl(t *testing.T, socketPath string, args ...string) string {
+// runNxtermctl runs the nxtermctl binary with the given args and returns stdout.
+func runNxtermctl(t *testing.T, socketPath string, args ...string) string {
 	t.Helper()
 	fullArgs := append([]string{"--socket", socketPath}, args...)
-	cmd := exec.Command("termctl", fullArgs...)
+	cmd := exec.Command("nxtermctl", fullArgs...)
 	cmd.Env = testEnv(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -447,11 +447,11 @@ func runTermctl(t *testing.T, socketPath string, args ...string) string {
 	return string(out)
 }
 
-// spawnRegion uses termctl to spawn a region using the named program
+// spawnRegion uses nxtermctl to spawn a region using the named program
 // and returns the region ID.
 func spawnRegion(t *testing.T, socketPath string, programName string) string {
 	t.Helper()
-	out := runTermctl(t, socketPath, "region", "spawn", programName)
+	out := runNxtermctl(t, socketPath, "region", "spawn", programName)
 	id := strings.TrimSpace(out)
 	if len(id) != 36 {
 		t.Fatalf("expected 36-char region ID, got %q", id)

@@ -9,12 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/grandcat/zeroconf"
-	"termd/frontend/ui"
+	"nxtermd/frontend/ui"
 )
 
-const mdnsService = "_termd._tcp"
+const mdnsService = "_nxtermd._tcp"
 
-// browseServers starts mDNS browsing for termd servers. Each discovery
+// browseServers starts mDNS browsing for nxtermd servers. Each discovery
 // is sent to the bubbletea program as a DiscoveredServerMsg. The goroutine
 // exits when ctx is cancelled.
 func browseServers(ctx context.Context, p *tea.Program) {

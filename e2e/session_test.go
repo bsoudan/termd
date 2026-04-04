@@ -11,7 +11,7 @@ import (
 	"github.com/creack/pty"
 )
 
-// startFrontendWithSession starts a termd-tui with the given --session flag.
+// startFrontendWithSession starts an nxterm with the given --session flag.
 func startFrontendWithSession(t *testing.T, socketPath, session string) *frontend {
 	t.Helper()
 
@@ -19,7 +19,7 @@ func startFrontendWithSession(t *testing.T, socketPath, session string) *fronten
 	if session != "" {
 		args = append(args, "--session", session)
 	}
-	cmd := exec.Command("termd-tui", args...)
+	cmd := exec.Command("nxterm", args...)
 	cmd.Env = append(testEnv(t), "TERM=dumb")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
@@ -45,13 +45,13 @@ func TestSessionConnectDefault(t *testing.T) {
 	fe.WaitFor(t, "$", 10*time.Second)
 
 	// Verify session was created
-	out := runTermctl(t, socketPath, "session", "list")
+	out := runNxtermctl(t, socketPath, "session", "list")
 	if !strings.Contains(out, "main") {
 		t.Fatalf("session list missing 'main':\n%s", out)
 	}
 
 	// Verify client shows session
-	out = runTermctl(t, socketPath, "client", "list")
+	out = runNxtermctl(t, socketPath, "client", "list")
 	if !strings.Contains(out, "main") {
 		t.Fatalf("client list missing session 'main':\n%s", out)
 	}
@@ -67,13 +67,13 @@ func TestSessionConnectNamed(t *testing.T) {
 	fe.WaitFor(t, "bash", 10*time.Second)
 	fe.WaitFor(t, "$", 10*time.Second)
 
-	out := runTermctl(t, socketPath, "session", "list")
+	out := runNxtermctl(t, socketPath, "session", "list")
 	if !strings.Contains(out, "work") {
 		t.Fatalf("session list missing 'work':\n%s", out)
 	}
 
 	// Verify region belongs to "work" session
-	out = runTermctl(t, socketPath, "region", "list", "--session", "work")
+	out = runNxtermctl(t, socketPath, "region", "list", "--session", "work")
 	if strings.Contains(out, "no regions") {
 		t.Fatalf("expected regions in 'work' session, got:\n%s", out)
 	}
@@ -95,7 +95,7 @@ func TestSessionMultiple(t *testing.T) {
 	fe2.WaitFor(t, "bash", 10*time.Second)
 
 	// Both sessions exist
-	out := runTermctl(t, socketPath, "session", "list")
+	out := runNxtermctl(t, socketPath, "session", "list")
 	if !strings.Contains(out, "main") {
 		t.Fatalf("session list missing 'main':\n%s", out)
 	}
@@ -104,9 +104,9 @@ func TestSessionMultiple(t *testing.T) {
 	}
 
 	// Filter by session
-	outMain := runTermctl(t, socketPath, "region", "list", "--session", "main")
-	outDev := runTermctl(t, socketPath, "region", "list", "--session", "dev")
-	outAll := runTermctl(t, socketPath, "region", "list")
+	outMain := runNxtermctl(t, socketPath, "region", "list", "--session", "main")
+	outDev := runNxtermctl(t, socketPath, "region", "list", "--session", "dev")
+	outAll := runNxtermctl(t, socketPath, "region", "list")
 
 	// Each filtered list should have regions
 	if strings.Contains(outMain, "no regions") {
@@ -137,7 +137,7 @@ func TestSessionReconnect(t *testing.T) {
 	fe.WaitFor(t, "$", 10*time.Second)
 
 	// Get the region ID
-	out := runTermctl(t, socketPath, "region", "list", "--session", "persist")
+	out := runNxtermctl(t, socketPath, "region", "list", "--session", "persist")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 1 region, got:\n%s", out)
@@ -151,7 +151,7 @@ func TestSessionReconnect(t *testing.T) {
 	fe.Kill()
 
 	// Session and region should still exist
-	out = runTermctl(t, socketPath, "session", "list")
+	out = runNxtermctl(t, socketPath, "session", "list")
 	if !strings.Contains(out, "persist") {
 		t.Fatalf("session 'persist' disappeared after frontend disconnect:\n%s", out)
 	}
@@ -163,7 +163,7 @@ func TestSessionReconnect(t *testing.T) {
 	fe2.WaitFor(t, "bash", 10*time.Second)
 
 	// Verify no additional regions were spawned
-	out = runTermctl(t, socketPath, "region", "list", "--session", "persist")
+	out = runNxtermctl(t, socketPath, "region", "list", "--session", "persist")
 	regionLines := 0
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.Contains(line, regionID) {
@@ -183,22 +183,22 @@ func TestSessionCleanup(t *testing.T) {
 	defer serverCleanup()
 
 	// Create a session by spawning a region directly
-	id := runTermctl(t, socketPath, "region", "spawn", "--session", "temp", "shell")
+	id := runNxtermctl(t, socketPath, "region", "spawn", "--session", "temp", "shell")
 	id = strings.TrimSpace(id)
 
 	// Verify session exists
-	out := runTermctl(t, socketPath, "session", "list")
+	out := runNxtermctl(t, socketPath, "session", "list")
 	if !strings.Contains(out, "temp") {
 		t.Fatalf("session 'temp' not created:\n%s", out)
 	}
 
 	// Kill the region
-	runTermctl(t, socketPath, "region", "kill", id)
+	runNxtermctl(t, socketPath, "region", "kill", id)
 
 	// Wait for session to disappear
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		out = runTermctl(t, socketPath, "session", "list")
+		out = runNxtermctl(t, socketPath, "session", "list")
 		if !strings.Contains(out, "temp") {
 			return
 		}
@@ -216,11 +216,11 @@ func TestSessionSpawnIntoSession(t *testing.T) {
 	fe.WaitFor(t, "bash", 10*time.Second)
 
 	// Spawn another region into "main" session via termctl
-	id := runTermctl(t, socketPath, "region", "spawn", "--session", "main", "shell")
+	id := runNxtermctl(t, socketPath, "region", "spawn", "--session", "main", "shell")
 	id = strings.TrimSpace(id)
 
 	// Verify it's in "main"
-	out := runTermctl(t, socketPath, "region", "list", "--session", "main")
+	out := runNxtermctl(t, socketPath, "region", "list", "--session", "main")
 	if !strings.Contains(out, id) {
 		t.Fatalf("spawned region %s not in 'main' session:\n%s", id, out)
 	}
@@ -240,7 +240,7 @@ func TestSessionClientListShowsSession(t *testing.T) {
 	defer fe.Kill()
 	fe.WaitFor(t, "bash", 10*time.Second)
 
-	out := runTermctl(t, socketPath, "client", "list")
+	out := runNxtermctl(t, socketPath, "client", "list")
 
 	// Header should have SESSION
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -254,13 +254,13 @@ func TestSessionClientListShowsSession(t *testing.T) {
 	// Frontend client row should show "visible"
 	found := false
 	for _, line := range lines[1:] {
-		if strings.Contains(line, "termd-tui") && strings.Contains(line, "visible") {
+		if strings.Contains(line, "nxterm") && strings.Contains(line, "visible") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("client list missing session 'visible' for termd-tui:\n%s", out)
+		t.Fatalf("client list missing session 'visible' for nxterm:\n%s", out)
 	}
 }
 
@@ -271,7 +271,7 @@ func TestSessionPersistence(t *testing.T) {
 	pio1, cleanup1 := startFrontend(t, socketPath)
 
 	pio1.WaitFor(t, "bash", 10*time.Second)
-	pio1.WaitFor(t, "termd$",10*time.Second)
+	pio1.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Output colored text before detaching
 	pio1.Write([]byte("printf '" +
@@ -352,7 +352,7 @@ func TestConnectPicksUpExistingRegions(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
-	// Pre-create two regions via termctl before the frontend connects.
+	// Pre-create two regions via nxtermctl before the frontend connects.
 	spawnRegion(t, socketPath, "shell")
 	spawnRegion(t, socketPath, "shell")
 
@@ -376,7 +376,7 @@ func TestReconnectRestoresTabs(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Spawn a second region
 	pio.Write([]byte("\x02c"))
@@ -386,15 +386,15 @@ func TestReconnectRestoresTabs(t *testing.T) {
 		}
 		return strings.Contains(lines[0], "1:bash") && strings.Contains(lines[0], "2:bash")
 	}, "tab bar with '1:bash' and '2:bash'", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Kill the client connection to force reconnect
 	clientID := findFrontendClientID(t, socketPath)
-	runTermctl(t, socketPath, "client", "kill", clientID)
+	runNxtermctl(t, socketPath, "client", "kill", clientID)
 
 	// Wait for reconnecting then reconnected
 	pio.WaitFor(t, "reconnecting", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Both tabs should be restored after reconnect
 	pio.WaitForScreen(t, func(lines []string) bool {
@@ -413,7 +413,7 @@ func TestAllRegionsDestroyedShowsNoSession(t *testing.T) {
 	defer frontendCleanup()
 
 	pio.WaitFor(t, "1:bash", 10*time.Second)
-	pio.WaitFor(t, "termd$", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Exit the only shell.
 	pio.Write([]byte("exit\r"))

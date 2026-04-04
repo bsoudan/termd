@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	termlog "termd/frontend/log"
-	"termd/frontend/protocol"
-	"termd/pkg/tui"
+	termlog "nxtermd/frontend/log"
+	"nxtermd/frontend/protocol"
+	"nxtermd/pkg/tui"
 )
 
 // Model is the top-level bubbletea model. It owns the layer stack and
@@ -281,9 +281,9 @@ func renderStatusBar(status, version string, style lipgloss.Style, showVersion b
 	result := style.Render("• " + status + " •")
 	displayWidth := len([]rune("• " + status + " •"))
 
-	suffix := "termd-tui"
+	suffix := "nxterm"
 	if version != "" && showVersion {
-		suffix = "termd-tui " + version
+		suffix = "nxterm " + version
 	}
 	result += statusFaint.Render(" ") + statusBold.Render(suffix) + statusFaint.Render(" •")
 	displayWidth += 1 + len([]rune(suffix)) + 2

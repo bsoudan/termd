@@ -16,8 +16,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
-	te "termd/pkg/te"
-	"termd/frontend/protocol"
+	te "nxtermd/pkg/te"
+	"nxtermd/frontend/protocol"
 )
 
 // Region is the interface that all region types implement.
@@ -132,9 +132,9 @@ func NewRegion(cmdStr string, args []string, env map[string]string, width, heigh
 	name := extractName(cmdStr)
 
 	cmdObj := exec.Command(cmdStr, args...)
-	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=termd$ ")
+	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=nxterm$ ")
 	if socketAddr != "" {
-		cmdObj.Env = append(cmdObj.Env, "TERMD_SOCKET="+socketAddr, "TERMD_REGIONID="+id)
+		cmdObj.Env = append(cmdObj.Env, "NXTERMD_SOCKET="+socketAddr, "NXTERMD_REGIONID="+id)
 	}
 	for k, v := range env {
 		cmdObj.Env = append(cmdObj.Env, k+"="+v)

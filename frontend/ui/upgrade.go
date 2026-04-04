@@ -13,7 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"termd/frontend/protocol"
+	"nxtermd/frontend/protocol"
 )
 
 // PreUpgradeCleanup is called before starting the new process during a
@@ -179,12 +179,12 @@ func setupDownload(server *Server) (*Download, error) {
 		return nil, fmt.Errorf("os.Executable: %v", err)
 	}
 	dir := filepath.Dir(exePath)
-	tmp, err := os.CreateTemp(dir, ".termd-tui-upgrade-*")
+	tmp, err := os.CreateTemp(dir, ".nxterm-upgrade-*")
 	if err != nil {
 		home, _ := os.UserHomeDir()
 		binDir := filepath.Join(home, ".local", "bin")
 		os.MkdirAll(binDir, 0755)
-		tmp, err = os.CreateTemp(binDir, ".termd-tui-upgrade-*")
+		tmp, err = os.CreateTemp(binDir, ".nxterm-upgrade-*")
 		if err != nil {
 			return nil, fmt.Errorf("create temp file: %v", err)
 		}
@@ -234,7 +234,7 @@ func applyClientUpgrade(overlay *Overlay, t *TermdHandle, dl *Download, server *
 	if filepath.Dir(tmpPath) != filepath.Dir(exePath) {
 		name := filepath.Base(exePath)
 		if name == "" || name == "." {
-			name = "termd-tui"
+			name = "nxterm"
 		}
 		targetPath = filepath.Join(filepath.Dir(tmpPath), name)
 	}

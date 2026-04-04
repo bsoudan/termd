@@ -8,9 +8,9 @@ Always use `make` to build. Do not run `go build` directly.
 
 ```bash
 make                    # build everything (server, tui, termctl, mousehelper, upgrade binaries)
-make build-server       # build server only → .local/bin/termd
-make build-tui          # build TUI client only → .local/bin/ttui
-make build-termctl      # build termctl CLI → .local/bin/termctl
+make build-server       # build server only → .local/bin/nxtermd
+make build-tui          # build TUI client only → .local/bin/nxterm
+make build-termctl      # build termctl CLI → .local/bin/nxtermctl
 make test               # run e2e tests (builds everything first)
 make test-stress        # quick stress test (30s default)
 make test-stress-long   # extended stress test (120s, more clients)
@@ -31,7 +31,7 @@ Set `RELEASE=1` to build optimized binaries (no debug symbols).
 
 ## Architecture
 
-**termd** is a terminal multiplexer with a client-server architecture. The server manages PTYs and terminal state; clients connect over the network to view and interact with terminals.
+**nxtermd** is a terminal multiplexer with a client-server architecture. The server manages PTYs and terminal state; clients connect over the network to view and interact with terminals.
 
 ### Server (`server/`)
 
@@ -70,13 +70,13 @@ Transport-agnostic `Listen(spec)` / `Dial(spec)` functions. Supported schemes: `
 
 A full VT100/xterm terminal emulator library. `Stream` parses escape sequences, `Screen` maintains cell state with colors/attributes, `HistoryScreen` wraps Screen with scrollback. Extensively tested with esctest2 test suite ports and pyte compatibility tests.
 
-### termctl (`termctl/`)
+### nxtermctl (`termctl/`)
 
 CLI admin tool for the server. Connects using `frontend/client` and sends protocol messages (status, list regions, spawn, kill, etc.).
 
 ### Config (`config/`)
 
-TOML configuration. Server: `~/.config/termd/server.toml`. Frontend: `~/.config/termd-tui/config.toml`.
+TOML configuration. Server: `~/.config/nxtermd/server.toml`. Frontend: `~/.config/nxterm/config.toml`.
 
 ## Coding
 

@@ -10,10 +10,10 @@ func TestFrontendFallbackToServerConfig(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create a server config with listen addresses but no frontend config
-	serverDir := filepath.Join(dir, "termd")
+	serverDir := filepath.Join(dir, "nxtermd")
 	os.MkdirAll(serverDir, 0755)
 	os.WriteFile(filepath.Join(serverDir, "server.toml"), []byte(`
-listen = ["tcp:127.0.0.1:9090", "unix:/tmp/termd.sock"]
+listen = ["tcp:127.0.0.1:9090", "unix:/tmp/nxtermd.sock"]
 `), 0644)
 
 	// Point XDG_CONFIG_HOME to our temp dir
@@ -36,16 +36,16 @@ func TestFrontendOwnConfigTakesPrecedence(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create both server and frontend configs
-	serverDir := filepath.Join(dir, "termd")
+	serverDir := filepath.Join(dir, "nxtermd")
 	os.MkdirAll(serverDir, 0755)
 	os.WriteFile(filepath.Join(serverDir, "server.toml"), []byte(`
 listen = ["tcp:127.0.0.1:9090"]
 `), 0644)
 
-	frontendDir := filepath.Join(dir, "termd-tui")
+	frontendDir := filepath.Join(dir, "nxterm")
 	os.MkdirAll(frontendDir, 0755)
 	os.WriteFile(filepath.Join(frontendDir, "config.toml"), []byte(`
-connect = "unix:/tmp/my-termd.sock"
+connect = "unix:/tmp/my-nxtermd.sock"
 `), 0644)
 
 	old := os.Getenv("XDG_CONFIG_HOME")
@@ -58,8 +58,8 @@ connect = "unix:/tmp/my-termd.sock"
 	}
 
 	// Frontend config wins over server fallback
-	if cfg.Connect != "unix:/tmp/my-termd.sock" {
-		t.Errorf("expected connect=%q, got %q", "unix:/tmp/my-termd.sock", cfg.Connect)
+	if cfg.Connect != "unix:/tmp/my-nxtermd.sock" {
+		t.Errorf("expected connect=%q, got %q", "unix:/tmp/my-nxtermd.sock", cfg.Connect)
 	}
 }
 

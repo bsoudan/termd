@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"termd/pkg/tui"
+	"nxtermd/pkg/tui"
 )
 
 // Core TaskRunner and Handle tests are in pkg/tui/task_test.go.
-// These tests cover the termd-specific TermdHandle.Request method
+// These tests cover the nxtermd-specific TermdHandle.Request method
 // which routes through Handle.Send → TaskSendMsg → Deliver.
 
 func TestTermdHandleRequest(t *testing.T) {

@@ -1,12 +1,12 @@
-# termd-tui Windows Support
+# nxterm Windows Support
 
-Goal: make `termd-tui` build and run on Windows, connecting to a
-remote termd server over TCP, WebSocket, or SSH.  The server and termctl
+Goal: make `nxterm` build and run on Windows, connecting to a
+remote nxtermd server over TCP, WebSocket, or SSH.  The server and nxtermctl
 remain Linux/macOS only.  Unix socket support is excluded on Windows.
 
 ## Background
 
-The frontend is a BubbleTea TUI that connects to a termd server, sends
+The frontend is a BubbleTea TUI that connects to a nxtermd server, sends
 keystrokes, and renders terminal output.  Most of the code is already
 cross-platform (BubbleTea, go-te, protocol, client).  Four areas need
 platform-specific handling.
@@ -91,13 +91,13 @@ Update `main.go` to call `dupStdin()` instead of inline `syscall.Dup`.
 
 ### Step 3 — Fix default endpoint and scheme detection
 
-The frontend defaults to `unix:/tmp/termd.sock` and infers `unix:` for
+The frontend defaults to `unix:/tmp/nxtermd.sock` and infers `unix:` for
 any address without a `:`.  Both break on Windows.
 
-- Change the default: on Windows, require `TERMD_SOCKET` or `--socket`
+- Change the default: on Windows, require `NXTERMD_SOCKET` or `--socket`
   to be set explicitly (no silent default).  Print a clear error message
   if neither is provided, e.g.:
-  `"error: --socket or TERMD_SOCKET required (e.g. tcp:host:port)"`.
+  `"error: --socket or NXTERMD_SOCKET required (e.g. tcp:host:port)"`.
 - Fix `parseSpec`: a bare path starting with `/` or `.` → unix (existing).
   A Windows drive-letter path like `C:\...` should not be parsed as
   scheme `C` — but since we're not supporting unix sockets on Windows,
@@ -148,8 +148,8 @@ yet — just verify it compiles.
 
 ## Out of scope
 
-- Server (`termd`) on Windows — remains Linux/macOS only.
-- `termctl` on Windows — remains Linux/macOS only.
+- Server (`nxtermd`) on Windows — remains Linux/macOS only.
+- `nxtermctl` on Windows — remains Linux/macOS only.
 - Unix socket transport on Windows.
 - Running Windows tests in CI (cross-compile check is sufficient initially).
 - Named pipe transport (future work if needed).

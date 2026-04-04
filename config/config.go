@@ -1,7 +1,7 @@
-// Package config reads TOML configuration files for termd tools.
+// Package config reads TOML configuration files for nxtermd tools.
 //
-// The server and termctl share ~/.config/termd/server.toml.
-// The frontend uses ~/.config/termd-tui/config.toml, falling back to
+// The server and nxtermctl share ~/.config/nxtermd/server.toml.
+// The frontend uses ~/.config/nxterm/config.toml, falling back to
 // the server config's first listen address if no frontend config exists.
 package config
 
@@ -29,7 +29,7 @@ type SessionsConfig struct {
 // DiscoveryConfig holds mDNS service discovery settings.
 type DiscoveryConfig struct {
 	Enabled *bool  `toml:"enabled"` // pointer: nil means default (true)
-	Name    string `toml:"name"`    // mDNS instance name; default: "termd on <hostname>"
+	Name    string `toml:"name"`    // mDNS instance name; default: "nxtermd on <hostname>"
 }
 
 // IsEnabled returns whether discovery is enabled (default: true).
@@ -45,7 +45,7 @@ type UpgradeConfig struct {
 	BinariesDir string `toml:"binaries-dir"`
 }
 
-// ServerConfig represents termd/server.toml.
+// ServerConfig represents nxtermd/server.toml.
 type ServerConfig struct {
 	Listen    []string        `toml:"listen"`
 	Debug     bool            `toml:"debug"`
@@ -65,13 +65,13 @@ type SSHConfig struct {
 	NoAuth         bool   `toml:"no-auth"`
 }
 
-// TermctlConfig holds termctl defaults from the server config.
+// TermctlConfig holds nxtermctl defaults from the server config.
 type TermctlConfig struct {
 	Connect string `toml:"connect"`
 	Debug   bool   `toml:"debug"`
 }
 
-// FrontendConfig represents termd-tui/config.toml.
+// FrontendConfig represents nxterm/config.toml.
 type FrontendConfig struct {
 	Connect string `toml:"connect"`
 	Debug   bool   `toml:"debug"`
@@ -84,7 +84,7 @@ func LoadServerConfig(explicit string) (ServerConfig, error) {
 	var cfg ServerConfig
 	path := explicit
 	if path == "" {
-		path = findConfig("termd", "server.toml")
+		path = findConfig("nxtermd", "server.toml")
 	}
 	if path == "" {
 		return cfg, nil
@@ -102,7 +102,7 @@ func LoadFrontendConfig(explicit string) (FrontendConfig, error) {
 	var cfg FrontendConfig
 	path := explicit
 	if path == "" {
-		path = findConfig("termd-tui", "config.toml")
+		path = findConfig("nxterm", "config.toml")
 	}
 	if path != "" {
 		_, err := toml.DecodeFile(path, &cfg)
@@ -120,7 +120,7 @@ func LoadFrontendConfig(explicit string) (FrontendConfig, error) {
 	return cfg, nil
 }
 
-// KeybindConfig represents termd-tui/keybindings.toml.
+// KeybindConfig represents nxterm/keybindings.toml.
 // Bindings are organized by category: [tab], [session], [main].
 // Values are either a single key string or an array of key strings.
 // An empty string unbinds the command.
@@ -169,7 +169,7 @@ func keysFromValue(v any) []string {
 // Returns zero config if no file found (caller defaults to "native" style).
 func LoadKeybindConfig() (KeybindConfig, error) {
 	var cfg KeybindConfig
-	path := findConfig("termd-tui", "keybindings.toml")
+	path := findConfig("nxterm", "keybindings.toml")
 	if path == "" {
 		return cfg, nil
 	}

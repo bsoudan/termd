@@ -13,10 +13,10 @@ func TestRegionKilledExternally(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Get the region ID
-	out := runTermctl(t, socketPath, "region", "list")
+	out := runNxtermctl(t, socketPath, "region", "list")
 	var regionID string
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
@@ -30,7 +30,7 @@ func TestRegionKilledExternally(t *testing.T) {
 	}
 
 	// Kill the region externally
-	runTermctl(t, socketPath, "region", "kill", regionID)
+	runNxtermctl(t, socketPath, "region", "kill", regionID)
 
 	// Frontend should enter the no-session screen instead of exiting.
 	pio.WaitFor(t, "no session", 10*time.Second)
@@ -45,7 +45,7 @@ func TestExit(t *testing.T) {
 
 	pio.WaitFor(t, "bash", 10*time.Second)
 
-	pio.WaitFor(t, "termd$",10*time.Second)
+	pio.WaitFor(t, "nxterm$",10*time.Second)
 	pio.Write([]byte("exit\r"))
 
 	// Frontend should enter the no-session screen instead of exiting.

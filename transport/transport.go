@@ -1,7 +1,7 @@
-// Package transport provides multi-transport listener and dialer for termd.
+// Package transport provides multi-transport listener and dialer for nxtermd.
 // Address specs have the form "scheme:address":
 //
-//	unix:/tmp/termd.sock   Unix domain socket
+//	unix:/tmp/nxtermd.sock   Unix domain socket
 //	tcp:127.0.0.1:9090     TCP
 //
 // A bare path (starting with / or .) defaults to unix.

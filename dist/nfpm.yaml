@@ -1,21 +1,18 @@
-name: termd
+name: nxtermd
 arch: ${GOARCH}
 platform: linux
 version: ${VERSION}
 release: 1${DIST}
 description: Terminal multiplexer with client-server architecture
-maintainer: termd maintainers
+maintainer: nxtermd maintainers
 license: MIT
 contents:
-  - src: termd
-    dst: /usr/bin/termd
-  - src: termd-tui
-    dst: /usr/bin/termd-tui
-  - src: ./termd-tui
-    dst: /usr/bin/ttui
-    type: symlink
-  - src: termctl
-    dst: /usr/bin/termctl
-  - src: termd.service
-    dst: /usr/lib/systemd/user/termd.service
+  - src: nxtermd
+    dst: /usr/bin/nxtermd
+  - src: nxterm
+    dst: /usr/bin/nxterm
+  - src: nxtermctl
+    dst: /usr/bin/nxtermctl
+  - src: nxtermd.service
+    dst: /usr/lib/systemd/user/nxtermd.service
     type: config
