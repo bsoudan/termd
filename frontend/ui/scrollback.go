@@ -115,6 +115,37 @@ func (s *ScrollbackLayer) handleWheel(button tea.MouseButton) (tea.Msg, tea.Cmd,
 	return nil, nil, true
 }
 
+// Scrollbar characters.
+const (
+	scrollbarTrack   = "·"
+	scrollbarThumb   = "█"
+	scrollbarCapTop  = "▲"
+	scrollbarCapBot  = "▼"
+)
+
+var (
+	scrollbarTrackStyle = lipgloss.NewStyle().Faint(true)
+	scrollbarThumbStyle = lipgloss.NewStyle().Bold(true)
+)
+
+// scrollbarGeometry computes the thumb position and size for a scrollbar.
+// Returns thumbStart (first row of thumb) and thumbLen (number of rows).
+func scrollbarGeometry(height, totalLines, offset int) (thumbStart, thumbLen int) {
+	if totalLines <= height {
+		return 0, height
+	}
+	thumbLen = max(height*height/totalLines, 1)
+	// offset=0 means bottom (viewport at end), offset=max means top.
+	maxOffset := totalLines - height
+	scrollFrac := 1.0
+	if maxOffset > 0 {
+		scrollFrac = 1.0 - float64(offset)/float64(maxOffset)
+	}
+	thumbStart = int(scrollFrac * float64(height-thumbLen))
+	thumbStart = max(min(thumbStart, height-thumbLen), 0)
+	return thumbStart, thumbLen
+}
+
 func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer {
 	screenCells := s.term.ScreenCells()
 
@@ -129,6 +160,7 @@ func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer
 		startIdx = 0
 	}
 
+	// Content layer — full width terminal content.
 	var sb strings.Builder
 	for i := range height {
 		idx := startIdx + i
@@ -146,7 +178,35 @@ func (s *ScrollbackLayer) View(width, height int, active bool) []*lipgloss.Layer
 			sb.WriteByte('\n')
 		}
 	}
-	return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
+
+	// Scrollbar layer — single column overlaid on the right edge.
+	thumbStart, thumbLen := scrollbarGeometry(height, totalLines, offset)
+	thumbEnd := thumbStart + thumbLen
+	atTop := offset >= len(s.cells)
+	atBottom := offset <= 0
+
+	var bar strings.Builder
+	for i := range height {
+		if i >= thumbStart && i < thumbEnd {
+			if i == thumbStart && !atTop {
+				bar.WriteString(scrollbarThumbStyle.Render(scrollbarCapTop))
+			} else if i == thumbEnd-1 && !atBottom {
+				bar.WriteString(scrollbarThumbStyle.Render(scrollbarCapBot))
+			} else {
+				bar.WriteString(scrollbarThumbStyle.Render(scrollbarThumb))
+			}
+		} else {
+			bar.WriteString(scrollbarTrackStyle.Render(scrollbarTrack))
+		}
+		if i < height-1 {
+			bar.WriteByte('\n')
+		}
+	}
+
+	return []*lipgloss.Layer{
+		lipgloss.NewLayer(sb.String()),
+		lipgloss.NewLayer(bar.String()).X(width - 1).Z(1),
+	}
 }
 
 func (s *ScrollbackLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }

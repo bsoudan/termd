@@ -96,12 +96,14 @@ func TestScrollbackNavigation(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 	}
 
-	// Verify early numbers appear on screen
+	// Verify early numbers appear on screen.
+	// Use Fields[0] to ignore the scrollbar column at the right edge.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for _, line := range lines[1:] { // skip tab bar
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "1" || trimmed == "2" || trimmed == "3" {
-				return true
+			if fields := strings.Fields(line); len(fields) > 0 {
+				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
+					return true
+				}
 			}
 		}
 		return false
@@ -154,12 +156,13 @@ func TestScrollbackPageUpDown(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 	}
 
-	// Verify early numbers appear on screen
+	// Verify early numbers appear on screen.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for _, line := range lines[1:] {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "1" || trimmed == "2" || trimmed == "3" {
-				return true
+			if fields := strings.Fields(line); len(fields) > 0 {
+				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
+					return true
+				}
 			}
 		}
 		return false
@@ -225,12 +228,13 @@ func TestScrollbackScrollWheel(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Verify early numbers appear on screen
+	// Verify early numbers appear on screen.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for _, line := range lines[1:] {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "1" || trimmed == "2" || trimmed == "3" {
-				return true
+			if fields := strings.Fields(line); len(fields) > 0 {
+				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
+					return true
+				}
 			}
 		}
 		return false
