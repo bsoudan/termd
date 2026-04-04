@@ -371,6 +371,36 @@ type TerminalEvents struct {
 	Events   []TerminalEvent `json:"events"`
 }
 
+// ── Overlay protocol ────────────────────────────────────────────────────────
+
+type OverlayRegisterRequest struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+}
+
+type OverlayRegisterResponse struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Error    bool   `json:"error"`
+	Message  string `json:"message"`
+}
+
+type OverlayRender struct {
+	Type      string         `json:"type,omitempty"`
+	RegionID  string         `json:"region_id"`
+	Cells     [][]ScreenCell `json:"cells"`
+	CursorRow uint16         `json:"cursor_row"`
+	CursorCol uint16         `json:"cursor_col"`
+	Modes     map[int]bool   `json:"modes,omitempty"`
+}
+
+type OverlayClear struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+}
+
 // ── Parsing ─────────────────────────────────────────────────────────────────
 
 type envelope struct {
@@ -473,6 +503,9 @@ func parsePayload(typ string, line []byte) (any, error) {
 	case "client_binary_response":
 		var msg ClientBinaryResponse
 		return msg, json.Unmarshal(line, &msg)
+	case "overlay_register_response":
+		var msg OverlayRegisterResponse
+		return msg, json.Unmarshal(line, &msg)
 	default:
 		return nil, fmt.Errorf("unknown message type: %s", typ)
 	}
@@ -572,6 +605,12 @@ func typeTag(msg any) string {
 		return "client_binary_request"
 	case Disconnect:
 		return "disconnect"
+	case OverlayRegisterRequest:
+		return "overlay_register"
+	case OverlayRender:
+		return "overlay_render"
+	case OverlayClear:
+		return "overlay_clear"
 	default:
 		return ""
 	}

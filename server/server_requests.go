@@ -57,7 +57,7 @@ type killClientReq struct {
 
 type getSubscribersReq struct {
 	regionID string
-	resp     chan []*Client
+	resp     chan subscribersData
 }
 
 type statusCounts struct {
@@ -143,6 +143,54 @@ type shutdownResult struct {
 	regions []Region
 }
 
+// ── Overlay types ────────────────────────────────────────────────────────────
+
+type overlayState struct {
+	clientID  uint32
+	regionID  string
+	cells     [][]protocol.ScreenCell
+	cursorRow uint16
+	cursorCol uint16
+	modes     map[int]bool
+}
+
+type overlayRegisterReq struct {
+	clientID uint32
+	regionID string
+	resp     chan overlayRegisterResult
+}
+
+type overlayRegisterResult struct {
+	width  int
+	height int
+	err    string
+}
+
+type overlayRenderReq struct {
+	clientID  uint32
+	regionID  string
+	cells     [][]protocol.ScreenCell
+	cursorRow uint16
+	cursorCol uint16
+	modes     map[int]bool
+}
+
+type overlayClearReq struct {
+	clientID uint32
+	regionID string
+}
+
+type getOverlayReq struct {
+	regionID string
+	resp     chan *overlayState
+}
+
+// subscribersData is returned by getSubscribersReq, including any active overlay.
+type subscribersData struct {
+	clients []*Client
+	overlay *overlayState
+}
+
 // ── Event loop ───────────────────────────────────────────────────────────────
 
 func (s *Server) eventLoop() {
@@ -160,6 +208,7 @@ func (s *Server) eventLoop() {
 	subscriptions := make(map[uint32]string)          // clientID → regionID
 	regionSubs := make(map[string]map[uint32]struct{}) // regionID → set of clientIDs
 	clientSessions := make(map[uint32]string)          // clientID → sessionName
+	overlays := make(map[string]*overlayState)         // regionID → overlay
 
 	for {
 		select {
@@ -177,6 +226,31 @@ func (s *Server) eventLoop() {
 						delete(s, r.clientID)
 						if len(s) == 0 {
 							delete(regionSubs, rid)
+						}
+					}
+				}
+				// Clean up any overlay owned by this client.
+				for rid, ov := range overlays {
+					if ov.clientID == r.clientID {
+						delete(overlays, rid)
+						// Restore PTY terminal attributes and re-send plain snapshot.
+						if region, ok := regions[rid]; ok {
+							region.RestoreTermios()
+							snap := region.Snapshot()
+							snapMsg := protocol.ScreenUpdate{
+								Type:      "screen_update",
+								RegionID:  rid,
+								CursorRow: snap.CursorRow,
+								CursorCol: snap.CursorCol,
+								Lines:     snap.Lines,
+								Cells:     snap.Cells,
+								Modes:     snap.Modes,
+							}
+							for cid := range regionSubs[rid] {
+								if c, ok := clients[cid]; ok {
+									c.SendMessage(snapMsg)
+								}
+							}
 						}
 					}
 				}
@@ -202,6 +276,7 @@ func (s *Server) eventLoop() {
 					break
 				}
 				delete(regions, r.regionID)
+				delete(overlays, r.regionID)
 				if sess := sessions[region.Session()]; sess != nil {
 					delete(sess.regions, r.regionID)
 					if len(sess.regions) == 0 {
@@ -244,7 +319,7 @@ func (s *Server) eventLoop() {
 						subs = append(subs, c)
 					}
 				}
-				r.resp <- subs
+				r.resp <- subscribersData{clients: subs, overlay: overlays[r.regionID]}
 
 			case getStatusReq:
 				r.resp <- statusCounts{
@@ -395,6 +470,9 @@ func (s *Server) eventLoop() {
 				// This prevents sendTerminalEvents from seeing this
 				// client before it has its initial snapshot.
 				snap := region.Snapshot()
+				if ov, ok := overlays[r.regionID]; ok {
+					snap = compositeSnapshot(snap, ov)
+				}
 				subscriptions[r.clientID] = r.regionID
 				if regionSubs[r.regionID] == nil {
 					regionSubs[r.regionID] = make(map[uint32]struct{})
@@ -428,6 +506,87 @@ func (s *Server) eventLoop() {
 					})
 				}
 				r.resp <- infos
+
+			// --- Overlay support ---
+
+			case overlayRegisterReq:
+				region, ok := regions[r.regionID]
+				if !ok {
+					r.resp <- overlayRegisterResult{err: "region not found"}
+					break
+				}
+				// Save PTY state before the overlay app potentially changes it.
+				region.SaveTermios()
+				overlays[r.regionID] = &overlayState{
+					clientID: r.clientID,
+					regionID: r.regionID,
+				}
+				slog.Info("overlay registered", "region_id", r.regionID, "client_id", r.clientID)
+				r.resp <- overlayRegisterResult{width: region.Width(), height: region.Height()}
+
+			case overlayRenderReq:
+				ov := overlays[r.regionID]
+				if ov == nil || ov.clientID != r.clientID {
+					break
+				}
+				ov.cells = r.cells
+				ov.cursorRow = r.cursorRow
+				ov.cursorCol = r.cursorCol
+				ov.modes = r.modes
+				// Send composited snapshot to subscribers.
+				region := regions[r.regionID]
+				if region == nil {
+					break
+				}
+				snap := region.Snapshot()
+				composited := compositeSnapshot(snap, ov)
+				snapMsg := protocol.ScreenUpdate{
+					Type:      "screen_update",
+					RegionID:  r.regionID,
+					CursorRow: composited.CursorRow,
+					CursorCol: composited.CursorCol,
+					Lines:     composited.Lines,
+					Cells:     composited.Cells,
+					Modes:     composited.Modes,
+				}
+				for cid := range regionSubs[r.regionID] {
+					if c, ok := clients[cid]; ok {
+						c.SendMessage(snapMsg)
+					}
+				}
+
+			case overlayClearReq:
+				ov := overlays[r.regionID]
+				if ov == nil || ov.clientID != r.clientID {
+					break
+				}
+				delete(overlays, r.regionID)
+				// Restore PTY terminal attributes in case the overlay app left raw mode.
+				if region, ok := regions[r.regionID]; ok {
+					region.RestoreTermios()
+				}
+				slog.Info("overlay cleared", "region_id", r.regionID, "client_id", r.clientID)
+				// Re-send plain PTY snapshot.
+				if region, ok := regions[r.regionID]; ok {
+					snap := region.Snapshot()
+					snapMsg := protocol.ScreenUpdate{
+						Type:      "screen_update",
+						RegionID:  r.regionID,
+						CursorRow: snap.CursorRow,
+						CursorCol: snap.CursorCol,
+						Lines:     snap.Lines,
+						Cells:     snap.Cells,
+						Modes:     snap.Modes,
+					}
+					for cid := range regionSubs[r.regionID] {
+						if c, ok := clients[cid]; ok {
+							c.SendMessage(snapMsg)
+						}
+					}
+				}
+
+			case getOverlayReq:
+				r.resp <- overlays[r.regionID]
 
 			// --- Live upgrade support ---
 

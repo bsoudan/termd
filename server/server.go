@@ -163,7 +163,7 @@ func (s *Server) acceptClient(conn net.Conn) {
 }
 
 func (s *Server) SpawnRegion(sessionName, cmd string, args []string, env map[string]string) (Region, error) {
-	region, err := NewRegion(cmd, args, env, 80, 24)
+	region, err := NewRegion(cmd, args, env, 80, 24, s.socketAddr())
 	if err != nil {
 		return nil, err
 	}
@@ -267,13 +267,32 @@ func (s *Server) sendTerminalEvents(region Region) {
 		return
 	}
 
-	resp := make(chan []*Client, 1)
+	resp := make(chan subscribersData, 1)
 	if !s.send(getSubscribersReq{regionID: region.ID(), resp: resp}) {
 		return
 	}
-	subscribers := <-resp
+	data := <-resp
 
-	if len(subscribers) == 0 {
+	if len(data.clients) == 0 {
+		return
+	}
+
+	// When an overlay is active, always send a composited snapshot.
+	if data.overlay != nil {
+		snap := region.Snapshot()
+		composited := compositeSnapshot(snap, data.overlay)
+		snapMsg := protocol.ScreenUpdate{
+			Type:      "screen_update",
+			RegionID:  region.ID(),
+			CursorRow: composited.CursorRow,
+			CursorCol: composited.CursorCol,
+			Lines:     composited.Lines,
+			Cells:     composited.Cells,
+			Modes:     composited.Modes,
+		}
+		for _, c := range data.clients {
+			c.SendMessage(snapMsg)
+		}
 		return
 	}
 
@@ -288,7 +307,7 @@ func (s *Server) sendTerminalEvents(region Region) {
 			Cells:     snap.Cells,
 			Modes:     snap.Modes,
 		}
-		for _, c := range subscribers {
+		for _, c := range data.clients {
 			c.SendMessage(snapMsg)
 		}
 		return
@@ -300,9 +319,62 @@ func (s *Server) sendTerminalEvents(region Region) {
 		Events:   events,
 	}
 
-	for _, c := range subscribers {
+	for _, c := range data.clients {
 		c.SendMessage(msg)
 	}
+}
+
+// compositeSnapshot overlays cells from an overlay on top of a base snapshot.
+// Non-empty overlay cells replace base cells. The overlay's cursor and modes
+// take precedence.
+func compositeSnapshot(base Snapshot, ov *overlayState) Snapshot {
+	result := Snapshot{
+		CursorRow: ov.cursorRow,
+		CursorCol: ov.cursorCol,
+	}
+
+	// Deep copy base cells.
+	result.Cells = make([][]protocol.ScreenCell, len(base.Cells))
+	for r := range base.Cells {
+		result.Cells[r] = make([]protocol.ScreenCell, len(base.Cells[r]))
+		copy(result.Cells[r], base.Cells[r])
+	}
+
+	// Overlay cells on top.
+	for r := 0; r < len(ov.cells) && r < len(result.Cells); r++ {
+		for c := 0; c < len(ov.cells[r]) && c < len(result.Cells[r]); c++ {
+			oc := ov.cells[r][c]
+			if oc.Char != "" && oc.Char != "\x00" {
+				result.Cells[r][c] = oc
+			}
+		}
+	}
+
+	// Rebuild text lines from composited cells.
+	result.Lines = make([]string, len(result.Cells))
+	for r, row := range result.Cells {
+		var b strings.Builder
+		for _, cell := range row {
+			if cell.Char == "" {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(cell.Char)
+			}
+		}
+		result.Lines[r] = b.String()
+	}
+
+	// Overlay modes take precedence when set.
+	if len(ov.modes) > 0 {
+		result.Modes = make(map[int]bool, len(ov.modes))
+		for k, v := range ov.modes {
+			result.Modes[k] = v
+		}
+	} else {
+		result.Modes = base.Modes
+	}
+
+	return result
 }
 
 func (s *Server) getStatus() protocol.StatusResponse {
@@ -329,6 +401,15 @@ func (s *Server) getStatus() protocol.StatusResponse {
 		Error:         false,
 		Message:       "",
 	}
+}
+
+// socketAddr returns the address of the first listener, for passing to
+// child processes as TERMD_SOCKET.
+func (s *Server) socketAddr() string {
+	if len(s.listeners) > 0 {
+		return s.listeners[0].Addr().String()
+	}
+	return ""
 }
 
 func (s *Server) listenerAddrs() string {
@@ -447,6 +528,14 @@ func (s *Server) Subscribe(clientID uint32, regionID string) (Region, Snapshot) 
 		return nil, Snapshot{}
 	}
 	return result.region, result.snapshot
+}
+
+func (s *Server) GetOverlay(regionID string) *overlayState {
+	resp := make(chan *overlayState, 1)
+	if !s.send(getOverlayReq{regionID: regionID, resp: resp}) {
+		return nil
+	}
+	return <-resp
 }
 
 func (s *Server) Unsubscribe(clientID uint32) {

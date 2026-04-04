@@ -72,7 +72,7 @@ func sgrToTeaButton(btn int) tea.MouseButton {
 	case 2:
 		return tea.MouseRight
 	default:
-		return tea.MouseLeft
+		return tea.MouseNone
 	}
 }
 
@@ -123,8 +123,10 @@ func mouseButtonSGR(b tea.MouseButton) int {
 		return 1
 	case tea.MouseRight:
 		return 2
+	case tea.MouseNone:
+		return 3
 	default:
-		return 0
+		return 3
 	}
 }
 

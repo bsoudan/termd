@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 	te "termd/pkg/te"
 	"termd/frontend/protocol"
 )
@@ -42,6 +43,11 @@ type Region interface {
 	Notify() <-chan struct{}
 	ReaderDone() <-chan struct{}
 	IsNative() bool
+
+	// SaveTermios saves the PTY's terminal attributes so they can be
+	// restored after an overlay app exits (which may leave raw mode set).
+	SaveTermios()
+	RestoreTermios()
 }
 
 type Snapshot struct {
@@ -77,6 +83,8 @@ type PTYRegion struct {
 	notify     chan struct{}
 	readerDone chan struct{}
 	stopRead   chan struct{} // closed to stop readLoop for live upgrade
+
+	savedTermios *unix.Termios // saved before overlay, restored after
 }
 
 func (r *PTYRegion) ID() string          { return r.id }
@@ -98,82 +106,48 @@ func (r *PTYRegion) ScrollbackLen() int {
 func (r *PTYRegion) Notify() <-chan struct{}     { return r.notify }
 func (r *PTYRegion) ReaderDone() <-chan struct{} { return r.readerDone }
 
-// negotiateResult is sent by the goroutines racing on fd 3 vs PTY.
-type negotiateResult struct {
-	native   bool   // true if native handshake arrived on fd 3
-	ptyData  []byte // initial PTY output (if PTY fired first)
-	pipeEOF  bool   // true if fd 3 closed with no data
+// SaveTermios saves the PTY's current terminal attributes.
+func (r *PTYRegion) SaveTermios() {
+	t, err := unix.IoctlGetTermios(int(r.ptmx.Fd()), unix.TCGETS)
+	if err != nil {
+		slog.Debug("SaveTermios failed", "region_id", r.id, "err", err)
+		return
+	}
+	r.savedTermios = t
 }
 
-func NewRegion(cmdStr string, args []string, env map[string]string, width, height int) (Region, error) {
+// RestoreTermios restores previously saved terminal attributes.
+func (r *PTYRegion) RestoreTermios() {
+	if r.savedTermios == nil {
+		return
+	}
+	if err := unix.IoctlSetTermios(int(r.ptmx.Fd()), unix.TCSETS, r.savedTermios); err != nil {
+		slog.Debug("RestoreTermios failed", "region_id", r.id, "err", err)
+	}
+	r.savedTermios = nil
+}
+
+func NewRegion(cmdStr string, args []string, env map[string]string, width, height int, socketAddr string) (Region, error) {
 	id := generateUUID()
 	name := extractName(cmdStr)
 
-	// Create negotiation pipe: child gets write end as fd 3.
-	pipeR, pipeW, err := os.Pipe()
-	if err != nil {
-		return nil, fmt.Errorf("negotiation pipe: %w", err)
-	}
-
 	cmdObj := exec.Command(cmdStr, args...)
-	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=termd$ ", "TERMD_FD=3")
+	cmdObj.Env = append(os.Environ(), "TERM=xterm-256color", "PS1=termd$ ")
+	if socketAddr != "" {
+		cmdObj.Env = append(cmdObj.Env, "TERMD_SOCKET="+socketAddr, "TERMD_REGIONID="+id)
+	}
 	for k, v := range env {
 		cmdObj.Env = append(cmdObj.Env, k+"="+v)
 	}
-	cmdObj.ExtraFiles = []*os.File{pipeW} // fd 3 in child
 
 	ptmx, err := pty.StartWithSize(cmdObj, &pty.Winsize{
 		Rows: uint16(height),
 		Cols: uint16(width),
 	})
 	if err != nil {
-		pipeR.Close()
-		pipeW.Close()
 		return nil, err
 	}
-	pipeW.Close() // server doesn't write to the negotiation pipe
 
-	slog.Debug("spawned child", "pid", cmdObj.Process.Pid, "cmd", cmdStr)
-
-	// Race: read fd 3 vs PTY master. First one to produce data wins.
-	ch := make(chan negotiateResult, 2)
-
-	go func() {
-		buf := make([]byte, 256)
-		n, err := pipeR.Read(buf)
-		if err != nil || n == 0 {
-			ch <- negotiateResult{pipeEOF: true}
-			return
-		}
-		// Check for native handshake.
-		line := strings.TrimSpace(string(buf[:n]))
-		if strings.Contains(line, `"native"`) {
-			ch <- negotiateResult{native: true}
-		} else {
-			ch <- negotiateResult{pipeEOF: true}
-		}
-	}()
-
-	go func() {
-		buf := make([]byte, 4096)
-		n, err := ptmx.Read(buf)
-		if err != nil {
-			// PTY read error — let the pipe goroutine decide.
-			ch <- negotiateResult{pipeEOF: true}
-			return
-		}
-		ch <- negotiateResult{ptyData: append([]byte(nil), buf[:n]...)}
-	}()
-
-	result := <-ch
-	pipeR.Close()
-
-	if result.native {
-		slog.Info("native region negotiated", "region_id", id, "cmd", cmdStr)
-		return newNativeRegion(id, name, cmdStr, cmdObj, ptmx, width, height), nil
-	}
-
-	// Regular PTY region.
 	hscreen := te.NewHistoryScreen(width, height, scrollbackSize)
 	proxy := NewEventProxy(hscreen)
 	stream := te.NewStream(proxy, false)
@@ -196,16 +170,7 @@ func NewRegion(cmdStr string, args []string, env map[string]string, width, heigh
 		stopRead:   make(chan struct{}),
 	}
 
-	// If we got initial PTY data from the race, feed it now.
-	if len(result.ptyData) > 0 {
-		r.mu.Lock()
-		r.stream.FeedBytes(result.ptyData)
-		r.mu.Unlock()
-		select {
-		case r.notify <- struct{}{}:
-		default:
-		}
-	}
+	slog.Debug("spawned child", "pid", r.pid, "cmd", cmdStr)
 
 	go r.readLoop()
 	go r.waitLoop()

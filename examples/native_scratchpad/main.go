@@ -1,33 +1,39 @@
-// native_scratchpad is a termd native app that provides a drawable canvas.
+// native_scratchpad is a termd native overlay app that provides a drawable canvas.
+//
+// It connects to the termd server and registers as an overlay on the current
+// region. The underlying terminal content shows through transparent cells.
 //
 // Features:
 //   - Move cursor with arrow keys
 //   - Type characters at the cursor position in the selected color
 //   - Click/drag with the mouse to paint cells
 //   - Color palette on the right side — click to select a color
+//   - Ctrl-C exits; the overlay is removed and the shell is visible again
 //
 // Build:
 //
 //	go build -o native_scratchpad .
 //
-// Configure in server.toml:
+// Configure in server.toml or run from a shell inside termd:
 //
-//	[[programs]]
-//	name = "scratchpad"
-//	cmd = "/path/to/native_scratchpad"
+//	./native_scratchpad
 package main
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+
+	"golang.org/x/term"
 )
 
-// Protocol types matching termd's native protocol.
+// Protocol types.
 
 type screenCell struct {
 	Char string `json:"c,omitempty"`
@@ -36,29 +42,38 @@ type screenCell struct {
 	A    uint8  `json:"a,omitempty"`
 }
 
-type renderMsg struct {
+type overlayRender struct {
 	Type      string         `json:"type"`
+	RegionID  string         `json:"region_id"`
 	Cells     [][]screenCell `json:"cells"`
 	CursorRow uint16         `json:"cursor_row"`
 	CursorCol uint16         `json:"cursor_col"`
 	Modes     map[int]bool   `json:"modes,omitempty"`
 }
 
-type inputMsg struct {
-	Type string `json:"type"`
-	Data string `json:"data"`
+type overlayRegisterRequest struct {
+	Type     string `json:"type"`
+	RegionID string `json:"region_id"`
 }
 
-type resizeMsg struct {
-	Type   string `json:"type"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+type overlayRegisterResponse struct {
+	Type    string `json:"type"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
 }
 
-// Palette colors.
+type identify struct {
+	Type    string `json:"type"`
+	Process string `json:"process"`
+}
+
+func privateModeKey(mode int) int { return mode << 5 }
+
 var palette = []struct {
-	name string // 3-char label
-	spec string // termd color spec for fg/bg
+	name string
+	spec string
 }{
 	{"WHT", "white"},
 	{"RED", "red"},
@@ -76,72 +91,96 @@ var palette = []struct {
 	{"BLK", "black"},
 }
 
-const paletteWidth = 5 // columns reserved for palette + separator
-
-// privateModeKey mirrors the server's mode key encoding (mode << 5).
-func privateModeKey(mode int) int { return mode << 5 }
+const paletteWidth = 5
 
 var (
-	width     = 80
-	height    = 24
-	cursorRow = 0
-	cursorCol = 0
-	selColor  = 0 // index into palette
+	width     int
+	height    int
+	cursorRow int
+	cursorCol int
+	selColor  int
 	canvas    [][]screenCell
+	regionID  string
+	conn      net.Conn
 )
 
 func main() {
-	fdStr := os.Getenv("TERMD_FD")
-	if fdStr == "" {
-		fmt.Fprintf(os.Stderr, "native_scratchpad: TERMD_FD not set (must be spawned by termd)\n")
+	socketPath := os.Getenv("TERMD_SOCKET")
+	regionID = os.Getenv("TERMD_REGIONID")
+	if socketPath == "" || regionID == "" {
+		fmt.Fprintf(os.Stderr, "native_scratchpad: TERMD_SOCKET and TERMD_REGIONID must be set\n")
+		fmt.Fprintf(os.Stderr, "Run this from a shell inside termd.\n")
 		os.Exit(1)
 	}
-	fd, err := strconv.Atoi(fdStr)
+
+	var err error
+	conn, err = net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "native_scratchpad: bad TERMD_FD: %v\n", err)
+		fmt.Fprintf(os.Stderr, "native_scratchpad: connect: %v\n", err)
 		os.Exit(1)
 	}
-	nego := os.NewFile(uintptr(fd), "termd-negotiate")
-	nego.Write([]byte("{\"mode\":\"native\"}\n"))
-	nego.Close()
+	defer conn.Close()
+
+	sendJSON(identify{Type: "identify", Process: "native_scratchpad"})
+	sendJSON(overlayRegisterRequest{Type: "overlay_register", RegionID: regionID})
+
+	// Read register response.
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var env struct{ Type string `json:"type"` }
+		if json.Unmarshal(scanner.Bytes(), &env) != nil {
+			continue
+		}
+		if env.Type == "overlay_register_response" {
+			var resp overlayRegisterResponse
+			json.Unmarshal(scanner.Bytes(), &resp)
+			if resp.Error {
+				fmt.Fprintf(os.Stderr, "native_scratchpad: %s\n", resp.Message)
+				os.Exit(1)
+			}
+			width = resp.Width
+			height = resp.Height
+			break
+		}
+	}
+
+	// Set stdin to raw mode so we get individual keystrokes.
+	// The server restores the PTY's termios when the overlay is removed,
+	// so we don't need to worry about cleanup on crash/kill.
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "native_scratchpad: raw mode: %v\n", err)
+		os.Exit(1)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	initCanvas()
 	render()
 
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var env struct {
-			Type string `json:"type"`
-		}
-		if err := json.Unmarshal(line, &env); err != nil {
-			continue
-		}
-		switch env.Type {
-		case "input":
-			var msg inputMsg
-			if err := json.Unmarshal(line, &msg); err != nil {
-				continue
+	// Handle resize.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	go func() {
+		for range sigCh {
+			w, h, err := term.GetSize(int(os.Stdin.Fd()))
+			if err == nil && w > 0 && h > 0 {
+				width = w
+				height = h
+				growCanvas()
+				render()
 			}
-			decoded, err := base64.StdEncoding.DecodeString(msg.Data)
-			if err != nil {
-				continue
-			}
-			handleInput(decoded)
-		case "resize":
-			var msg resizeMsg
-			if err := json.Unmarshal(line, &msg); err != nil {
-				continue
-			}
-			width = msg.Width
-			height = msg.Height
-			growCanvas()
-			render()
 		}
+	}()
+
+	// Read input from stdin.
+	buf := make([]byte, 256)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			break
+		}
+		handleInput(buf[:n])
 	}
 }
 
@@ -149,23 +188,16 @@ func initCanvas() {
 	canvas = make([][]screenCell, height)
 	for r := range canvas {
 		canvas[r] = make([]screenCell, width)
-		for c := range canvas[r] {
-			canvas[r][c] = screenCell{Char: " "}
-		}
 	}
 }
 
 func growCanvas() {
 	for len(canvas) < height {
-		row := make([]screenCell, width)
-		for c := range row {
-			row[c] = screenCell{Char: " "}
-		}
-		canvas = append(canvas, row)
+		canvas = append(canvas, make([]screenCell, width))
 	}
 	for r := range canvas {
 		for len(canvas[r]) < width {
-			canvas[r] = append(canvas[r], screenCell{Char: " "})
+			canvas[r] = append(canvas[r], screenCell{})
 		}
 	}
 }
@@ -173,40 +205,43 @@ func growCanvas() {
 func handleInput(data []byte) {
 	i := 0
 	for i < len(data) {
+		// Ctrl-C — exit.
+		if data[i] == 3 {
+			os.Exit(0)
+		}
+
 		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '[' {
 			if i+2 < len(data) && data[i+2] == '<' {
-				// SGR mouse: ESC [ < btn ; col ; row M/m
 				n := handleSGRMouse(data[i:])
 				if n > 0 {
 					i += n
 					continue
 				}
 			}
-			// Arrow keys: ESC [ A/B/C/D
 			if i+2 < len(data) {
 				switch data[i+2] {
-				case 'A': // up
+				case 'A':
 					if cursorRow > 0 {
 						cursorRow--
 					}
 					render()
 					i += 3
 					continue
-				case 'B': // down
+				case 'B':
 					if cursorRow < height-1 {
 						cursorRow++
 					}
 					render()
 					i += 3
 					continue
-				case 'C': // right
+				case 'C':
 					if cursorCol < cw()-1 {
 						cursorCol++
 					}
 					render()
 					i += 3
 					continue
-				case 'D': // left
+				case 'D':
 					if cursorCol > 0 {
 						cursorCol--
 					}
@@ -224,7 +259,6 @@ func handleInput(data []byte) {
 			continue
 		}
 
-		// Printable character — type at cursor.
 		ch := data[i]
 		if ch >= 0x20 && ch < 0x7f {
 			if cursorRow < len(canvas) && cursorCol < cw() {
@@ -243,8 +277,6 @@ func handleInput(data []byte) {
 	}
 }
 
-// handleSGRMouse parses ESC [ < btn ; col ; row M/m and handles paint/palette.
-// Returns bytes consumed, or 0 on failure.
 func handleSGRMouse(data []byte) int {
 	if len(data) < 9 {
 		return 0
@@ -274,14 +306,16 @@ func handleSGRMouse(data []byte) int {
 	if e1 != nil || e2 != nil || e3 != nil {
 		return 0
 	}
-	col-- // 1-based → 0-based
+	col--
 	row--
 
 	isPress := terminator == 'M'
 	isDrag := btn&32 != 0
-	leftButton := (btn & 3) == 0
+	button := btn & 3
 
-	if leftButton && (isPress || isDrag) {
+	// Paint on left-button click or left-button drag.
+	// button==0 is left, button==3 is "no button" (motion only).
+	if button == 0 && (isPress || isDrag) {
 		paint(row, col)
 	}
 
@@ -289,8 +323,7 @@ func handleSGRMouse(data []byte) int {
 }
 
 func paint(row, col int) {
-	// Palette click.
-	palStart := width - paletteWidth + 1 // after separator
+	palStart := width - paletteWidth + 1
 	if col >= palStart {
 		if row >= 0 && row < len(palette) {
 			selColor = row
@@ -299,7 +332,6 @@ func paint(row, col int) {
 		return
 	}
 
-	// Canvas paint.
 	if row >= 0 && row < len(canvas) && col >= 0 && col < cw() {
 		canvas[row][col] = screenCell{
 			Char: "█",
@@ -311,7 +343,6 @@ func paint(row, col int) {
 	render()
 }
 
-// cw returns the usable canvas width (total width minus palette).
 func cw() int {
 	w := width - paletteWidth
 	if w < 1 {
@@ -327,22 +358,20 @@ func render() {
 	for r := 0; r < height; r++ {
 		cells[r] = make([]screenCell, width)
 
-		// Canvas area.
+		// Canvas area — only draw non-empty cells (empty = transparent).
 		for c := 0; c < canvasW && c < width; c++ {
 			if r < len(canvas) && c < len(canvas[r]) {
 				cells[r][c] = canvas[r][c]
-			} else {
-				cells[r][c] = screenCell{Char: " "}
 			}
 		}
 
-		// Separator column.
+		// Separator.
 		sepCol := canvasW
 		if sepCol < width {
 			cells[r][sepCol] = screenCell{Char: "│", Fg: "brightblack"}
 		}
 
-		// Palette entries.
+		// Palette.
 		palStart := canvasW + 1
 		if r < len(palette) {
 			label := palette[r].name
@@ -351,14 +380,9 @@ func render() {
 			if r == selColor {
 				fg = "black"
 			}
-
 			for c := 0; c < paletteWidth-1 && c < len(label); c++ {
 				if palStart+c < width {
-					cells[r][palStart+c] = screenCell{
-						Char: string(label[c]),
-						Fg:   fg,
-						Bg:   bg,
-					}
+					cells[r][palStart+c] = screenCell{Char: string(label[c]), Fg: fg, Bg: bg}
 				}
 			}
 			for c := len(label); c < paletteWidth-1; c++ {
@@ -366,36 +390,32 @@ func render() {
 					cells[r][palStart+c] = screenCell{Char: " ", Bg: bg}
 				}
 			}
-			// Selection indicator.
 			if r == selColor {
 				if palStart+paletteWidth-1 < width {
-					cells[r][palStart+paletteWidth-1] = screenCell{
-						Char: "◄",
-						Fg:   palette[r].spec,
-					}
+					cells[r][palStart+paletteWidth-1] = screenCell{Char: "◄", Fg: palette[r].spec}
 				}
-			}
-		} else {
-			for c := palStart; c < width; c++ {
-				cells[r][c] = screenCell{Char: " "}
 			}
 		}
 	}
 
-	msg := renderMsg{
-		Type:      "render",
+	sendJSON(overlayRender{
+		Type:      "overlay_render",
+		RegionID:  regionID,
 		Cells:     cells,
 		CursorRow: uint16(cursorRow),
 		CursorCol: uint16(cursorCol),
 		Modes: map[int]bool{
-			privateModeKey(1003): true, // mouse any-event tracking
-			privateModeKey(1006): true, // SGR mouse encoding
+			privateModeKey(1003): true,
+			privateModeKey(1006): true,
 		},
-	}
+	})
+}
+
+func sendJSON(msg any) {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
 	b = append(b, '\n')
-	os.Stdout.Write(b)
+	conn.Write(b)
 }

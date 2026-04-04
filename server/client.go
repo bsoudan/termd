@@ -288,12 +288,65 @@ func (c *Client) handleMessage(line []byte) {
 		if json.Unmarshal(line, &msg) == nil {
 			c.handleClientBinaryDownload(msg, reply)
 		}
+	case "overlay_register":
+		var msg protocol.OverlayRegisterRequest
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleOverlayRegister(msg, reply)
+		}
+	case "overlay_render":
+		var msg protocol.OverlayRender
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleOverlayRender(msg)
+		}
+	case "overlay_clear":
+		var msg protocol.OverlayClear
+		if json.Unmarshal(line, &msg) == nil {
+			c.handleOverlayClear(msg)
+		}
 	case "disconnect":
 		slog.Info("client disconnecting gracefully", "client_id", c.id)
 		c.Close()
 	default:
 		slog.Debug("unknown message type", "client_id", c.id, "type", env.Type)
 	}
+}
+
+func (c *Client) handleOverlayRegister(msg protocol.OverlayRegisterRequest, reply func(any)) {
+	resp := make(chan overlayRegisterResult, 1)
+	if !c.server.send(overlayRegisterReq{clientID: c.id, regionID: msg.RegionID, resp: resp}) {
+		return
+	}
+	result := <-resp
+	if result.err != "" {
+		reply(protocol.OverlayRegisterResponse{
+			Type:     "overlay_register_response",
+			RegionID: msg.RegionID,
+			Error:    true,
+			Message:  result.err,
+		})
+		return
+	}
+	reply(protocol.OverlayRegisterResponse{
+		Type:     "overlay_register_response",
+		RegionID: msg.RegionID,
+		Width:    result.width,
+		Height:   result.height,
+	})
+}
+
+func (c *Client) handleOverlayRender(msg protocol.OverlayRender) {
+	c.server.send(overlayRenderReq{
+		clientID:  c.id,
+		regionID:  msg.RegionID,
+		cells:     msg.Cells,
+		cursorRow: msg.CursorRow,
+		cursorCol: msg.CursorCol,
+		modes:     msg.Modes,
+	})
+}
+
+func (c *Client) handleOverlayClear(msg protocol.OverlayClear) {
+	c.server.send(overlayClearReq{clientID: c.id, regionID: msg.RegionID})
 }
 
 func (c *Client) sendIdentify() {
@@ -522,6 +575,9 @@ func (c *Client) handleGetScreen(msg protocol.GetScreenRequest, reply func(any))
 	}
 
 	snap := region.Snapshot()
+	if ov := c.server.GetOverlay(msg.RegionID); ov != nil {
+		snap = compositeSnapshot(snap, ov)
+	}
 	reply(protocol.GetScreenResponse{
 		Type:      "get_screen_response",
 		RegionID:  region.ID(),

@@ -1,15 +1,18 @@
-// nativeapp is a test program that speaks the termd native protocol.
-// It negotiates native mode via fd 3, then renders cell grids and
-// responds to input and resize messages.
+// nativeapp is a test program that uses the termd overlay protocol.
+// It connects to the server socket, registers as an overlay on the
+// current region, and renders a cell grid. Input comes from stdin (PTY).
 package main
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
+
+	"golang.org/x/term"
 )
 
 type screenCell struct {
@@ -19,85 +22,128 @@ type screenCell struct {
 	A    uint8  `json:"a,omitempty"`
 }
 
-type renderMsg struct {
-	Type      string       `json:"type"`
+type overlayRegisterRequest struct {
+	Type     string `json:"type"`
+	RegionID string `json:"region_id"`
+}
+
+type overlayRegisterResponse struct {
+	Type    string `json:"type"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
+}
+
+type overlayRender struct {
+	Type      string         `json:"type"`
+	RegionID  string         `json:"region_id"`
 	Cells     [][]screenCell `json:"cells"`
-	CursorRow uint16       `json:"cursor_row"`
-	CursorCol uint16       `json:"cursor_col"`
+	CursorRow uint16         `json:"cursor_row"`
+	CursorCol uint16         `json:"cursor_col"`
+	Modes     map[int]bool   `json:"modes,omitempty"`
 }
 
-type inputMsg struct {
-	Type string `json:"type"`
-	Data string `json:"data"`
-}
-
-type resizeMsg struct {
-	Type   string `json:"type"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+type identify struct {
+	Type    string `json:"type"`
+	Process string `json:"process"`
 }
 
 var (
-	width  = 80
-	height = 24
-	input  string
+	width    int
+	height   int
+	regionID string
+	input    string
+	conn     net.Conn
 )
 
 func main() {
-	// Negotiate native mode via fd 3.
-	fdStr := os.Getenv("TERMD_FD")
-	if fdStr == "" {
-		fmt.Fprintf(os.Stderr, "TERMD_FD not set\n")
+	socketPath := os.Getenv("TERMD_SOCKET")
+	regionID = os.Getenv("TERMD_REGIONID")
+	if socketPath == "" || regionID == "" {
+		fmt.Fprintf(os.Stderr, "nativeapp: TERMD_SOCKET and TERMD_REGIONID must be set\n")
 		os.Exit(1)
 	}
-	fd, err := strconv.Atoi(fdStr)
+
+	var err error
+	conn, err = net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bad TERMD_FD: %v\n", err)
+		fmt.Fprintf(os.Stderr, "nativeapp: connect: %v\n", err)
 		os.Exit(1)
 	}
-	nego := os.NewFile(uintptr(fd), "termd-negotiate")
-	nego.Write([]byte("{\"mode\":\"native\"}\n"))
-	nego.Close()
+	defer conn.Close()
 
-	// Render initial frame.
-	render()
+	// Identify ourselves.
+	sendJSON(identify{Type: "identify", Process: "nativeapp"})
 
-	// Read messages from stdin.
-	scanner := bufio.NewScanner(os.Stdin)
+	// Register overlay.
+	sendJSON(overlayRegisterRequest{Type: "overlay_register", RegionID: regionID})
+
+	// Read response.
+	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
 		var env struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal(line, &env); err != nil {
+		if json.Unmarshal(scanner.Bytes(), &env) != nil {
 			continue
 		}
+		if env.Type == "overlay_register_response" {
+			var resp overlayRegisterResponse
+			if json.Unmarshal(scanner.Bytes(), &resp) != nil {
+				continue
+			}
+			if resp.Error {
+				fmt.Fprintf(os.Stderr, "nativeapp: register error: %s\n", resp.Message)
+				os.Exit(1)
+			}
+			width = resp.Width
+			height = resp.Height
+			break
+		}
+	}
 
-		switch env.Type {
-		case "input":
-			var msg inputMsg
-			if err := json.Unmarshal(line, &msg); err != nil {
-				continue
-			}
-			decoded, err := base64.StdEncoding.DecodeString(msg.Data)
-			if err != nil {
-				continue
-			}
-			input += string(decoded)
+	if width == 0 || height == 0 {
+		fmt.Fprintf(os.Stderr, "nativeapp: no register response\n")
+		os.Exit(1)
+	}
+
+	// Set raw mode to get individual keystrokes.
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "nativeapp: raw mode: %v\n", err)
+		os.Exit(1)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	render()
+
+	// Handle SIGWINCH for resize.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	go func() {
+		for range sigCh {
 			render()
-		case "resize":
-			var msg resizeMsg
-			if err := json.Unmarshal(line, &msg); err != nil {
-				continue
+		}
+	}()
+
+	// Read input from stdin (PTY).
+	buf := make([]byte, 256)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			break
+		}
+		data := buf[:n]
+		for _, b := range data {
+			if b == 3 { // Ctrl-C
+				return
 			}
-			width = msg.Width
-			height = msg.Height
-			render()
+			if b >= 0x20 && b < 0x7f {
+				input += string(b)
+				render()
+			}
 		}
 	}
 }
@@ -106,35 +152,28 @@ func render() {
 	cells := make([][]screenCell, height)
 	for i := range cells {
 		cells[i] = make([]screenCell, width)
-		for j := range cells[i] {
-			cells[i][j] = screenCell{Char: " "}
-		}
+		// Leave cells empty (transparent) — overlay only draws non-empty cells.
 	}
 
-	// Row 0: "NATIVE" in green bold
+	// Row 0: "NATIVE" in green bold.
 	putString(cells, 0, 0, "NATIVE", "green", 1)
 
-	// Row 1: dimensions
+	// Row 1: dimensions.
 	dims := fmt.Sprintf("%dx%d", width, height)
 	putString(cells, 1, 0, dims, "", 0)
 
-	// Row 2: input echo
+	// Row 2: input echo.
 	if input != "" {
 		putString(cells, 2, 0, "INPUT:"+input, "", 0)
 	}
 
-	msg := renderMsg{
-		Type:      "render",
+	sendJSON(overlayRender{
+		Type:      "overlay_render",
+		RegionID:  regionID,
 		Cells:     cells,
 		CursorRow: 0,
 		CursorCol: 0,
-	}
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-	b = append(b, '\n')
-	os.Stdout.Write(b)
+	})
 }
 
 func putString(cells [][]screenCell, row, col int, s, fg string, attrs uint8) {
@@ -152,4 +191,13 @@ func putString(cells [][]screenCell, row, col int, s, fg string, attrs uint8) {
 			A:    attrs,
 		}
 	}
+}
+
+func sendJSON(msg any) {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	b = append(b, '\n')
+	conn.Write(b)
 }
