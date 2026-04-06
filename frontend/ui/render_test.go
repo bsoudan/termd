@@ -87,6 +87,24 @@ func TestSgrTransition(t *testing.T) {
 			to:           greenFg,
 			wantContains: []string{"23", "32"},
 		},
+		{
+			name: "default to faint",
+			from: defaultAttr,
+			to:   te.Attr{Faint: true},
+			want: ansi.SGR(ansi.AttrFaint),
+		},
+		{
+			name:         "faint to bold (must reset)",
+			from:         te.Attr{Faint: true},
+			to:           te.Attr{Bold: true},
+			wantContains: []string{"0", "1"},
+		},
+		{
+			name: "faint to default",
+			from: te.Attr{Faint: true},
+			to:   defaultAttr,
+			want: ansi.ResetStyle,
+		},
 	}
 
 	for _, tc := range tests {

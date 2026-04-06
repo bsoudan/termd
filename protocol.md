@@ -500,7 +500,7 @@ colored display.
 | c     | string | Character (omitted if empty/space)                                             |
 | fg    | string | Foreground color spec (omitted if default). See Color Spec below.              |
 | bg    | string | Background color spec (omitted if default). See Color Spec below.              |
-| a     | uint8  | Attribute bitfield (omitted if 0): 1=bold, 2=italic, 4=underline, 8=strikethrough, 16=reverse, 32=blink, 64=conceal |
+| a     | uint8  | Attribute bitfield (omitted if 0): 1=bold, 2=italic, 4=underline, 8=strikethrough, 16=reverse, 32=blink, 64=conceal, 128=faint |
 
 #### Color Spec
 

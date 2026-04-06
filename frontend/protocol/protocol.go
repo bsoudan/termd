@@ -163,7 +163,7 @@ type ScreenCell struct {
 	Char string `json:"c,omitempty"`
 	Fg   string `json:"fg,omitempty"` // SGR color: "31", "38;5;208", "38;2;R;G;B", or "" for default
 	Bg   string `json:"bg,omitempty"`
-	A    uint8  `json:"a,omitempty"` // bitfield: 1=bold 2=italic 4=underline 8=strikethrough 16=reverse 32=blink 64=conceal
+	A    uint8  `json:"a,omitempty"` // bitfield: 1=bold 2=italic 4=underline 8=strikethrough 16=reverse 32=blink 64=conceal 128=faint
 }
 
 type ScreenUpdate struct {

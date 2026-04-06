@@ -2,12 +2,13 @@ package te
 
 var textAttributes = map[int]string{
 	1:  "+bold",
+	2:  "+faint",
 	3:  "+italics",
 	4:  "+underline",
 	5:  "+blink",
 	7:  "+reverse",
 	9:  "+strikethrough",
-	22: "-bold",
+	22: "-intensity",
 	23: "-italics",
 	24: "-underline",
 	25: "-blink",

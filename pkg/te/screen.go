@@ -1303,8 +1303,11 @@ func (s *Screen) SelectGraphicRendition(attrs []int, private bool) {
 			switch flag {
 			case "+bold":
 				replace.Bold = true
-			case "-bold":
+			case "+faint":
+				replace.Faint = true
+			case "-intensity":
 				replace.Bold = false
+				replace.Faint = false
 			case "+italics":
 				replace.Italics = true
 			case "-italics":

@@ -374,6 +374,9 @@ func cellToProtocol(c te.Cell) protocol.ScreenCell {
 	if c.Attr.Conceal {
 		a |= 64
 	}
+	if c.Attr.Faint {
+		a |= 128
+	}
 	pc.A = a
 	return pc
 }

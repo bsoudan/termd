@@ -478,6 +478,7 @@ func sgrTransition(from, to te.Attr) string {
 	var attrs []ansi.Attr
 
 	needsReset := (from.Bold && !to.Bold) ||
+		(from.Faint && !to.Faint) ||
 		(from.Blink && !to.Blink) ||
 		(from.Conceal && !to.Conceal)
 
@@ -488,6 +489,9 @@ func sgrTransition(from, to te.Attr) string {
 
 	if to.Bold && !from.Bold {
 		attrs = append(attrs, ansi.AttrBold)
+	}
+	if to.Faint && !from.Faint {
+		attrs = append(attrs, ansi.AttrFaint)
 	}
 	if to.Italics && !from.Italics {
 		attrs = append(attrs, ansi.AttrItalic)
@@ -783,6 +787,7 @@ func initScreenFromCells(screen *te.Screen, cells [][]protocol.ScreenCell) {
 					Reverse:       pc.A&16 != 0,
 					Blink:         pc.A&32 != 0,
 					Conceal:       pc.A&64 != 0,
+					Faint:         pc.A&128 != 0,
 				},
 			}
 		}

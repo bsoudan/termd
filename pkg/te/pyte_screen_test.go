@@ -100,6 +100,43 @@ func TestPyteTestScreenAttributes(t *testing.T) {
 	})
 }
 
+func TestSGRFaint(t *testing.T) {
+	screen := NewScreen(4, 1)
+
+	screen.SelectGraphicRendition([]int{2}, false)
+	if !screen.Cursor.Attr.Faint {
+		t.Fatalf("expected faint cursor after SGR 2")
+	}
+	screen.Draw("a")
+
+	screen.SelectGraphicRendition([]int{1}, false)
+	if !screen.Cursor.Attr.Bold || !screen.Cursor.Attr.Faint {
+		t.Fatalf("expected bold+faint after SGR 1 following SGR 2")
+	}
+	screen.Draw("b")
+
+	screen.SelectGraphicRendition([]int{22}, false)
+	if screen.Cursor.Attr.Bold || screen.Cursor.Attr.Faint {
+		t.Fatalf("expected SGR 22 to clear both bold and faint, got bold=%v faint=%v",
+			screen.Cursor.Attr.Bold, screen.Cursor.Attr.Faint)
+	}
+	screen.Draw("c")
+
+	screen.SelectGraphicRendition([]int{2}, false)
+	screen.SelectGraphicRendition([]int{0}, false)
+	if screen.Cursor.Attr.Faint {
+		t.Fatalf("expected SGR 0 to clear faint")
+	}
+	screen.Draw("d")
+
+	assertCellsEqual(t, tolist(screen), [][]Cell{{
+		cellWith(screen, "a", withFaint(true)),
+		cellWith(screen, "b", withBold(true), withFaint(true)),
+		cellWith(screen, "c"),
+		cellWith(screen, "d"),
+	}})
+}
+
 // From pyte/tests/test_screen.py::test_blink
 func TestPyteTestScreenBlink(t *testing.T) {
 	screen := NewScreen(2, 2)

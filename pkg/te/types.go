@@ -26,6 +26,7 @@ type Attr struct {
 	Fg            Color `json:"Fg,omitzero"`
 	Bg            Color `json:"Bg,omitzero"`
 	Bold          bool  `json:"Bold,omitempty"`
+	Faint         bool  `json:"Faint,omitempty"`
 	Italics       bool  `json:"Italics,omitempty"`
 	Underline     bool  `json:"Underline,omitempty"`
 	Strikethrough bool  `json:"Strikethrough,omitempty"`

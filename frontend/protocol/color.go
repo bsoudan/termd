@@ -177,6 +177,9 @@ func CellSGR(fg, bg string, a uint8) string {
 	if a&64 != 0 {
 		attrs = append(attrs, ansi.AttrConceal)
 	}
+	if a&128 != 0 {
+		attrs = append(attrs, ansi.AttrFaint)
+	}
 
 	if fg != "" {
 		attrs = append(attrs, ColorSpecToAttrs(fg, false)...)

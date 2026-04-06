@@ -223,6 +223,126 @@ func TestColorRendering(t *testing.T) {
 	}
 }
 
+// TestFaintRendering reproduces the SGR sequence lipgloss emits for the
+// status bar (faint separators around a bold label) and verifies the faint
+// attribute round-trips through the server's VT parser, the protocol, and
+// the client's screen state — without leaking unrelated attributes like
+// underline.
+func TestFaintRendering(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Mimics statusFaint.Render("• ") + statusBold.Render("BOLD") + statusFaint.Render(" •")
+	// from frontend/ui/model.go:renderStatusBar — what the inner ttui's
+	// status bar produces and what the outer ttui must reproduce faithfully.
+	pio.Write([]byte("printf '" +
+		shellSGR(ansi.AttrFaint) + "FNT1 " + shellResetStyle +
+		shellSGR(ansi.AttrBold) + "BOLD" + shellResetStyle + " " +
+		shellSGR(ansi.AttrFaint) + "FNT2" + shellResetStyle +
+		`\n'` + "\r"))
+
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines {
+			if strings.HasPrefix(line, "FNT1") {
+				return true
+			}
+		}
+		return false
+	}, "output line starting with 'FNT1'", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	cells := pio.ScreenCells()
+
+	outputRow := -1
+	for row, line := range cells {
+		if len(line) >= 4 && line[0].Data == "F" && line[1].Data == "N" &&
+			line[2].Data == "T" && line[3].Data == "1" {
+			outputRow = row
+			break
+		}
+	}
+	if outputRow < 0 {
+		t.Fatal("could not find output line starting with 'FNT1'")
+	}
+
+	line := cells[outputRow]
+	t.Logf("output row %d, first 20 cells:", outputRow)
+	for col := 0; col < 20 && col < len(line); col++ {
+		c := line[col]
+		t.Logf("  [%d] %q bold=%v faint=%v underline=%v italic=%v",
+			col, c.Data, c.Attr.Bold, c.Attr.Faint, c.Attr.Underline, c.Attr.Italics)
+	}
+
+	// FNT1 (cols 0-3) should be faint, not bold, not underlined.
+	for col := 0; col < 4; col++ {
+		c := line[col]
+		if !c.Attr.Faint {
+			t.Errorf("col %d %q: expected faint=true", col, c.Data)
+		}
+		if c.Attr.Bold {
+			t.Errorf("col %d %q: expected bold=false", col, c.Data)
+		}
+		if c.Attr.Underline {
+			t.Errorf("col %d %q: expected underline=false", col, c.Data)
+		}
+	}
+
+	// Locate BOLD — should be bold and NOT faint.
+	bldCol := -1
+	for col := 4; col+4 <= len(line); col++ {
+		if line[col].Data == "B" && line[col+1].Data == "O" &&
+			line[col+2].Data == "L" && line[col+3].Data == "D" {
+			bldCol = col
+			break
+		}
+	}
+	if bldCol < 0 {
+		t.Fatal("could not find 'BOLD' on output line")
+	}
+	for col := bldCol; col < bldCol+4; col++ {
+		c := line[col]
+		if !c.Attr.Bold {
+			t.Errorf("col %d %q: expected bold=true", col, c.Data)
+		}
+		if c.Attr.Faint {
+			t.Errorf("col %d %q: expected faint=false", col, c.Data)
+		}
+		if c.Attr.Underline {
+			t.Errorf("col %d %q: expected underline=false", col, c.Data)
+		}
+	}
+
+	// Locate FNT2 — should be faint again, not bold.
+	fnt2Col := -1
+	for col := bldCol + 4; col+4 <= len(line); col++ {
+		if line[col].Data == "F" && line[col+1].Data == "N" &&
+			line[col+2].Data == "T" && line[col+3].Data == "2" {
+			fnt2Col = col
+			break
+		}
+	}
+	if fnt2Col < 0 {
+		t.Fatal("could not find 'FNT2' on output line")
+	}
+	for col := fnt2Col; col < fnt2Col+4; col++ {
+		c := line[col]
+		if !c.Attr.Faint {
+			t.Errorf("col %d %q: expected faint=true", col, c.Data)
+		}
+		if c.Attr.Bold {
+			t.Errorf("col %d %q: expected bold=false", col, c.Data)
+		}
+		if c.Attr.Underline {
+			t.Errorf("col %d %q: expected underline=false", col, c.Data)
+		}
+	}
+}
+
 func TestActiveTabBold(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()

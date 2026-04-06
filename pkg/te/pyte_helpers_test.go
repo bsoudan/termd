@@ -100,6 +100,12 @@ func withBold(value bool) attrOpt {
 	}
 }
 
+func withFaint(value bool) attrOpt {
+	return func(attr *Attr) {
+		attr.Faint = value
+	}
+}
+
 func withItalics(value bool) attrOpt {
 	return func(attr *Attr) {
 		attr.Italics = value
