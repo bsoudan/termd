@@ -33,6 +33,12 @@ type Server struct {
 	// list of session names. Set via SetSessionsChanged before Run.
 	sessionsChanged atomic.Value // func([]string)
 
+	// sessionCreateMus serializes findOrCreateSession per session name,
+	// preventing two concurrent connects from racing to spawn duplicate
+	// default programs into the same not-yet-existing session. Keys are
+	// session names; values are *sync.Mutex.
+	sessionCreateMus sync.Map
+
 	// init* fields transfer ownership of maps to the event loop goroutine.
 	// They are set in NewServer and consumed (nilled) by eventLoop on startup.
 	initRegions  map[string]Region
@@ -167,8 +173,17 @@ func (s *Server) acceptClient(conn net.Conn) {
 	go client.ReadLoop()
 }
 
-func (s *Server) SpawnRegion(sessionName, cmd string, args []string, env map[string]string) (Region, error) {
-	region, err := NewRegion(cmd, args, env, 80, 24, s.socketAddr())
+// SpawnRegion creates a new PTY region in the given session. width and
+// height seed the initial PTY size; pass 0 to use the built-in default
+// (80x24).
+func (s *Server) SpawnRegion(sessionName, cmd string, args []string, env map[string]string, width, height uint16) (Region, error) {
+	if width == 0 {
+		width = 80
+	}
+	if height == 0 {
+		height = 24
+	}
+	region, err := NewRegion(cmd, args, env, int(width), int(height), s.socketAddr())
 	if err != nil {
 		return nil, err
 	}
@@ -447,18 +462,37 @@ func (s *Server) SpawnProgram(sessionName, programName string) (Region, error) {
 	if prog == nil {
 		return nil, fmt.Errorf("unknown program: %s", programName)
 	}
-	return s.SpawnRegion(sessionName, prog.Cmd, prog.Args, prog.Env)
+	return s.SpawnRegion(sessionName, prog.Cmd, prog.Args, prog.Env, 0, 0)
+}
+
+// sessionCreateMu returns the per-session-name mutex used to serialize
+// concurrent findOrCreateSession calls. Without this serialization, two
+// clients connecting to the same not-yet-existing session would both see
+// "session does not exist" and race to spawn duplicate default programs.
+func (s *Server) sessionCreateMu(name string) *sync.Mutex {
+	v, _ := s.sessionCreateMus.LoadOrStore(name, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // findOrCreateSession returns an existing session's regions or spawns
 // default programs into a new session and returns the resulting regions.
-func (s *Server) findOrCreateSession(name string) (*Session, []protocol.RegionInfo, error) {
+// width and height seed the initial PTY size of newly-spawned regions;
+// pass 0 to use the built-in default (80x24).
+//
+// A per-name mutex serializes concurrent calls for the same session
+// name so the find-and-spawn pair is atomic with respect to other
+// clients. Calls for different session names run in parallel.
+func (s *Server) findOrCreateSession(name string, width, height uint16) (*Session, []protocol.RegionInfo, error) {
 	if name == "" {
 		name = s.sessionsCfg.DefaultName
 	}
 
+	mu := s.sessionCreateMu(name)
+	mu.Lock()
+	defer mu.Unlock()
+
 	resp := make(chan sessionConnectResult, 1)
-	if !s.send(sessionConnectReq{name: name, resp: resp}) {
+	if !s.send(sessionConnectReq{name: name, width: width, height: height, resp: resp}) {
 		return nil, nil, fmt.Errorf("server shutting down")
 	}
 	result := <-resp
@@ -471,7 +505,7 @@ func (s *Server) findOrCreateSession(name string) (*Session, []protocol.RegionIn
 	// Session doesn't exist yet — spawn the programs.
 	var infos []protocol.RegionInfo
 	for _, prog := range result.programConfigs {
-		region, err := s.SpawnRegion(name, prog.Cmd, prog.Args, prog.Env)
+		region, err := s.SpawnRegion(name, prog.Cmd, prog.Args, prog.Env, width, height)
 		if err != nil {
 			return nil, nil, err
 		}

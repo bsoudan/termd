@@ -143,7 +143,15 @@ func NewSessionLayer(
 // Reconnect re-sends the SessionConnectRequest to refresh the region list.
 // Called by MainLayer after a connection is restored.
 func (s *SessionLayer) Reconnect() {
-	s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
+	height := s.termHeight - 1
+	if height < 1 {
+		height = 1
+	}
+	s.server.Send(protocol.SessionConnectRequest{
+		Session: s.sessionName,
+		Width:   uint16(s.termWidth),
+		Height:  uint16(height),
+	})
 }
 
 // KillAllRegions sends KillRegionRequest for every region in this session.

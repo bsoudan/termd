@@ -425,7 +425,7 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 		return
 	}
 
-	region, snap := c.server.Subscribe(c.id, msg.RegionID)
+	region, _ := c.server.Subscribe(c.id, msg.RegionID)
 	if region == nil {
 		reply(protocol.SubscribeResponse{
 			Type:     "subscribe_response",
@@ -436,15 +436,11 @@ func (c *Client) handleSubscribe(msg protocol.SubscribeRequest, reply func(any))
 		return
 	}
 
-	c.SendMessage(protocol.ScreenUpdate{
-		Type:      "screen_update",
-		RegionID:  region.ID(),
-		CursorRow: snap.CursorRow,
-		CursorCol: snap.CursorCol,
-		Lines:     snap.Lines,
-		Cells:     snap.Cells,
-		Modes:     snap.Modes,
-	})
+	// Note: the initial screen_update snapshot is sent inside the
+	// subscribeReq event-loop handler, before the client is added to
+	// regionSubs. This ordering guarantees the snapshot reaches the
+	// client's writeCh ahead of any terminal_events the watcher might
+	// emit. Sending it from here would race with the watcher.
 
 	reply(protocol.SubscribeResponse{
 		Type:     "subscribe_response",
@@ -661,7 +657,7 @@ func (c *Client) handleSessionConnect(msg protocol.SessionConnectRequest, reply 
 		sessionName = c.server.sessionsCfg.DefaultName
 	}
 
-	sess, infos, err := c.server.findOrCreateSession(sessionName)
+	sess, infos, err := c.server.findOrCreateSession(sessionName, msg.Width, msg.Height)
 	if err != nil {
 		reply(protocol.SessionConnectResponse{
 			Type:    "session_connect_response",

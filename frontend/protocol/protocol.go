@@ -47,6 +47,8 @@ type ListRegionsRequest struct {
 type SessionConnectRequest struct {
 	Type    string `json:"type,omitempty"`
 	Session string `json:"session,omitempty"`
+	Width   uint16 `json:"width,omitempty"`
+	Height  uint16 `json:"height,omitempty"`
 }
 
 type ListSessionsRequest struct {

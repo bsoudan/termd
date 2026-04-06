@@ -50,6 +50,11 @@ type MainLayer struct {
 	termWidth  int
 	termHeight int
 
+	// pendingConnect is true when an initial SessionConnectRequest is
+	// queued but not yet sent because we don't know the window size yet.
+	// Cleared after the first WindowSizeMsg triggers the send.
+	pendingConnect bool
+
 	connectFn    func(endpoint, session string) // dials a server and sends ConnectedMsg
 	sessionName  string                         // initial session name, used after deferred connect
 	swapServerFn func(*Server)                  // updates the requestFn's server reference
@@ -201,10 +206,23 @@ func (m *MainLayer) Init() tea.Cmd {
 			return PushLayerMsg{Layer: NewConnectLayer(recents)}
 		}
 	}
-	s := m.sessions[0]
-	s.server.Send(protocol.SessionConnectRequest{Session: s.sessionName})
+	// Defer the SessionConnectRequest until the first WindowSizeMsg
+	// arrives so we can pass the actual viewport size to the server. The
+	// server uses these to size the PTYs of newly-spawned regions,
+	// avoiding an initial 80x24 → real-size resize round trip.
+	m.pendingConnect = true
 	m.checkForUpgrades()
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} })
+}
+
+// viewportHeight returns the number of rows available for terminal content,
+// i.e. the window height minus the tab bar. Mirrors TerminalLayer.contentHeight.
+func (m *MainLayer) viewportHeight() int {
+	h := m.termHeight - 1
+	if h < 1 {
+		h = 1
+	}
+	return h
 }
 
 func (m *MainLayer) Activate() tea.Cmd {
@@ -291,7 +309,11 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		session.termHeight = m.termHeight
 		m.sessions = []*SessionLayer{session}
 		m.activeSession = 0
-		session.server.Send(protocol.SessionConnectRequest{Session: session.sessionName})
+		session.server.Send(protocol.SessionConnectRequest{
+			Session: session.sessionName,
+			Width:   uint16(m.termWidth),
+			Height:  uint16(m.viewportHeight()),
+		})
 		SaveRecent(recentAddress(msg.Endpoint, msg.Session), msg.Endpoint)
 		m.checkForUpgrades()
 		return nil, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return showHintMsg{} }), true
@@ -354,6 +376,17 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
+		if m.pendingConnect && len(m.sessions) > 0 && m.termWidth > 0 && m.termHeight > 1 {
+			m.pendingConnect = false
+			s := m.sessions[0]
+			s.termWidth = m.termWidth
+			s.termHeight = m.termHeight
+			s.server.Send(protocol.SessionConnectRequest{
+				Session: s.sessionName,
+				Width:   uint16(m.termWidth),
+				Height:  uint16(m.viewportHeight()),
+			})
+		}
 		return m.forwardToActiveSession(msg)
 
 	// ── Everything else → active session ────────────────────────────────

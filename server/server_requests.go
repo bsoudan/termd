@@ -83,8 +83,10 @@ type sessionConnectResult struct {
 }
 
 type sessionConnectReq struct {
-	name string
-	resp chan sessionConnectResult
+	name   string
+	width  uint16
+	height uint16
+	resp   chan sessionConnectResult
 }
 
 type listProgramsReq struct {
@@ -504,12 +506,30 @@ func (s *Server) eventLoop() {
 						}
 					}
 				}
-				// Take snapshot before adding to subscriber list.
-				// This prevents sendTerminalEvents from seeing this
-				// client before it has its initial snapshot.
 				snap := region.Snapshot()
 				if ov, ok := overlays[r.regionID]; ok {
 					snap = compositeSnapshot(snap, ov)
+				}
+				// Enqueue the initial snapshot to the client's writeCh
+				// BEFORE adding the client to the subscriber set. The
+				// watcher goroutine sends terminal_events via SendMessage,
+				// which writes to the same writeCh; pushing the snapshot
+				// first guarantees it lands ahead of any events the
+				// watcher might emit between the next two statements.
+				// Without this ordering, the client could receive
+				// terminal_events before its initial screen_update,
+				// drop them (no local screen yet), and be left with a
+				// stale snapshot.
+				if client, ok := clients[r.clientID]; ok {
+					client.SendMessage(protocol.ScreenUpdate{
+						Type:      "screen_update",
+						RegionID:  region.ID(),
+						CursorRow: snap.CursorRow,
+						CursorCol: snap.CursorCol,
+						Lines:     snap.Lines,
+						Cells:     snap.Cells,
+						Modes:     snap.Modes,
+					})
 				}
 				subscriptions[r.clientID] = r.regionID
 				if regionSubs[r.regionID] == nil {
