@@ -27,6 +27,7 @@ type StatusCaps struct {
 	BgDark        *bool
 	TermEnv       map[string]string
 	MouseModes    string
+	Modes         string
 
 	ClientUpgradeAvail bool
 	ClientUpgradeVer   string
@@ -117,6 +118,35 @@ func (s *StatusLayer) View(width, height int, rs *RenderState) []*lipgloss.Layer
 	}
 	if s.caps.MouseModes != "" {
 		lines = append(lines, fmt.Sprintf("  Mouse:     %s", s.caps.MouseModes))
+	}
+	if s.caps.Modes != "" {
+		lines = append(lines, "  Modes:")
+		// Soft-wrap the comma-separated mode list to fit the dialog
+		// width. Indent continuation lines so they read as a list.
+		const wrapAt = 44
+		const indent = "    "
+		var line strings.Builder
+		first := true
+		for _, mode := range strings.Split(s.caps.Modes, ", ") {
+			if first {
+				line.WriteString(indent)
+				line.WriteString(mode)
+				first = false
+				continue
+			}
+			if line.Len()+2+len(mode) > wrapAt {
+				lines = append(lines, line.String()+",")
+				line.Reset()
+				line.WriteString(indent)
+				line.WriteString(mode)
+			} else {
+				line.WriteString(", ")
+				line.WriteString(mode)
+			}
+		}
+		if line.Len() > 0 {
+			lines = append(lines, line.String())
+		}
 	}
 	lines = append(lines, "")
 

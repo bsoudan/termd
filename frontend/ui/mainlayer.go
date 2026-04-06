@@ -513,6 +513,7 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 				caps.BgDark = t.BgDark()
 				caps.TermEnv = t.TermEnv()
 				caps.MouseModes = t.MouseModes()
+				caps.Modes = t.Modes()
 			}
 		}
 		sl := NewStatusLayer(caps)

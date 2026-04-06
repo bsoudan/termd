@@ -520,6 +520,68 @@ func TestPTYRegionRespondsToDECRQM(t *testing.T) {
 	pio.WaitForScreen(t, hasNonZeroAns, `ANS:N where N > 0`, 10*time.Second)
 }
 
+// TestCursorHiddenByDECTCEM verifies that the frontend honors the
+// DECTCEM cursor visibility flag (private mode 25). When the child
+// emits \e[?25l, the frontend must not draw a reverse-video phantom
+// cursor on top of the cell at the cursor position. Without the fix,
+// programs that draw their own cursor (bubbletea TUIs, less, claude
+// code, a nested nxterm) would have a stray cursor cell painted by
+// the outer renderer, causing doubled cursors in nested sessions and
+// stray cursors elsewhere.
+func TestCursorHiddenByDECTCEM(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Use `read -rsn 1` to park bash with the cursor in a known
+	// position: hide the cursor, move to row 12 col 20, print 'Z',
+	// then wait for one keystroke. While bash is in `read`, the
+	// inner cursor sits at (row 12, col 21) with DECTCEM unset. The
+	// outer's renderer must NOT paint a reverse-video phantom cursor
+	// at that cell.
+	pio.Write([]byte(`printf '\e[?25l\e[12;20HZ'; read -rsn 1 dummy` + "\r"))
+
+	// Wait for the 'Z' to land. The outer's tab bar occupies row 0,
+	// so the inner's row 12 (1-indexed) lands at the outer's row 12
+	// (1-indexed inner row 12 = 0-indexed inner row 11; +1 for tab
+	// bar = outer row 12).
+	pio.WaitForScreen(t, func(lines []string) bool {
+		if len(lines) < 13 {
+			return false
+		}
+		return len(lines[12]) > 19 && lines[12][19] == 'Z'
+	}, "'Z' at outer row 12 col 19", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
+
+	cells := pio.ScreenCells()
+
+	// The cell at outer (12, 19) is the 'Z' itself; it should be
+	// plain, not reverse.
+	zCell := cells[12][19]
+	if zCell.Data != "Z" {
+		t.Fatalf("expected 'Z' at (12,19), got %q", zCell.Data)
+	}
+	if zCell.Attr.Reverse {
+		t.Errorf("'Z' cell at (12,19) has Reverse=true (cursor not hidden by DECTCEM)")
+	}
+
+	// The cell at outer (12, 20) is where the cursor would be —
+	// after printing 'Z' the inner cursor advances to col 21 (1-indexed)
+	// = col 20 (0-indexed). With DECTCEM off, this cell must not be
+	// reverse-video.
+	cursorCell := cells[12][20]
+	if cursorCell.Attr.Reverse {
+		t.Errorf("cursor cell at (12,20) has Reverse=true after \\e[?25l (phantom cursor not hidden), data=%q", cursorCell.Data)
+	}
+
+	// Unblock bash's read so the test can clean up.
+	pio.Write([]byte("\r"))
+}
+
 func TestActiveTabBold(t *testing.T) {
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()

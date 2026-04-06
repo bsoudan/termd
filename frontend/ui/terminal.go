@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -161,6 +162,11 @@ func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.Sc
 		}
 	}
 	t.screen.CursorPosition(int(cursorRow)+1, int(cursorCol)+1)
+	// Replace the mode set entirely rather than merging — a missing
+	// key in the snapshot means "unset" on the server, and merging
+	// would silently keep stale modes alive (most importantly DECTCEM,
+	// the cursor visibility flag).
+	t.screen.Mode = make(map[int]struct{}, len(modes))
 	for k, v := range modes {
 		if v {
 			t.screen.Mode[k] = struct{}{}
@@ -197,6 +203,17 @@ func (t *TerminalLayer) View(width, height int, rs *RenderState) []*lipgloss.Lay
 	}
 
 	showCursor := rs.Active
+	// Honor DECTCEM (private mode 25). Programs that draw their own
+	// cursor — bubbletea-based TUIs, less, claude code, a nested
+	// nxterm — emit \e[?25l to hide ours so we don't render a phantom
+	// reverse-video cell on top of theirs (which would otherwise show
+	// up as a doubled cursor in nested sessions or a stray cursor at
+	// the bottom-left in claude code).
+	if t.screen != nil {
+		if _, ok := t.screen.Mode[privateModeKey(25)]; !ok {
+			showCursor = false
+		}
+	}
 	dim := !rs.Active
 
 	var sb strings.Builder
@@ -362,6 +379,97 @@ func (t *TerminalLayer) TermEnv() map[string]string { return t.termEnv }
 func (t *TerminalLayer) Screen() *te.Screen { return t.screen }
 
 // MouseModes returns a human-readable mouse mode string for status display.
+// decPrivateModeNames maps DEC private mode numbers to short
+// human-readable names. Used by Modes() for the status dialog.
+var decPrivateModeNames = map[int]string{
+	1:    "DECCKM(app-cursor)",
+	3:    "DECCOLM(132col)",
+	4:    "DECSCLM(smooth-scroll)",
+	5:    "DECSCNM(reverse-video)",
+	6:    "DECOM(origin)",
+	7:    "DECAWM(autowrap)",
+	8:    "DECARM(autorepeat)",
+	9:    "mouse-x10",
+	12:   "att610(blink-cursor)",
+	25:   "DECTCEM(cursor-visible)",
+	40:   "allow-80-to-132",
+	45:   "reverse-wrap",
+	47:   "alt-screen-legacy",
+	66:   "DECNKM(app-keypad)",
+	67:   "DECBKM(backarrow=BS)",
+	1000: "mouse-normal",
+	1001: "mouse-highlight",
+	1002: "mouse-button-event",
+	1003: "mouse-any-event",
+	1004: "focus-events",
+	1005: "mouse-utf8",
+	1006: "mouse-sgr",
+	1015: "mouse-urxvt",
+	1016: "mouse-pixel",
+	1047: "alt-screen",
+	1048: "save-cursor",
+	1049: "alt-screen+save",
+	2004: "bracketed-paste",
+	2026: "synchronized-output",
+	2027: "grapheme-clusters",
+}
+
+// ansiModeNames maps ANSI (non-private) mode numbers to short names.
+var ansiModeNames = map[int]string{
+	2:  "KAM(keyboard-action)",
+	4:  "IRM(insert)",
+	12: "SRM(send-receive)",
+	20: "LNM(linefeed-newline)",
+}
+
+// Modes returns a comma-separated list of currently-set terminal modes
+// (both DEC private and ANSI), formatted for the status dialog. Each
+// mode is shown with its friendly name and decimal number; unknown
+// modes appear as "?(N)".
+func (t *TerminalLayer) Modes() string {
+	if t.screen == nil || len(t.screen.Mode) == 0 {
+		return ""
+	}
+	// Collect set modes as (number, isPrivate) pairs so we can sort.
+	type entry struct {
+		num     int
+		private bool
+	}
+	var entries []entry
+	for k := range t.screen.Mode {
+		if k >= 32 {
+			// DEC private mode keys are stored shifted left by 5.
+			entries = append(entries, entry{num: k >> 5, private: true})
+		} else {
+			entries = append(entries, entry{num: k, private: false})
+		}
+	}
+	// Sort: ANSI first by number, then DEC private by number.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].private != entries[j].private {
+			return !entries[i].private
+		}
+		return entries[i].num < entries[j].num
+	})
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.private {
+			if name, ok := decPrivateModeNames[e.num]; ok {
+				parts = append(parts, fmt.Sprintf("%s(%d)", name, e.num))
+			} else {
+				parts = append(parts, fmt.Sprintf("?(%d)", e.num))
+			}
+		} else {
+			if name, ok := ansiModeNames[e.num]; ok {
+				parts = append(parts, fmt.Sprintf("%s(%d)", name, e.num))
+			} else {
+				parts = append(parts, fmt.Sprintf("?ansi(%d)", e.num))
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (t *TerminalLayer) MouseModes() string {
 	if t.screen == nil {
 		return ""

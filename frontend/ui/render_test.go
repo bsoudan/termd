@@ -8,6 +8,51 @@ import (
 	te "nxtermd/pkg/te"
 )
 
+// TestTerminalLayerModes verifies that Modes() formats the set DEC
+// private and ANSI modes correctly. Used by the status dialog.
+func TestTerminalLayerModes(t *testing.T) {
+	t.Run("nil screen returns empty", func(t *testing.T) {
+		tl := &TerminalLayer{}
+		if got := tl.Modes(); got != "" {
+			t.Errorf("nil screen: got %q, want empty", got)
+		}
+	})
+
+	t.Run("known DEC private modes", func(t *testing.T) {
+		s := te.NewScreen(80, 24)
+		// NewScreen sets DECAWM (7) and DECTCEM (25) by default.
+		// Add bracketed paste (2004).
+		s.SetMode([]int{2004}, true)
+		tl := &TerminalLayer{screen: s}
+		got := tl.Modes()
+		for _, want := range []string{"DECAWM(autowrap)(7)", "DECTCEM(cursor-visible)(25)", "bracketed-paste(2004)"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("Modes() = %q, want it to contain %q", got, want)
+			}
+		}
+	})
+
+	t.Run("cursor hidden does not include DECTCEM", func(t *testing.T) {
+		s := te.NewScreen(80, 24)
+		s.ResetMode([]int{25}, true)
+		tl := &TerminalLayer{screen: s}
+		got := tl.Modes()
+		if strings.Contains(got, "DECTCEM") {
+			t.Errorf("after \\e[?25l: Modes() = %q, must not contain DECTCEM", got)
+		}
+	})
+
+	t.Run("unknown private mode", func(t *testing.T) {
+		s := te.NewScreen(80, 24)
+		s.SetMode([]int{9999}, true)
+		tl := &TerminalLayer{screen: s}
+		got := tl.Modes()
+		if !strings.Contains(got, "?(9999)") {
+			t.Errorf("Modes() = %q, want it to contain ?(9999)", got)
+		}
+	})
+}
+
 func TestSgrTransition(t *testing.T) {
 	defaultAttr := te.Attr{}
 
