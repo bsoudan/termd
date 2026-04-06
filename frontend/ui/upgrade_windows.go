@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 var procFreeConsole = syscall.NewLazyDLL("kernel32.dll").NewProc("FreeConsole")
@@ -15,9 +16,17 @@ var procFreeConsole = syscall.NewLazyDLL("kernel32.dll").NewProc("FreeConsole")
 // Windows doesn't allow overwriting a running executable, but it does
 // allow renaming it. So we rename the old binary out of the way, move
 // the new one into place, then launch a new process and exit.
+//
+// We use a unique <target>.old.<nanos> suffix per upgrade, never a
+// fixed ".old", because the old process keeps running while waiting
+// on the new one (cmd.Wait below). On a chained upgrade #2 the file
+// from upgrade #1 is still locked by process #1, so a fixed ".old"
+// slot would collide. Stale .old.* files from earlier upgrades whose
+// processes have exited are cleaned up on a best-effort basis.
 func replaceAndExec(tmpPath, targetPath string) error {
-	oldPath := targetPath + ".old"
-	os.Remove(oldPath) // clean up any previous .old file
+	cleanupStaleOldBinaries(targetPath)
+
+	oldPath := fmt.Sprintf("%s.old.%d", targetPath, time.Now().UnixNano())
 
 	if err := os.Rename(targetPath, oldPath); err != nil {
 		return fmt.Errorf("rename running binary %s -> %s: %w", targetPath, oldPath, err)
