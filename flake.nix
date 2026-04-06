@@ -101,6 +101,10 @@
             # Sandbox
             bubblewrap
 
+            # vhs
+            vhs
+            ubuntu-classic
+
           ];
 
           shellHook = ''
