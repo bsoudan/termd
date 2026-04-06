@@ -97,9 +97,29 @@ type Registry struct {
 	chordRoot    chordNode
 	always       []alwaysBinding
 	displayOrder []displayEntry
+	bindings     []BindingInfo
 
 	PrefixKey byte
 	PrefixStr string
+	Style     string // resolved style preset name (e.g., "native")
+}
+
+// BindingInfo describes a resolved keybinding for introspection
+// (e.g. --show-keybindings). Listed in display order, grouped by
+// Category. Headers are not included.
+type BindingInfo struct {
+	Category    string // "main", "session", "tab"
+	Key         string // raw key spec, e.g. "c", "alt+x", "S o"
+	KeyDisplay  string // pretty-printed: "ctrl+b, c" or "alt+x"
+	CommandName string
+	Args        string
+	Description string
+	Always      bool // true for raw-byte bindings (alt+x etc.)
+}
+
+// Bindings returns all resolved bindings in display order.
+func (r *Registry) Bindings() []BindingInfo {
+	return r.bindings
 }
 
 type displayEntry struct {
@@ -548,6 +568,10 @@ func commandInvocation(name, args string) string {
 
 // NewRegistry builds a Registry from a style preset and optional overrides.
 func NewRegistry(style, prefix string, overrides map[string][]string) *Registry {
+	resolvedStyle := style
+	if resolvedStyle == "" {
+		resolvedStyle = "native"
+	}
 	preset := getPreset(style)
 
 	prefixStr := preset.prefixStr
@@ -624,6 +648,7 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 	}
 
 	var display []displayEntry
+	var bindingInfos []BindingInfo
 	for _, cat := range categories {
 		entries := catBindings[cat]
 		if len(entries) == 0 {
@@ -648,6 +673,15 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 				de.chordKey = cb.b.key
 			}
 			display = append(display, de)
+			bindingInfos = append(bindingInfos, BindingInfo{
+				Category:    cat,
+				Key:         cb.b.key,
+				KeyDisplay:  keyDisp,
+				CommandName: cb.cmd.Name,
+				Args:        cb.b.args,
+				Description: cb.cmd.Description,
+				Always:      isAlwaysKey(cb.b.key),
+			})
 		}
 	}
 
@@ -657,7 +691,9 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 		chordRoot:    chordRoot,
 		always:       always,
 		displayOrder: display,
+		bindings:     bindingInfos,
 		PrefixKey:    prefixByte,
 		PrefixStr:    prefixStr,
+		Style:        resolvedStyle,
 	}
 }

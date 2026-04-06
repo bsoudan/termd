@@ -43,8 +43,18 @@ func main() {
 				Usage:   "enable debug logging",
 				Sources: cli.EnvVars("NXTERMD_DEBUG"),
 			},
+			&cli.BoolFlag{
+				Name:  "show-config",
+				Usage: "print the effective configuration with sources and exit",
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if cmd.Bool("show-config") {
+				if err := showTermctlConfig(cmd); err != nil {
+					return ctx, err
+				}
+				os.Exit(0)
+			}
 			// Load config and apply defaults for unset flags
 			cfg, err := config.LoadServerConfig(cmd.String("config"))
 			if err != nil {

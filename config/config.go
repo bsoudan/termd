@@ -177,6 +177,33 @@ func LoadKeybindConfig() (KeybindConfig, error) {
 	return cfg, err
 }
 
+// ResolveServerConfigPath returns the path that LoadServerConfig would
+// read, or the empty string if no config file exists at any of the
+// searched locations. If explicit is non-empty it is returned verbatim.
+func ResolveServerConfigPath(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return findConfig("nxtermd", "server.toml")
+}
+
+// ResolveFrontendConfigPath returns the path that LoadFrontendConfig
+// would read, or the empty string if no frontend config file exists.
+// Note: this does not resolve the server-config fallback used by
+// LoadFrontendConfig when the frontend file is missing.
+func ResolveFrontendConfigPath(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return findConfig("nxterm", "config.toml")
+}
+
+// ResolveKeybindConfigPath returns the path that LoadKeybindConfig
+// would read, or the empty string if no keybindings file exists.
+func ResolveKeybindConfigPath() string {
+	return findConfig("nxterm", "keybindings.toml")
+}
+
 // findConfig returns the path to a config file if it exists, checking
 // XDG_CONFIG_HOME first, then ~/.config.
 func findConfig(appDir, filename string) string {

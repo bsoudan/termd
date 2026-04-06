@@ -63,6 +63,29 @@ func main() {
 				Name:  "log-stderr",
 				Usage: "also write logs to stderr (corrupts terminal display)",
 			},
+			&cli.BoolFlag{
+				Name:  "show-config",
+				Usage: "print the effective configuration with sources and exit",
+			},
+			&cli.BoolFlag{
+				Name:  "show-keybindings",
+				Usage: "print all resolved keybindings with sources and exit",
+			},
+		},
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if cmd.Bool("show-config") {
+				if err := showFrontendConfig(cmd); err != nil {
+					return ctx, err
+				}
+				os.Exit(0)
+			}
+			if cmd.Bool("show-keybindings") {
+				if err := showKeybindings(); err != nil {
+					return ctx, err
+				}
+				os.Exit(0)
+			}
+			return ctx, nil
 		},
 		Action: runFrontend,
 	}

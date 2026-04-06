@@ -81,6 +81,19 @@ GLOBAL OPTIONS:{{template "visibleFlagTemplate" .}}{{end}}{{if .Description}}
 				Usage:  "internal: FD for live upgrade handoff",
 				Hidden: true,
 			},
+			&cli.BoolFlag{
+				Name:  "show-config",
+				Usage: "print the effective configuration with sources and exit",
+			},
+		},
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if cmd.Bool("show-config") {
+				if err := showServerConfig(cmd); err != nil {
+					return ctx, err
+				}
+				os.Exit(0)
+			}
+			return ctx, nil
 		},
 		Action: runServer,
 		Commands: []*cli.Command{
