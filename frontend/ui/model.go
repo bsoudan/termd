@@ -291,11 +291,11 @@ func serverFromEndpoint(endpoint string) string {
 // windowTitle composes the outer-terminal window title for the active
 // session+region. Format:
 //
-//	"<title> | nx <server>"             when sessionName == "main"
-//	"<title> | nx <session>@<server>"   otherwise
+//	"<title> • nx <server>"             when sessionName == "main"
+//	"<title> • nx <session>@<server>"   otherwise
 //
 // The title falls back to the region name when the PTY has not set one;
-// if there is no active region, the "<title> | " prefix is omitted.
+// if there is no active region, only the "• nx <server>" suffix is shown.
 // When there is no active session/endpoint, returns "nxterm".
 func windowTitle(main *MainLayer) string {
 	session := main.activeSessionLayer()
@@ -306,7 +306,7 @@ func windowTitle(main *MainLayer) string {
 	if server == "" {
 		return "nxterm"
 	}
-	suffix := "nx "
+	suffix := "• nx "
 	if session.sessionName != "" && session.sessionName != "main" {
 		suffix += session.sessionName + "@"
 	}
@@ -314,7 +314,7 @@ func windowTitle(main *MainLayer) string {
 
 	if t := main.ActiveTerm(); t != nil {
 		if title := t.Title(); title != "" {
-			return title + " | " + suffix
+			return title + " " + suffix
 		}
 	}
 	return suffix
