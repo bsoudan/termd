@@ -27,6 +27,12 @@ type Server struct {
 	done         chan struct{}
 	shutdownResp chan shutdownResult
 	shutdown     atomic.Bool
+	// noAccept is set during a live upgrade to reject any new
+	// connections that sneak through before the new process has
+	// taken over. acceptLoop checks this flag after Accept and
+	// immediately closes the conn if set. Cleared by
+	// resumeAfterFailedUpgrade on rollback.
+	noAccept atomic.Bool
 
 	// sessionsChanged is invoked from the event loop (in a goroutine)
 	// whenever the set of sessions changes. The argument is the sorted
@@ -121,6 +127,14 @@ func (s *Server) acceptLoop(ln net.Listener) {
 				return
 			}
 			slog.Debug("accept error", "err", err)
+			continue
+		}
+		if s.noAccept.Load() {
+			// Live upgrade is in progress; the new process will take
+			// over. Drop this connection so the client retries and
+			// lands on the new server instead of transiently hitting
+			// the dying old one.
+			conn.Close()
 			continue
 		}
 		s.acceptClient(conn)

@@ -61,6 +61,37 @@ func cleanupDownload(dl *Download, server *Server) {
 	server.SetDownload(nil)
 }
 
+// phaseStatusLine returns the human-readable line to display in the
+// upgrade dialog for a given ServerUpgradeStatus phase.
+func phaseStatusLine(phase string) string {
+	switch phase {
+	case protocol.UpgradePhaseStarting:
+		return "Starting upgrade..."
+	case protocol.UpgradePhaseSpawned:
+		return "New server process started..."
+	case protocol.UpgradePhaseSentListenerFDs:
+		return "Transferred listener sockets..."
+	case protocol.UpgradePhaseStoppedAccepting:
+		return "Stopped accepting new connections..."
+	case protocol.UpgradePhaseDrained:
+		return "Event loop drained..."
+	case protocol.UpgradePhaseStoppedReadLoops:
+		return "PTY readers stopped..."
+	case protocol.UpgradePhaseSentState:
+		return "Transferred terminal state..."
+	case protocol.UpgradePhaseSentPTYFDs:
+		return "Transferred PTY file descriptors..."
+	case protocol.UpgradePhaseReady:
+		return "New server is ready..."
+	case protocol.UpgradePhaseShuttingDown:
+		return "Old server shutting down..."
+	case protocol.UpgradePhaseFailed:
+		return "Upgrade failed"
+	default:
+		return "Upgrade: " + phase
+	}
+}
+
 // upgradeTask runs the interactive upgrade flow as a synchronous task.
 func upgradeTask(t *TermdHandle, server *Server,
 	serverAvail bool, serverVer string,
@@ -114,9 +145,44 @@ func upgradeTask(t *TermdHandle, server *Server,
 			return
 		}
 
+		// Follow the server's ServerUpgradeStatus stream until we see
+		// the terminal phase (shutting_down or failed). A persistent
+		// Subscribe is required here instead of WaitFor — phases arrive
+		// in rapid succession and the single-shot WaitFor filter races
+		// with the task goroutine, dropping messages between matches.
+		statusCh, unsubStatus, err := t.Subscribe(func(m any) bool {
+			_, ok := m.(protocol.ServerUpgradeStatus)
+			return ok
+		})
+		if err != nil {
+			return
+		}
+		shutdownSeen := false
+		for !shutdownSeen {
+			raw, ok := <-statusCh
+			if !ok {
+				unsubStatus()
+				return
+			}
+			status := raw.(protocol.ServerUpgradeStatus)
+			overlay.Lines = infoLines[:len(infoLines)-1]
+			overlay.Lines = append(overlay.Lines, "  "+phaseStatusLine(status.Phase))
+			overlay.StatusText = phaseStatusLine(status.Phase)
+
+			switch status.Phase {
+			case protocol.UpgradePhaseFailed:
+				unsubStatus()
+				ShowError(overlay, t.Handle, status.Message)
+				return
+			case protocol.UpgradePhaseShuttingDown:
+				shutdownSeen = true
+			}
+		}
+		unsubStatus()
+
 		overlay.Lines = infoLines[:len(infoLines)-1]
-		overlay.Lines = append(overlay.Lines, "  Server upgrading, waiting for reconnect...")
-		overlay.StatusText = "server upgraded, reconnecting..."
+		overlay.Lines = append(overlay.Lines, "  Waiting for new server...")
+		overlay.StatusText = "reconnecting..."
 
 		_, err = t.WaitFor(func(msg any) (bool, bool) {
 			_, ok := msg.(ReconnectedMsg)

@@ -167,6 +167,22 @@ func (c *Client) Close() {
 	})
 }
 
+// CloseGracefully polls the writeCh until it drains (or the deadline
+// expires) and then closes the client. This gives messages enqueued
+// just before the close — notably the final upgrade status broadcast
+// during a live upgrade — a chance to actually reach the wire before
+// writeLoop sees closeCh and drops the remaining queue.
+func (c *Client) CloseGracefully(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if len(c.writeCh) == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	c.Close()
+}
+
 func (c *Client) GetHostname() string {
 	return c.identity.Load().(*clientIdentity).hostname
 }

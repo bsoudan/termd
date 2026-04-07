@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 
 	"nxtermd/config"
@@ -628,21 +629,17 @@ func (s *Server) eventLoop() {
 
 			// --- Live upgrade support ---
 
-			case disconnectAllReq:
-				for _, c := range clients {
-					c.Close()
-				}
-				clients = make(map[uint32]*Client)
-				subscriptions = make(map[uint32]string)
-				regionSubs = make(map[string]map[uint32]struct{})
-				clientSessions = make(map[uint32]string)
-				r.resp <- struct{}{}
+			case snapshotClientsReq:
+				snap := make(map[uint32]*Client, len(clients))
+				maps.Copy(snap, clients)
+				r.resp <- snap
 
 			case upgradeReq:
 				r.resp <- upgradeResult{
 					regions:  regions,
 					sessions: sessions,
 					programs: programs,
+					clients:  clients,
 				}
 				// Pause: wait for resume (rollback) or done (successful upgrade).
 				select {

@@ -342,6 +342,33 @@ type ServerUpgradeResponse struct {
 	Message string `json:"message"`
 }
 
+// ServerUpgradeStatus is broadcast from the server to all connected
+// clients during a live upgrade. One message is sent at each phase so
+// the client dialog can track progress and only finalize the upgrade
+// after Phase == UpgradePhaseShuttingDown has been observed.
+type ServerUpgradeStatus struct {
+	Type    string `json:"type,omitempty"`
+	Phase   string `json:"phase"`
+	Message string `json:"message,omitempty"`
+}
+
+// Upgrade phases, in the order they are broadcast during a successful
+// upgrade. UpgradePhaseFailed is sent instead of the later phases when
+// the handoff is rolled back.
+const (
+	UpgradePhaseStarting         = "starting"
+	UpgradePhaseSpawned          = "spawned"
+	UpgradePhaseSentListenerFDs  = "sent_listener_fds"
+	UpgradePhaseStoppedAccepting = "stopped_accepting"
+	UpgradePhaseDrained          = "drained"
+	UpgradePhaseStoppedReadLoops = "stopped_readloops"
+	UpgradePhaseSentState        = "sent_state"
+	UpgradePhaseSentPTYFDs       = "sent_pty_fds"
+	UpgradePhaseReady            = "ready"
+	UpgradePhaseShuttingDown     = "shutting_down"
+	UpgradePhaseFailed           = "failed"
+)
+
 type ClientBinaryChunk struct {
 	Type   string `json:"type,omitempty"`
 	Offset int64  `json:"offset"`
@@ -510,6 +537,9 @@ func parsePayload(typ string, line []byte) (any, error) {
 	case "server_upgrade_response":
 		var msg ServerUpgradeResponse
 		return msg, json.Unmarshal(line, &msg)
+	case "server_upgrade_status":
+		var msg ServerUpgradeStatus
+		return msg, json.Unmarshal(line, &msg)
 	case "client_binary_chunk":
 		var msg ClientBinaryChunk
 		return msg, json.Unmarshal(line, &msg)
@@ -617,6 +647,8 @@ func typeTag(msg any) string {
 		return "upgrade_check_request"
 	case ServerUpgradeRequest:
 		return "server_upgrade_request"
+	case ServerUpgradeStatus:
+		return "server_upgrade_status"
 	case ClientBinaryRequest:
 		return "client_binary_request"
 	case Disconnect:

@@ -33,6 +33,30 @@ func (h *Handle[RS]) WaitFor(filter func(msg any) (deliver, handled bool)) (any,
 	return h.recv()
 }
 
+// Subscribe installs a persistent filter that delivers every matching
+// message to the returned channel. Unlike WaitFor, the subscription is
+// not cleared after each match — this is the right choice when a task
+// needs to process a stream of messages without dropping any.
+//
+// The returned unsubscribe function must be called when the task is
+// done with the stream (typically via defer). The channel is closed by
+// the unsubscribe call. Messages are dropped if the channel is full
+// (buffer capacity 32) — callers draining in a tight loop shouldn't hit
+// this in practice.
+func (h *Handle[RS]) Subscribe(filter func(msg any) bool) (<-chan any, func(), error) {
+	sub := &subscription{
+		filter: filter,
+		ch:     make(chan any, 32),
+	}
+	if err := h.send(taskSubscribeMsg{taskID: h.id, sub: sub}); err != nil {
+		return nil, nil, err
+	}
+	unsub := func() {
+		_ = h.send(taskUnsubscribeMsg{taskID: h.id, sub: sub})
+	}
+	return sub.ch, unsub, nil
+}
+
 // Send sends a message to the bubbletea event loop and blocks until
 // the app delivers a response via TaskRunner.Deliver. This ensures
 // the payload is processed on the bubbletea goroutine, avoiding
@@ -106,11 +130,31 @@ type taskDoneMsg struct {
 	taskID uint64
 }
 
+type taskSubscribeMsg struct {
+	taskID uint64
+	sub    *subscription
+}
+
+type taskUnsubscribeMsg struct {
+	taskID uint64
+	sub    *subscription
+}
+
 func (taskWaitForMsg) isTaskMsg()       {}
 func (taskSendMsg) isTaskMsg()          {}
 func (taskPushLayerMsg[RS]) isTaskMsg() {}
 func (taskPopLayerMsg[RS]) isTaskMsg()  {}
 func (taskDoneMsg) isTaskMsg()          {}
+func (taskSubscribeMsg) isTaskMsg()     {}
+func (taskUnsubscribeMsg) isTaskMsg()   {}
+
+// subscription is a persistent filter that delivers matching messages
+// to a channel. Used by Handle.Subscribe for streaming updates where
+// the single-shot WaitFor would race between matches.
+type subscription struct {
+	filter func(any) bool
+	ch     chan any
+}
 
 // TaskSendMsg is delivered to the app when a task calls Handle.Send().
 // The app processes Payload on the bubbletea goroutine (safe for shared
@@ -120,10 +164,12 @@ type TaskSendMsg struct {
 	Payload any
 }
 
-// taskState tracks a running task's WaitFor filter.
+// taskState tracks a running task's WaitFor filter and any persistent
+// Subscribe streams.
 type taskState[RS any] struct {
 	handle *Handle[RS]
 	filter func(any) (deliver, handled bool)
+	subs   []*subscription
 }
 
 // TaskRunner manages running tasks and bridges them to bubbletea.
@@ -202,15 +248,29 @@ func (r *TaskRunner[RS]) ListenCmd() tea.Cmd {
 	}
 }
 
-// CheckFilters runs active WaitFor filters against msg. If a filter
-// matches (deliver=true), the message is sent to the task's inbox and
-// the filter is cleared. Returns handled=true if the message should
-// not be passed to layers.
+// CheckFilters runs active WaitFor filters and Subscribe subscriptions
+// against msg. WaitFor filters are single-shot: a matching filter is
+// cleared after delivery. Subscriptions are persistent: matching
+// messages are sent to the subscription's channel and the subscription
+// stays active until Unsubscribe. Returns handled=true if any filter or
+// subscription requested that the message be hidden from layers.
 func (r *TaskRunner[RS]) CheckFilters(msg any) (handled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, ts := range r.tasks {
+		// Persistent subscriptions always see every message.
+		for _, sub := range ts.subs {
+			if !sub.filter(msg) {
+				continue
+			}
+			select {
+			case sub.ch <- msg:
+			default:
+				slog.Debug("task subscription channel full, dropping msg", "task", ts.handle.id)
+			}
+		}
+		// Single-shot WaitFor filter.
 		if ts.filter == nil {
 			continue
 		}
@@ -275,7 +335,34 @@ func (r *TaskRunner[RS]) HandleMsg(msg tea.Msg) tea.Cmd {
 
 	case taskDoneMsg:
 		r.mu.Lock()
+		if ts, ok := r.tasks[msg.taskID]; ok {
+			for _, sub := range ts.subs {
+				close(sub.ch)
+			}
+		}
 		delete(r.tasks, msg.taskID)
+		r.mu.Unlock()
+		return nil
+
+	case taskSubscribeMsg:
+		r.mu.Lock()
+		if ts, ok := r.tasks[msg.taskID]; ok {
+			ts.subs = append(ts.subs, msg.sub)
+		}
+		r.mu.Unlock()
+		return nil
+
+	case taskUnsubscribeMsg:
+		r.mu.Lock()
+		if ts, ok := r.tasks[msg.taskID]; ok {
+			for i, sub := range ts.subs {
+				if sub == msg.sub {
+					ts.subs = append(ts.subs[:i], ts.subs[i+1:]...)
+					close(sub.ch)
+					break
+				}
+			}
+		}
 		r.mu.Unlock()
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"nxtermd/frontend/protocol"
 )
 
 // TestLiveUpgrade starts a server with Unix, TCP, WebSocket, and SSH
@@ -266,6 +268,79 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	fe.Write([]byte("echo POST_UPGRADE_OK\r"))
 	fe.WaitFor(t, "POST_UPGRADE_OK", 15*time.Second)
 	t.Log("shell survived upgrade")
+}
+
+// TestLiveUpgradeStatusBroadcast verifies that the server broadcasts a
+// ServerUpgradeStatus message at each phase of a live upgrade, ending
+// with Phase=shutting_down followed by the connection closing. This
+// is the raw-wire test for the phase-tracking that the upgrade dialog
+// relies on.
+func TestLiveUpgradeStatusBroadcast(t *testing.T) {
+	dir := t.TempDir()
+	env := testEnv(t)
+	writeTestServerConfig(t, env)
+
+	socketPath := filepath.Join(dir, "nxtermd.sock")
+	cmd := exec.Command("nxtermd", "unix:"+socketPath)
+	cmd.Env = env
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); cmd.Wait() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	c := dialClient(t, socketPath)
+	defer c.Close()
+
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGUSR2); err != nil {
+		t.Fatalf("kill -USR2: %v", err)
+	}
+
+	// Collect status phases until the server closes the connection.
+	var phases []string
+	timeout := time.After(10 * time.Second)
+loop:
+	for {
+		select {
+		case msg, ok := <-c.Recv():
+			if !ok {
+				break loop
+			}
+			status, ok := msg.Payload.(protocol.ServerUpgradeStatus)
+			if !ok {
+				continue
+			}
+			phases = append(phases, status.Phase)
+			t.Logf("status: %s — %s", status.Phase, status.Message)
+		case <-timeout:
+			t.Fatalf("timeout waiting for status messages; got phases: %v", phases)
+		}
+	}
+
+	want := []string{
+		protocol.UpgradePhaseStarting,
+		protocol.UpgradePhaseSpawned,
+		protocol.UpgradePhaseSentListenerFDs,
+		protocol.UpgradePhaseStoppedAccepting,
+		protocol.UpgradePhaseDrained,
+		protocol.UpgradePhaseStoppedReadLoops,
+		protocol.UpgradePhaseSentState,
+		protocol.UpgradePhaseSentPTYFDs,
+		protocol.UpgradePhaseReady,
+		protocol.UpgradePhaseShuttingDown,
+	}
+	if !slices.Equal(phases, want) {
+		t.Fatalf("phase sequence mismatch:\n  got:  %v\n  want: %v", phases, want)
+	}
 }
 
 // TestLiveUpgradeNoDataLoss verifies that PTY output flowing during a
