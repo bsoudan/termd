@@ -486,18 +486,16 @@ func (s *SessionLayer) renderTabBar(width int) string {
 	used := 1
 
 	for i, t := range s.tabs {
-		name := t.regionName
-		if t.term != nil {
-			name = t.term.Title()
-		}
-		cap := 30
+		var label string
 		if i == s.activeTab {
-			cap = 40
-		}
-		label := fmt.Sprintf(" %d:%s ", i+1, truncateTitle(name, cap))
-		if i == s.activeTab {
+			label = fmt.Sprintf(" %d ", i+1)
 			sb.WriteString(statusBold.Render(label))
 		} else {
+			name := t.regionName
+			if t.term != nil {
+				name = t.term.Title()
+			}
+			label = fmt.Sprintf(" %d:%s ", i+1, truncateTitle(name, 30))
 			sb.WriteString(statusFaint.Render(label))
 		}
 		sb.WriteString(statusFaint.Render("•"))
