@@ -175,7 +175,7 @@ func TestLiveUpgrade(t *testing.T) {
 	// All frontends should reconnect.
 	for _, fe := range frontends {
 		t.Logf("waiting for %s frontend to reconnect...", fe.name)
-		fe.pio.WaitFor(t, "bash", 20*time.Second)
+		fe.pio.WaitFor(t, "$", 20*time.Second)
 	}
 
 	// Let frontends settle after reconnection.
@@ -242,7 +242,7 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	}
 
 	// Frontend should reconnect.
-	fe.WaitFor(t, "bash", 20*time.Second)
+	fe.WaitFor(t, "$", 20*time.Second)
 	fe.WaitForSilence(200 * time.Millisecond)
 
 	// Wait for the old server process to exit. Because we started it with

@@ -41,7 +41,6 @@ func TestSessionConnectDefault(t *testing.T) {
 	fe := startFrontendWithSession(t, socketPath, "")
 	defer fe.Kill()
 
-	fe.WaitFor(t, "bash", 10*time.Second)
 	fe.WaitFor(t, "$", 10*time.Second)
 
 	// Verify session was created
@@ -64,7 +63,6 @@ func TestSessionConnectNamed(t *testing.T) {
 	fe := startFrontendWithSession(t, socketPath, "work")
 	defer fe.Kill()
 
-	fe.WaitFor(t, "bash", 10*time.Second)
 	fe.WaitFor(t, "$", 10*time.Second)
 
 	out := runNxtermctl(t, socketPath, "session", "list")
@@ -88,11 +86,11 @@ func TestSessionMultiple(t *testing.T) {
 
 	fe1 := startFrontendWithSession(t, socketPath, "")
 	defer fe1.Kill()
-	fe1.WaitFor(t, "bash", 10*time.Second)
+	fe1.WaitFor(t, "$", 10*time.Second)
 
 	fe2 := startFrontendWithSession(t, socketPath, "dev")
 	defer fe2.Kill()
-	fe2.WaitFor(t, "bash", 10*time.Second)
+	fe2.WaitFor(t, "$", 10*time.Second)
 
 	// Both sessions exist
 	out := runNxtermctl(t, socketPath, "session", "list")
@@ -133,7 +131,6 @@ func TestSessionReconnect(t *testing.T) {
 	fe := startFrontendWithSession(t, socketPath, "persist")
 	defer fe.Kill()
 
-	fe.WaitFor(t, "bash", 10*time.Second)
 	fe.WaitFor(t, "$", 10*time.Second)
 
 	// Get the region ID
@@ -160,7 +157,7 @@ func TestSessionReconnect(t *testing.T) {
 	fe2 := startFrontendWithSession(t, socketPath, "persist")
 	defer fe2.Kill()
 
-	fe2.WaitFor(t, "bash", 10*time.Second)
+	fe2.WaitFor(t, "$", 10*time.Second)
 
 	// Verify no additional regions were spawned
 	out = runNxtermctl(t, socketPath, "region", "list", "--session", "persist")
@@ -213,7 +210,7 @@ func TestSessionSpawnIntoSession(t *testing.T) {
 
 	fe := startFrontendWithSession(t, socketPath, "")
 	defer fe.Kill()
-	fe.WaitFor(t, "bash", 10*time.Second)
+	fe.WaitFor(t, "$", 10*time.Second)
 
 	// Spawn another region into "main" session via termctl
 	id := runNxtermctl(t, socketPath, "region", "spawn", "--session", "main", "shell")
@@ -238,7 +235,7 @@ func TestSessionClientListShowsSession(t *testing.T) {
 
 	fe := startFrontendWithSession(t, socketPath, "visible")
 	defer fe.Kill()
-	fe.WaitFor(t, "bash", 10*time.Second)
+	fe.WaitFor(t, "$", 10*time.Second)
 
 	out := runNxtermctl(t, socketPath, "client", "list")
 
@@ -270,8 +267,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	pio1, cleanup1 := startFrontend(t, socketPath)
 
-	pio1.WaitFor(t, "bash", 10*time.Second)
-	pio1.WaitFor(t, "nxterm$",10*time.Second)
+	pio1.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Output colored text before detaching
 	pio1.Write([]byte("printf '" +
@@ -360,11 +356,14 @@ func TestConnectPicksUpExistingRegions(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
+	// First tab is active (label " 1 " — no colon), second is
+	// inactive (label " 2:bash "). Either inactive label appearing
+	// proves both tabs exist.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		if len(lines) == 0 {
 			return false
 		}
-		return strings.Contains(lines[0], "1:") && strings.Contains(lines[0], "2:")
+		return strings.Contains(lines[0], "2:") || strings.Contains(lines[0], "1:")
 	}, "tab bar with two pre-existing regions", 10*time.Second)
 }
 
@@ -375,17 +374,12 @@ func TestReconnectRestoresTabs(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
-	// Spawn a second region
+	// Spawn a second region. Tab 1 becomes inactive → "1:bash"
+	// appears in the tab bar (the active tab renders as just " 2 ").
 	pio.Write([]byte("\x02c"))
-	pio.WaitForScreen(t, func(lines []string) bool {
-		if len(lines) == 0 {
-			return false
-		}
-		return strings.Contains(lines[0], "1:bash") && strings.Contains(lines[0], "2:bash")
-	}, "tab bar with '1:bash' and '2:bash'", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Kill the client connection to force reconnect
@@ -396,12 +390,14 @@ func TestReconnectRestoresTabs(t *testing.T) {
 	pio.WaitFor(t, "reconnecting", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
-	// Both tabs should be restored after reconnect
+	// Both tabs should be restored after reconnect. Whichever tab
+	// becomes active again, the other one's "<n>:bash" label should
+	// be visible in the tab bar.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		if len(lines) == 0 {
 			return false
 		}
-		return strings.Contains(lines[0], "1:bash") && strings.Contains(lines[0], "2:bash")
+		return strings.Contains(lines[0], "1:bash") || strings.Contains(lines[0], "2:bash")
 	}, "both tabs restored after reconnect", 10*time.Second)
 }
 
@@ -412,7 +408,6 @@ func TestAllRegionsDestroyedShowsNoSession(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Exit the only shell.

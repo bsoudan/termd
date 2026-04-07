@@ -95,7 +95,6 @@ func TestProgramDefaultSession(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "$", 10*time.Second)
 
 	// Verify the region was spawned with the shell program's cmd
@@ -121,7 +120,6 @@ func TestProgramPickerMultiple(t *testing.T) {
 	defer frontendCleanup()
 
 	// Wait for initial tab and let the screen settle
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
@@ -134,13 +132,14 @@ func TestProgramPickerMultiple(t *testing.T) {
 	// Press enter to select the first program
 	pio.Write([]byte("\r"))
 
-	// Should get a second tab
+	// Should get a second tab. Tab 2 becomes active and tab 1
+	// becomes inactive — tab 1's "1:shell" label appears.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		if len(lines) == 0 {
 			return false
 		}
-		return strings.Contains(lines[0], "2:")
-	}, "second tab to appear", 10*time.Second)
+		return strings.Contains(lines[0], "1:")
+	}, "tab 1 to go inactive after second tab spawn", 10*time.Second)
 }
 
 func TestProgramPickerSingleAutoSpawn(t *testing.T) {
@@ -150,19 +149,20 @@ func TestProgramPickerSingleAutoSpawn(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "$", 10*time.Second)
 
 	// Press ctrl+b c — with only 1 program, should spawn immediately (no picker)
 	pio.Write([]byte{0x02, 'c'})
 
-	// Should get a second tab without seeing a picker dialog
+	// Should get a second tab without seeing a picker dialog. Tab 2
+	// becomes active so tab 1 goes inactive — its "1:shell" label
+	// appears in the tab bar.
 	pio.WaitForScreen(t, func(lines []string) bool {
 		if len(lines) == 0 {
 			return false
 		}
-		return strings.Contains(lines[0], "2:")
-	}, "second tab to appear", 10*time.Second)
+		return strings.Contains(lines[0], "1:")
+	}, "tab 1 to go inactive after second tab spawn", 10*time.Second)
 }
 
 func TestProgramEnvVars(t *testing.T) {

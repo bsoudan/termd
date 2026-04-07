@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"nxtermd/pkg/te"
 )
 
 func TestStartAndRender(t *testing.T) {
@@ -15,18 +16,20 @@ func TestStartAndRender(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	// Wait for the tab bar to render with the region name.
-	lines := pio.WaitFor(t, "bash", 10*time.Second)
-	row, col := findOnScreen(lines, "bash")
-	if row != 0 {
-		t.Fatalf("expected 'bash' on row 0, found on row %d", row)
-	}
-	if col > 10 {
-		t.Fatalf("expected 'bash' near start of row 0, found at col %d", col)
-	}
-
 	// Wait for the shell prompt to render below the tab bar.
 	pio.WaitFor(t, "$", 10*time.Second)
+
+	// Verify the tab bar (row 0) shows tab "1" near the start. The
+	// active tab is rendered as " 1 " between bullets ("• 1 •..."),
+	// so "1" should land within the first ~5 columns.
+	lines := pio.ScreenLines()
+	row, col := findOnScreen(lines, "1")
+	if row != 0 {
+		t.Fatalf("expected tab '1' on row 0, found on row %d", row)
+	}
+	if col > 5 {
+		t.Fatalf("expected tab '1' near start of row 0, found at col %d", col)
+	}
 }
 
 func TestCursorPosition(t *testing.T) {
@@ -36,8 +39,7 @@ func TestCursorPosition(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("xy"))
 
@@ -77,8 +79,7 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type several lines so there's content on screen
 	pio.Write([]byte("echo line_a\r"))
@@ -89,30 +90,43 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 	pio.WaitFor(t, "nxterm$",10*time.Second)
 
 	// Run a command that writes to many rows (like top does).
-	// Use seq to fill several lines, then verify the prompt appears
-	// AFTER the seq output, not overlapping it.
+	// Use seq to fill several lines, then echo a unique marker so
+	// we can wait for the prompt that follows it (a bare
+	// WaitFor("nxterm$") would race-match the prompt that's still
+	// on screen from before the seq command).
 	pio.Write([]byte("seq 1 10\r"))
 	pio.WaitFor(t, "10", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.Write([]byte("echo SEQ_DONE\r"))
+	pio.WaitFor(t, "SEQ_DONE", 10*time.Second)
+	pio.WaitForSilence(200 * time.Millisecond)
 
-	// The prompt should be on a row AFTER "10"
+	// The prompt should be on a row AFTER the seq output. Find the
+	// LAST occurrence of "10" (the actual seq output line, not the
+	// command echo) and the LAST prompt.
 	lines := pio.ScreenLines()
-	seqRow, _ := findOnScreen(lines, "10")
-	promptRow, _ := findOnScreen(lines, "nxterm$")
-	t.Logf("'10' at row %d, last 'nxterm$ ' at row %d", seqRow, promptRow)
-
-	// Find the LAST occurrence of "nxterm$" (the current prompt)
+	lastSeq := -1
+	for i, line := range lines {
+		trimmed := strings.TrimRight(line, " ")
+		// Match a line that is exactly "10" — that's seq output,
+		// not the command echo "seq 1 10".
+		if trimmed == "10" {
+			lastSeq = i
+		}
+	}
 	lastPrompt := -1
 	for i, line := range lines {
 		if strings.Contains(line, "nxterm$") {
 			lastPrompt = i
 		}
 	}
-	t.Logf("last prompt at row %d", lastPrompt)
+	t.Logf("'10' last at row %d, prompt last at row %d", lastSeq, lastPrompt)
 
-	if lastPrompt <= seqRow {
+	if lastSeq < 0 {
+		t.Fatalf("could not find seq output '10' on screen:\n%s", strings.Join(lines, "\n"))
+	}
+	if lastPrompt <= lastSeq {
 		t.Fatalf("prompt (row %d) should be after seq output '10' (row %d)\nscreen:\n%s",
-			lastPrompt, seqRow, strings.Join(lines, "\n"))
+			lastPrompt, lastSeq, strings.Join(lines, "\n"))
 	}
 }
 
@@ -545,37 +559,37 @@ func TestCursorHiddenByDECTCEM(t *testing.T) {
 	// at that cell.
 	pio.Write([]byte(`printf '\e[?25l\e[12;20HZ'; read -rsn 1 dummy` + "\r"))
 
-	// Wait for the 'Z' to land. The outer's tab bar occupies row 0,
-	// so the inner's row 12 (1-indexed) lands at the outer's row 12
-	// (1-indexed inner row 12 = 0-indexed inner row 11; +1 for tab
-	// bar = outer row 12).
+	// Wait for the 'Z' to land. The outer's tab bar occupies row 0
+	// and the status-bar margin (default 1) occupies row 1, so the
+	// inner's row 12 (1-indexed) lands at outer row 13 (0-indexed
+	// inner row 11; +1 for tab bar; +1 for margin).
 	pio.WaitForScreen(t, func(lines []string) bool {
-		if len(lines) < 13 {
+		if len(lines) < 14 {
 			return false
 		}
-		return len(lines[12]) > 19 && lines[12][19] == 'Z'
-	}, "'Z' at outer row 12 col 19", 10*time.Second)
+		return len(lines[13]) > 19 && lines[13][19] == 'Z'
+	}, "'Z' at outer row 13 col 19", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	cells := pio.ScreenCells()
 
-	// The cell at outer (12, 19) is the 'Z' itself; it should be
+	// The cell at outer (13, 19) is the 'Z' itself; it should be
 	// plain, not reverse.
-	zCell := cells[12][19]
+	zCell := cells[13][19]
 	if zCell.Data != "Z" {
-		t.Fatalf("expected 'Z' at (12,19), got %q", zCell.Data)
+		t.Fatalf("expected 'Z' at (13,19), got %q", zCell.Data)
 	}
 	if zCell.Attr.Reverse {
-		t.Errorf("'Z' cell at (12,19) has Reverse=true (cursor not hidden by DECTCEM)")
+		t.Errorf("'Z' cell at (13,19) has Reverse=true (cursor not hidden by DECTCEM)")
 	}
 
-	// The cell at outer (12, 20) is where the cursor would be —
+	// The cell at outer (13, 20) is where the cursor would be —
 	// after printing 'Z' the inner cursor advances to col 21 (1-indexed)
 	// = col 20 (0-indexed). With DECTCEM off, this cell must not be
 	// reverse-video.
-	cursorCell := cells[12][20]
+	cursorCell := cells[13][20]
 	if cursorCell.Attr.Reverse {
-		t.Errorf("cursor cell at (12,20) has Reverse=true after \\e[?25l (phantom cursor not hidden), data=%q", cursorCell.Data)
+		t.Errorf("cursor cell at (13,20) has Reverse=true after \\e[?25l (phantom cursor not hidden), data=%q", cursorCell.Data)
 	}
 
 	// Unblock bash's read so the test can clean up.
@@ -589,17 +603,14 @@ func TestActiveTabBold(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
-	// Spawn a second region so we have active and inactive tabs
+	// Spawn a second region so we have active and inactive tabs.
+	// Tab 2 becomes active (label " 2 "), tab 1 becomes inactive
+	// (label " 1:bash ").
 	pio.Write([]byte("\x02c"))
-	pio.WaitForScreen(t, func(lines []string) bool {
-		if len(lines) == 0 {
-			return false
-		}
-		return strings.Contains(lines[0], "1:bash") && strings.Contains(lines[0], "2:bash")
-	}, "tab bar with both tabs", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	cells := pio.ScreenCells()
@@ -608,54 +619,51 @@ func TestActiveTabBold(t *testing.T) {
 	}
 	tabRow := cells[0]
 
-	// Find "1:" and "2:" on row 0 to locate each tab label
-	tab1Col, tab2Col := -1, -1
-	for col := 0; col+1 < len(tabRow); col++ {
-		if tabRow[col].Data == "1" && tabRow[col+1].Data == ":" {
-			tab1Col = col
-		}
-		if tabRow[col].Data == "2" && tabRow[col+1].Data == ":" {
-			tab2Col = col
-		}
-	}
+	// Locate each tab number on row 0. After 98da964 the active tab
+	// renders as " <n> " (digit followed by space) and the inactive
+	// tab as " <n>:<name> " (digit followed by colon).
+	tab1Col := findDigitFollowedBy(tabRow, "1", ":") // inactive
+	tab2Col := findDigitFollowedBy(tabRow, "2", " ") // active
 	if tab1Col < 0 || tab2Col < 0 {
 		t.Fatalf("could not find tab labels on row 0: tab1=%d tab2=%d", tab1Col, tab2Col)
 	}
-
-	// Tab 2 is active (just spawned), tab 1 is inactive.
-	// Active tab should be bold, inactive should NOT be bold.
 	if tabRow[tab1Col].Attr.Bold {
-		t.Errorf("inactive tab '1:bash' at col %d should not be bold", tab1Col)
+		t.Errorf("inactive tab '1' at col %d should not be bold", tab1Col)
 	}
 	if !tabRow[tab2Col].Attr.Bold {
-		t.Errorf("active tab '2:bash' at col %d should be bold", tab2Col)
+		t.Errorf("active tab '2' at col %d should be bold", tab2Col)
 	}
 
-	// Switch to tab 1 and verify bold flips
+	// Switch to tab 1: tab 1 becomes active (" 1 "), tab 2 inactive (" 2:bash ").
 	pio.Write([]byte("\x021"))
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	cells = pio.ScreenCells()
 	tabRow = cells[0]
-	tab1Col, tab2Col = -1, -1
-	for col := 0; col+1 < len(tabRow); col++ {
-		if tabRow[col].Data == "1" && tabRow[col+1].Data == ":" {
-			tab1Col = col
-		}
-		if tabRow[col].Data == "2" && tabRow[col+1].Data == ":" {
-			tab2Col = col
-		}
-	}
+	tab1Col = findDigitFollowedBy(tabRow, "1", " ") // active
+	tab2Col = findDigitFollowedBy(tabRow, "2", ":") // inactive
 	if tab1Col < 0 || tab2Col < 0 {
 		t.Fatalf("could not find tab labels after switch: tab1=%d tab2=%d", tab1Col, tab2Col)
 	}
 	if !tabRow[tab1Col].Attr.Bold {
-		t.Errorf("active tab '1:bash' at col %d should be bold after switch", tab1Col)
+		t.Errorf("active tab '1' at col %d should be bold after switch", tab1Col)
 	}
 	if tabRow[tab2Col].Attr.Bold {
-		t.Errorf("inactive tab '2:bash' at col %d should not be bold after switch", tab2Col)
+		t.Errorf("inactive tab '2' at col %d should not be bold after switch", tab2Col)
 	}
+}
+
+// findDigitFollowedBy returns the column of digit on row, where the
+// next cell's data equals next. -1 if not found. Used by
+// TestActiveTabBold to locate tab number cells on the tab bar row.
+func findDigitFollowedBy(row []te.Cell, digit, next string) int {
+	for col := 0; col+1 < len(row); col++ {
+		if row[col].Data == digit && row[col+1].Data == next {
+			return col
+		}
+	}
+	return -1
 }
 
 func TestResize(t *testing.T) {
@@ -665,8 +673,7 @@ func TestResize(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("tput cols\r"))
 
 	lines := pio.WaitForScreen(t, func(lines []string) bool {
@@ -715,17 +722,17 @@ func TestResizeMidSession(t *testing.T) {
 		return false
 	}, "'120' at col 0 on a content row", 10*time.Second)
 
-	// Verify new row count (40 - 1 for tab bar = 39)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	// Verify new row count (40 - 1 for tab bar - 1 for status-bar margin = 38)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("tput lines\r"))
 	pio.WaitForScreen(t, func(lines []string) bool {
 		for i := 1; i < len(lines); i++ {
-			if strings.HasPrefix(lines[i], "39") {
+			if strings.HasPrefix(lines[i], "38") {
 				return true
 			}
 		}
 		return false
-	}, "'39' at col 0 on a content row", 10*time.Second)
+	}, "'38' at col 0 on a content row", 10*time.Second)
 }
 
 func TestAltScreenRestore(t *testing.T) {
@@ -826,7 +833,8 @@ func TestScreenSyncAfterTop(t *testing.T) {
 		}
 	}
 
-	// Find prompt row on frontend (row 0 is tab bar, content starts at row 1)
+	// Find prompt row on frontend (row 0 is tab bar, row 1 is the
+	// status-bar margin, content starts at row 2 by default).
 	frontendLines := pio.ScreenLines()
 	frontendPromptRow := -1
 	for i := len(frontendLines) - 1; i >= 0; i-- {
@@ -839,8 +847,8 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	t.Logf("server prompt at row %d/%d, frontend prompt at row %d/%d",
 		serverPromptRow, len(serverLines), frontendPromptRow, len(frontendLines))
 
-	// Frontend prompt should be at serverPromptRow + 1 (tab bar offset)
-	expectedRow := serverPromptRow + 1
+	// Frontend prompt should be at serverPromptRow + 2 (tab bar + margin)
+	expectedRow := serverPromptRow + 2
 	if frontendPromptRow != expectedRow {
 		t.Logf("=== FRONTEND ===")
 		for i, line := range frontendLines {
@@ -854,7 +862,7 @@ func TestScreenSyncAfterTop(t *testing.T) {
 				t.Logf("  s[%2d]: %.70s", i, line)
 			}
 		}
-		t.Fatalf("frontend prompt at row %d, expected %d (server row %d + 1 for tab bar)",
+		t.Fatalf("frontend prompt at row %d, expected %d (server row %d + 1 for tab bar + 1 for margin)",
 			frontendPromptRow, expectedRow, serverPromptRow)
 	}
 }

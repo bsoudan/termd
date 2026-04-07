@@ -43,9 +43,7 @@ func TestExit(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("exit\r"))
 
 	// Frontend should enter the no-session screen instead of exiting.

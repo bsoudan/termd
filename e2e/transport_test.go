@@ -30,8 +30,7 @@ func TestTCPTransport(t *testing.T) {
 	pio := newPtyIO(ptmx, 80, 24)
 	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Verify the tab bar shows the TCP endpoint
 	lines := pio.ScreenLines()
@@ -70,8 +69,7 @@ func TestWebSocketTransport(t *testing.T) {
 	pio := newPtyIO(ptmx, 80, 24)
 	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("echo ws_works\r"))
 	pio.WaitFor(t, "ws_works", 10*time.Second)
@@ -147,8 +145,7 @@ func TestSSHTransport(t *testing.T) {
 	pio := newPtyIO(ptmx, 80, 24)
 	defer func() { feCmd.Process.Kill(); feCmd.Wait(); ptmx.Close() }()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	pio.Write([]byte("echo ssh_works\r"))
 	pio.WaitFor(t, "ssh_works", 10*time.Second)

@@ -12,7 +12,7 @@ func TestPrefixKeyDetach(t *testing.T) {
 	fe := startFrontendFull(t, socketPath)
 	defer fe.Kill()
 
-	fe.WaitFor(t, "bash", 10*time.Second)
+	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	fe.Write([]byte{0x02, 'd'})
 
@@ -58,7 +58,7 @@ func TestPrefixKeyStatusIndicator(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(500 * time.Millisecond)
 
 	pio.Write([]byte{0x02})
@@ -89,16 +89,16 @@ func TestKeybindNativeNextPrevTab(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Mark tab 1
 	pio.Write([]byte("echo TAB1_NATIVE\r"))
 	pio.WaitFor(t, "TAB1_NATIVE", 10*time.Second)
 
-	// Spawn second tab (ctrl+b c)
+	// Spawn second tab (ctrl+b c). Tab 1 becomes inactive → "1:bash"
+	// appears in the tab bar; that's our signal the spawn took effect.
 	pio.Write([]byte("\x02c"))
-	pio.WaitFor(t, "2:bash", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Mark tab 2
@@ -123,16 +123,16 @@ func TestKeybindTmuxStyle(t *testing.T) {
 	fe := startFrontendWithEnv(t, socketPath, env)
 	defer fe.Kill()
 
-	fe.WaitFor(t, "1:bash", 10*time.Second)
 	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Mark tab 1
 	fe.Write([]byte("echo TAB1_TMUX\r"))
 	fe.WaitFor(t, "TAB1_TMUX", 10*time.Second)
 
-	// Spawn second tab (ctrl+b c — same as tmux)
+	// Spawn second tab (ctrl+b c — same as tmux). Tab 1 becomes
+	// inactive → "1:bash" appears in the tab bar.
 	fe.Write([]byte("\x02c"))
-	fe.WaitFor(t, "2:bash", 10*time.Second)
+	fe.WaitFor(t, "1:bash", 10*time.Second)
 	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Mark tab 2
@@ -157,7 +157,6 @@ func TestKeybindScreenPrefix(t *testing.T) {
 	fe := startFrontendWithEnv(t, socketPath, env)
 	defer fe.Kill()
 
-	fe.WaitFor(t, "1:bash", 10*time.Second)
 	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// ctrl+a d (detach in screen style; ctrl+a = 0x01)
@@ -179,7 +178,6 @@ func TestKeybindCustomOverride(t *testing.T) {
 	fe := startFrontendWithEnv(t, socketPath, env)
 	defer fe.Kill()
 
-	fe.WaitFor(t, "1:bash", 10*time.Second)
 	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// ctrl+b x should now detach (instead of closing the tab)
@@ -200,7 +198,6 @@ func TestKeybindOpenSessionTmux(t *testing.T) {
 	fe := startFrontendWithEnv(t, socketPath, env)
 	defer fe.Kill()
 
-	fe.WaitFor(t, "1:bash", 10*time.Second)
 	fe.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// ctrl+b $ (open-session in tmux) should open the connect overlay.

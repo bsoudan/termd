@@ -26,7 +26,6 @@ func TestNewSession(t *testing.T) {
 	pio, frontCleanup := startFrontend(t, socketPath)
 	defer frontCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	connectViaUI(t, pio, socketPath)

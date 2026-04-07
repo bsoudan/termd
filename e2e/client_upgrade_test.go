@@ -178,10 +178,16 @@ func TestUpgradeCheck(t *testing.T) {
 	t.Logf("upgrade check: server=%s client=%s", resp.ServerVersion, resp.ClientVersion)
 }
 
-// TestUpgradeCheckNoDir verifies that when no binaries dir is configured,
-// the server reports no upgrades available.
+// TestUpgradeCheckNoDir verifies that when the configured binaries
+// directory is empty, the server reports no upgrades available. We
+// must set an explicit empty dir because resolveBinariesDir falls
+// back to the running nxtermd's executable directory, which during
+// `make test` happens to be .local/bin and contains the upgrade
+// binaries.
 func TestUpgradeCheckNoDir(t *testing.T) {
-	socketPath, cleanup := startServer(t)
+	emptyDir := t.TempDir()
+	cfg := fmt.Sprintf("[upgrade]\nbinaries-dir = %q\n", emptyDir)
+	socketPath, cleanup := startServerCustom(t, cfg)
 	defer cleanup()
 
 	c := dialClient(t, socketPath)

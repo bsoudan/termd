@@ -16,7 +16,6 @@ func TestHelpOverlay(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
@@ -71,8 +70,7 @@ func TestLogViewerOverlay(t *testing.T) {
 	frontendCleanup := func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(500 * time.Millisecond)
 	pio.Write([]byte{0x02, 'l'})
 
@@ -130,7 +128,6 @@ func TestCommandPalette(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
@@ -155,7 +152,6 @@ func TestCommandPaletteEsc(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 

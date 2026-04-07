@@ -16,8 +16,7 @@ func TestInputRoundTrip(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// "aGVsbG8K" is base64 for "hello\n".
 	pio.Write([]byte("echo aGVsbG8K | base64 -d\r"))
@@ -53,9 +52,7 @@ func TestRawInputPassthrough(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "bash", 10*time.Second)
-
-	pio.WaitFor(t, "nxterm$",10*time.Second)
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.Write([]byte("sleep 999\r"))
 	pio.Write([]byte("\x03"))
 
@@ -159,11 +156,10 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 	pio.Write([]byte(fmt.Sprintf("%c[<0;5;3M", ansi.ESC)))
 	pio.WaitFor(t, "MOUSE press 0 5 2", 5*time.Second)
 
-	// Spawn tab 2 (switches to it automatically)
+	// Spawn tab 2 (switches to it automatically). Tab 1 becomes
+	// inactive so "1:bash" now appears in the tab bar.
 	pio.Write([]byte("\x02c"))
-	pio.WaitForScreen(t, func(lines []string) bool {
-		return len(lines) > 0 && strings.Contains(lines[0], "2:")
-	}, "tab 2 to appear", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
@@ -187,16 +183,15 @@ func TestInputIsolation(t *testing.T) {
 	pio, frontendCleanup := startFrontend(t, socketPath)
 	defer frontendCleanup()
 
-	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type a marker in tab 1 so we can identify its screen
 	pio.Write([]byte("echo TAB1_HERE\r"))
 	pio.WaitFor(t, "TAB1_HERE", 10*time.Second)
 
-	// Spawn second region
+	// Spawn second region. Tab 1 becomes inactive → "1:bash" appears.
 	pio.Write([]byte("\x02c"))
-	pio.WaitFor(t, "2:bash", 10*time.Second)
+	pio.WaitFor(t, "1:bash", 10*time.Second)
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 
 	// Type in tab 2
