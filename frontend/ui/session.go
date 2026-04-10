@@ -482,23 +482,31 @@ func (s *SessionLayer) View(width, height int, rs *RenderState) []*lipgloss.Laye
 func (s *SessionLayer) renderTabBar(width int) string {
 	var sb strings.Builder
 
-	sb.WriteString(statusFaint.Render("•"))
+	dot := func(bold bool) {
+		if bold {
+			sb.WriteString(statusActiveTab.Render("•"))
+		} else {
+			sb.WriteString(statusFaint.Render("•"))
+		}
+	}
+
+	dot(s.activeTab == 0)
 	used := 1
 
 	for i, t := range s.tabs {
 		var label string
 		if i == s.activeTab {
-			label = fmt.Sprintf(" %d ", i+1)
-			sb.WriteString(statusBold.Render(label))
+			label = fmt.Sprintf(" <%d> ", i+1)
+			sb.WriteString(statusActiveTab.Render(label))
 		} else {
 			name := t.regionName
 			if t.term != nil {
 				name = t.term.Title()
 			}
-			label = fmt.Sprintf(" %d:%s ", i+1, truncateTitle(name, 30))
+			label = fmt.Sprintf(" %d:%s ", i+1, truncateTitle(stripEmoji(name), 30))
 			sb.WriteString(statusFaint.Render(label))
 		}
-		sb.WriteString(statusFaint.Render("•"))
+		dot(i == s.activeTab || i+1 == s.activeTab)
 		used += len([]rune(label)) + 1
 	}
 
@@ -524,8 +532,40 @@ var (
 	statusFaint      = lipgloss.NewStyle().Faint(true)
 	statusBoldRed    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 	statusBold       = lipgloss.NewStyle().Bold(true)
+	statusActiveTab  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightCyan)
 	commandModeStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightCyan)
 )
+
+// stripEmoji removes runs of emoji codepoints (and any intervening
+// ZWJ or variation selectors). Terminals render emoji from a color
+// font and ignore SGR faint, so they stand out in dim tab labels.
+func stripEmoji(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	inRun := false
+	for _, r := range s {
+		if isEmojiBase(r) {
+			inRun = true
+			continue
+		}
+		if inRun && (r == 0x200D || r == 0xFE0F || r == 0xFE0E) {
+			continue
+		}
+		inRun = false
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+func isEmojiBase(r rune) bool {
+	switch {
+	case r >= 0x1F000 && r <= 0x1FAFF:
+		return true
+	case r >= 0x2600 && r <= 0x27BF:
+		return true
+	}
+	return false
+}
 
 // truncateTitle caps s at max runes, replacing the tail with an
 // ellipsis (…) when it would otherwise be longer. The returned string
