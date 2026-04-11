@@ -16,7 +16,6 @@ import (
 	"github.com/urfave/cli/v3"
 	"nxtermd/internal/config"
 	termlog "nxtermd/internal/frontendlog"
-	"nxtermd/internal/ui"
 	"nxtermd/internal/transport"
 )
 
@@ -126,7 +125,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("keybind config: %w", err)
 	}
-	registry := ui.NewRegistry(kbCfg.Style, kbCfg.Prefix, kbCfg.Overrides())
+	registry := NewRegistry(kbCfg.Style, kbCfg.Prefix, kbCfg.Overrides())
 
 	// Initialize trace flags from CLI + config + env (env is handled
 	// by urfave via the Sources on the flag definition).
@@ -187,7 +186,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 
 	disconnected := conn == nil
 
-	restore, err := ui.SetupRawTerminal()
+	restore, err := SetupRawTerminal()
 	if err != nil {
 		return fmt.Errorf("raw mode: %w", err)
 	}
@@ -195,14 +194,14 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 
 	pipeR, pipeW := io.Pipe()
 	sessionName := cmd.String("session")
-	server := ui.NewServer(64, "nxterm")
+	server := NewServer(64, "nxterm")
 
 	// p is declared here so the connectFn closure can capture it.
 	// It is assigned after NewModel below.
 	var p *tea.Program
 	// uiPrompter is similarly captured by reference — the closures
 	// only run after p (and thus the prompter) has been set.
-	var uiPrompter *ui.UIPrompter
+	var uiPrompter *UIPrompter
 	var wg sync.WaitGroup
 
 	// connectFn dials a server and starts a Server.Run goroutine.
@@ -217,7 +216,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		go func() {
 			c, err := transport.DialWithPrompter(ep, uiPrompter)
 			if err != nil {
-				p.Send(ui.ConnectErrorMsg{Endpoint: ep, Error: err.Error()})
+				p.Send(ConnectErrorMsg{Endpoint: ep, Error: err.Error()})
 				return
 			}
 			c = transport.WrapTracing(c, "client")
@@ -228,8 +227,8 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 				}
 				return transport.WrapTracing(rc, "client"), nil
 			}
-			newSrv := ui.NewServer(64, "nxterm")
-			p.Send(ui.ConnectedMsg{Endpoint: ep, Session: session, Server: newSrv})
+			newSrv := NewServer(64, "nxterm")
+			p.Send(ConnectedMsg{Endpoint: ep, Session: session, Server: newSrv})
 			newSrv.Run(c, df, p)
 		}()
 	}
@@ -239,20 +238,20 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		initEndpoint = ""
 	}
 
-	model := ui.NewModel(server, pipeW, registry, logRing, initEndpoint, version, changelog, sessionName, cfg.GetStatusBarMargin(), connectFn)
+	model := NewModel(server, pipeW, registry, logRing, initEndpoint, version, changelog, sessionName, cfg.GetStatusBarMargin(), connectFn)
 	p = tea.NewProgram(model,
 		tea.WithInput(pipeR),
 		tea.WithColorProfile(colorprofile.TrueColor),
 	)
-	uiPrompter = ui.NewUIPrompter(p)
+	uiPrompter = NewUIPrompter(p)
 
 	stdinDup, err := dupStdin()
 	if err != nil {
 		return fmt.Errorf("dup stdin: %w", err)
 	}
-	ui.PreUpgradeCleanup = func() { stdinDup.Close() }
+	PreUpgradeCleanup = func() { stdinDup.Close() }
 
-	logHandler.SetNotifyFn(func() { p.Send(ui.LogEntryMsg{}) })
+	logHandler.SetNotifyFn(func() { p.Send(LogEntryMsg{}) })
 
 	if !disconnected {
 		dialFn := func() (net.Conn, error) {
@@ -266,7 +265,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		go func() { defer wg.Done(); server.Run(conn, dialFn, p) }()
 	}
 	wg.Add(1)
-	go func() { defer wg.Done(); ui.InputLoop(stdinDup, p, pipeW) }()
+	go func() { defer wg.Done(); InputLoop(stdinDup, p, pipeW) }()
 
 	// Start mDNS browsing when the connect overlay is shown.
 	browseCtx, browseCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -296,7 +295,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("program error: %w", err)
 	}
 
-	if m, ok := finalModel.(ui.Model); ok && m.Detached {
+	if m, ok := finalModel.(Model); ok && m.Detached {
 		restore()
 		os.Stdout.WriteString("detached\n")
 	}

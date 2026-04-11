@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/grandcat/zeroconf"
-	"nxtermd/internal/ui"
 )
 
 const mdnsService = "_nxtermd._tcp"
@@ -43,7 +42,7 @@ func browseServers(ctx context.Context, p *tea.Program) {
 // parseDiscoveredEntry converts a zeroconf entry into a DiscoveredServerMsg.
 // It prefers TCP, then WS, then direct SSH from TXT records for the endpoint.
 // The s= TXT record (if present) is parsed into the Sessions field.
-func parseDiscoveredEntry(entry *zeroconf.ServiceEntry) ui.DiscoveredServerMsg {
+func parseDiscoveredEntry(entry *zeroconf.ServiceEntry) DiscoveredServerMsg {
 	name := entry.Instance
 
 	// Parse TXT records for transport-specific ports and session list.
@@ -102,5 +101,5 @@ func parseDiscoveredEntry(entry *zeroconf.ServiceEntry) ui.DiscoveredServerMsg {
 		endpoint = fmt.Sprintf("tcp:%s:%d", host, entry.Port)
 	}
 
-	return ui.DiscoveredServerMsg{Name: name, Endpoint: endpoint, Sessions: sessions}
+	return DiscoveredServerMsg{Name: name, Endpoint: endpoint, Sessions: sessions}
 }

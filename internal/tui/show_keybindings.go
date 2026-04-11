@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"nxtermd/internal/config"
-	"nxtermd/internal/ui"
 )
 
 // showKeybindings prints all resolved keybindings, with a source for
@@ -21,7 +20,7 @@ func showKeybindings() error {
 		}
 	}
 
-	registry := ui.NewRegistry(kbCfg.Style, kbCfg.Prefix, kbCfg.Overrides())
+	registry := NewRegistry(kbCfg.Style, kbCfg.Prefix, kbCfg.Overrides())
 
 	fmt.Printf("nxterm %s keybindings\n\n", version)
 
@@ -117,7 +116,7 @@ func showKeybindings() error {
 // keybindings.toml file or from the active style preset. The kb file
 // stores overrides under [tab]/[session]/[main] sections keyed by the
 // command invocation, so we look up "<category>.<invocation>".
-func bindingSource(b ui.BindingInfo, kbPath string, keyLocs map[string]config.Source, style string) string {
+func bindingSource(b BindingInfo, kbPath string, keyLocs map[string]config.Source, style string) string {
 	invocation := b.CommandName
 	if b.Args != "" {
 		invocation = b.CommandName + " " + b.Args
