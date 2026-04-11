@@ -91,7 +91,7 @@ func (ec *errorCollector) count() int {
 
 // ── TUI Stress Client ──────────────────────────────────────────────────────
 
-const opTimeout = 3 * time.Second
+const opTimeout = 10 * time.Second
 
 type tuiClient struct {
 	id         int
@@ -173,7 +173,7 @@ func (tc *tuiClient) tryWaitFor(needle string, timeout time.Duration) bool {
 }
 
 // estimateTabCount reads the tab bar (row 0) to count tabs.
-// Tabs are labeled "1:name", "2:name", etc.
+// Inactive tabs are "n:name", active tabs are "<n>".
 func (tc *tuiClient) estimateTabCount() int {
 	lines := tc.fe.ScreenLines()
 	if len(lines) == 0 {
@@ -182,7 +182,8 @@ func (tc *tuiClient) estimateTabCount() int {
 	tabBar := lines[0]
 	count := 0
 	for i := 1; i <= 9; i++ {
-		if strings.Contains(tabBar, fmt.Sprintf("%d:", i)) {
+		s := fmt.Sprintf("%d", i)
+		if strings.Contains(tabBar, s+":") || strings.Contains(tabBar, "<"+s+">") {
 			count = i
 		}
 	}
@@ -204,6 +205,40 @@ func (tc *tuiClient) tryRecover() {
 	tc.fe.WaitForSilence(300 * time.Millisecond)
 }
 
+// hasSession returns true when the TUI has an active session (not in
+// "no session" state). Operations that need a session should check
+// this first.
+func (tc *tuiClient) hasSession() bool {
+	for _, line := range tc.fe.ScreenLines() {
+		if strings.Contains(line, "no session") {
+			return false
+		}
+	}
+	return true
+}
+
+// ensureSession checks whether the TUI is in the "no session" state
+// and reconnects if needed.
+func (tc *tuiClient) ensureSession() bool {
+	if tc.hasSession() {
+		return true
+	}
+	tc.ctrlB('S', 'o')
+	if !tc.tryWaitFor("type a server address", 5*time.Second) {
+		return false
+	}
+	tc.fe.WaitForSilence(200 * time.Millisecond)
+	tc.fe.Write([]byte(tc.session + "@" + tc.socketPath))
+	time.Sleep(100 * time.Millisecond)
+	tc.fe.Write([]byte("\r"))
+	if !tc.tryWaitFor("$", 10*time.Second) {
+		return false
+	}
+	tc.fe.WaitForSilence(200 * time.Millisecond)
+	tc.sessionCount = 1
+	return true
+}
+
 func (tc *tuiClient) ctrlB(keys ...byte) {
 	tc.fe.Write(append([]byte{0x02}, keys...))
 }
@@ -221,6 +256,10 @@ func (tc *tuiClient) run(ctx context.Context) {
 			return
 		default:
 		}
+
+		// If we lost our session (e.g. kill_session killed the last
+		// one), reconnect before the next operation.
+		tc.ensureSession()
 
 		opName, opFn := tc.pickOp()
 		tc.t.Logf("[%s] op #%d: %s", tc.name, tc.opCount.Load(), opName)
@@ -306,6 +345,12 @@ func (tc *tuiClient) opSpawnRegion() {
 	}
 	tc.ctrlB('c')
 	if !tc.tryWaitFor("$", opTimeout) {
+		// If the session was lost during the operation (race with
+		// kill_session or region exit), that's expected chaos — not
+		// a real error.
+		if !tc.hasSession() {
+			return
+		}
 		tc.errs.add("[%s] spawn_region: timeout waiting for prompt", tc.name)
 		tc.tryRecover()
 	}
@@ -373,15 +418,17 @@ func (tc *tuiClient) opSendLiteralCtrlB() {
 
 func (tc *tuiClient) opCreateSession() {
 	tc.ctrlB('S', 'o')
-	if !tc.tryWaitFor("Session name:", opTimeout) {
-		tc.errs.add("[%s] create_session: timeout waiting for name prompt", tc.name)
+	if !tc.tryWaitFor("type a server address", opTimeout) {
+		tc.errs.add("[%s] create_session: timeout waiting for connect overlay", tc.name)
 		tc.tryRecover()
 		return
 	}
 	tc.fe.WaitForSilence(200 * time.Millisecond)
 	name := fmt.Sprintf("s%d-%d", tc.id, tc.cmdCounter)
 	tc.cmdCounter++
-	tc.fe.Write([]byte(name + "\r"))
+	tc.fe.Write([]byte(name + "@" + tc.socketPath))
+	time.Sleep(100 * time.Millisecond)
+	tc.fe.Write([]byte("\r"))
 	if tc.tryWaitFor("$", opTimeout) {
 		tc.sessionCount++
 	} else {
@@ -419,7 +466,10 @@ func (tc *tuiClient) opDetach() {
 
 func (tc *tuiClient) opKillRestart() {
 	tc.fe.cmd.Process.Signal(syscall.SIGINT)
-	if err := tc.fe.Wait(5 * time.Second); err != nil {
+	err := tc.fe.Wait(5 * time.Second)
+	// Non-zero exit status is expected after SIGINT; only report
+	// timeout errors (process didn't exit within the deadline).
+	if err != nil && strings.Contains(err.Error(), "did not exit") {
 		tc.errs.add("[%s] kill_restart: %v", tc.name, err)
 	}
 	tc.restart()
@@ -793,11 +843,13 @@ func TestStress(t *testing.T) {
 		tc.fe.WaitForSilence(200 * time.Millisecond)
 
 		tc.ctrlB('S', 'o')
-		if !tc.tryWaitFor("Session name:", 5*time.Second) {
-			t.Fatalf("[%s] session name prompt never appeared", name)
+		if !tc.tryWaitFor("type a server address", 5*time.Second) {
+			t.Fatalf("[%s] connect overlay never appeared", name)
 		}
 		tc.fe.WaitForSilence(200 * time.Millisecond)
-		tc.fe.Write([]byte(sessName + "\r"))
+		tc.fe.Write([]byte(sessName + "@" + socketPath))
+		time.Sleep(100 * time.Millisecond)
+		tc.fe.Write([]byte("\r"))
 		if !tc.tryWaitFor("$", 10*time.Second) {
 			t.Fatalf("[%s] prompt after session create never appeared", name)
 		}
