@@ -259,3 +259,124 @@ func TestScrollbackScrollWheel(t *testing.T) {
 		return false
 	}, "prompt visible after scroll down exit", 5*time.Second)
 }
+
+// TestScrollbackPageUpAltScreen verifies that pgup/pgdown are forwarded to
+// the terminal when the child is in alt-screen mode (less, vim, etc.)
+// and enter scrollback only when back in normal screen mode.
+func TestScrollbackPageUpAltScreen(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Generate scrollback so pgup would normally activate scrollback.
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Enter less (alt-screen program).
+	pio.Write([]byte("seq 1 100 | less\r"))
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines[1:] {
+			if strings.TrimSpace(line) == "1" {
+				return true
+			}
+		}
+		return false
+	}, "less showing line 1", 5*time.Second)
+
+	// Send PageUp — should be forwarded to less, NOT enter scrollback.
+	pio.Write([]byte("\x1b[5~"))
+	time.Sleep(300 * time.Millisecond)
+
+	// Scrollback should NOT be active.
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback not activated in alt-screen", 2*time.Second)
+
+	// Quit less.
+	pio.Write([]byte("q"))
+	pio.WaitFor(t, "nxterm$", 5*time.Second)
+
+	// Now pgup SHOULD enter scrollback (no longer in alt-screen).
+	pio.Write([]byte("\x1b[5~"))
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback activated after leaving alt-screen", 5*time.Second)
+
+	pio.Write([]byte("q"))
+}
+
+// TestScrollbackWheelAltScreen verifies that mouse wheel events are
+// forwarded to the child when it has requested mouse tracking, rather
+// than entering scrollback.
+func TestScrollbackWheelAltScreen(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Generate scrollback.
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Run mousehelper (enables mouse tracking).
+	pio.Write([]byte("mousehelper\r"))
+	time.Sleep(500 * time.Millisecond)
+
+	// Scroll wheel up — should be forwarded to mousehelper, not enter scrollback.
+	pio.Write([]byte(fmt.Sprintf("%c[<64;5;5M", ansi.ESC)))
+	pio.WaitForScreen(t, func(lines []string) bool {
+		for _, line := range lines {
+			if strings.Contains(line, "MOUSE wheelup") {
+				return true
+			}
+		}
+		return false
+	}, "wheel forwarded to mousehelper", 5*time.Second)
+
+	// Scrollback should NOT be active.
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback not activated with mouse tracking", 2*time.Second)
+
+	// Quit mousehelper.
+	pio.Write([]byte("q"))
+	pio.WaitFor(t, "nxterm$", 5*time.Second)
+}
+
+// TestScrollbackCommandPalette verifies that the scroll-up command works
+// from the command palette regardless of screen mode (the condition is
+// on the key binding, not the command).
+func TestScrollbackCommandPalette(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	pio, frontendCleanup := startFrontend(t, socketPath)
+	defer frontendCleanup()
+
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Generate scrollback.
+	pio.Write([]byte("seq 1 200\r"))
+	pio.WaitFor(t, "nxterm$", 10*time.Second)
+
+	// Open command palette (ctrl+b :).
+	pio.Write([]byte{0x02, ':'})
+	pio.WaitFor(t, "scroll-up", 5*time.Second)
+
+	// Select scroll-up.
+	pio.Write([]byte("scroll-up\r"))
+
+	// Scrollback should be active.
+	pio.WaitForScreen(t, func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback activated via command palette", 5*time.Second)
+
+	pio.Write([]byte("q"))
+}

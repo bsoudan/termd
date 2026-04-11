@@ -433,8 +433,33 @@ func (s *SessionLayer) handleCmd(msg SessionCmd) (tea.Msg, tea.Cmd, bool) {
 			}
 		}
 		return nil, nil, true
+	case "scroll-up":
+		if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
+			halfPage := t.contentHeight() / 2
+			if halfPage < 1 {
+				halfPage = 1
+			}
+			t.EnterScrollback(halfPage)
+		}
+		return nil, nil, true
+	case "scroll-down":
+		if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
+			t.EnterScrollback(0)
+		}
+		return nil, nil, true
 	default:
 		return nil, nil, true
+	}
+}
+
+// checkBindingCondition evaluates a binding condition against current state.
+func (s *SessionLayer) checkBindingCondition(when string) bool {
+	switch when {
+	case "normal-screen":
+		t := s.activeTerm()
+		return t != nil && !t.IsAltScreen()
+	default:
+		return true
 	}
 }
 

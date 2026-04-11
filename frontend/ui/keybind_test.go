@@ -366,8 +366,8 @@ func TestRegistryTmux(t *testing.T) {
 	if b, ok := lookupChord(r, "&"); !ok || b.command.Name != "close-tab" {
 		t.Errorf("tmux: chord '&' should be close-tab, got %v", b)
 	}
-	if len(r.always) != 0 {
-		t.Errorf("tmux: %d always bindings, want 0", len(r.always))
+	if len(r.always) != 2 { // pgup + pgdown
+		t.Errorf("tmux: %d always bindings, want 2", len(r.always))
 	}
 	if b, ok := lookupChord(r, ")"); !ok || b.command.Name != "next-session" {
 		t.Errorf("tmux: chord ')' should be next-session, got %v", b)

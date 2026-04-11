@@ -300,6 +300,9 @@ func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 		matched := false
 		for _, ab := range s.registry.always {
 			if bytes.Equal(seq, ab.raw) {
+				if ab.when != "" && !s.checkBindingCondition(ab.when) {
+					break // condition not met — let bytes pass through to server
+				}
 				if len(rest) > 0 {
 					s.sendRawToServer(rest)
 					rest = nil
@@ -324,11 +327,32 @@ func (s *SessionLayer) handleRawInput(chunk []byte) (tea.Msg, tea.Cmd) {
 	for _, mouse := range mice {
 		if t != nil && t.ChildWantsMouse() {
 			t.ForwardMouse(mouse)
-		} else {
-			cmd := s.handleMouse(mouse)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+			continue
+		}
+		if wheel, ok := mouse.(tea.MouseWheelMsg); ok {
+			// If scrollback already active, forward wheel directly to terminal layer.
+			if t != nil && t.ScrollbackActive() {
+				t.Update(mouse)
+				continue
 			}
+			// Look up virtual binding for this wheel direction.
+			// Execute synchronously so scrollback state updates immediately
+			// for subsequent wheel events in the same batch.
+			vk := "wheeldown"
+			if wheel.Button == tea.MouseWheelUp {
+				vk = "wheelup"
+			}
+			if vb, ok := s.registry.LookupVirtual(vk); ok {
+				if vb.when == "" || s.checkBindingCondition(vb.when) {
+					s.handleCmd(SessionCmd{Name: vb.command.Name, Args: vb.args})
+				}
+			}
+			continue
+		}
+		// Non-wheel mouse events (clicks, motion).
+		cmd := s.handleMouse(mouse)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 	return nil, tea.Batch(cmds...)

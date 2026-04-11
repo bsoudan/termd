@@ -85,6 +85,11 @@ type Screen struct {
 	altSavedCursor *Cursor
 }
 
+// IsAltScreenActive reports whether the alternate screen buffer is active.
+func (s *Screen) IsAltScreenActive() bool {
+	return s.altActive
+}
+
 // NewScreen creates a Screen with the specified dimensions.
 func NewScreen(cols, lines int) *Screen {
 	s := &Screen{}

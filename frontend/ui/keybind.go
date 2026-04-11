@@ -39,6 +39,18 @@ type alwaysBinding struct {
 	command *Command
 	args    string
 	key     string
+	when    string // "" = always active, "normal-screen" = only outside alt-screen
+}
+
+// virtualBinding is a logical key name (e.g. "wheelup") that triggers a
+// command. Virtual keys have no raw byte sequence; they are dispatched
+// by application code (e.g. the mouse handler) that looks up the binding
+// by name.
+type virtualBinding struct {
+	command *Command
+	args    string
+	key     string
+	when    string
 }
 
 // chordNode is a trie node for matching multi-key chord sequences.
@@ -96,12 +108,19 @@ type Registry struct {
 	byName       map[string]*Command
 	chordRoot    chordNode
 	always       []alwaysBinding
+	virtual      map[string]*virtualBinding // keyed by virtual key name ("wheelup", etc.)
 	displayOrder []displayEntry
 	bindings     []BindingInfo
 
 	PrefixKey byte
 	PrefixStr string
 	Style     string // resolved style preset name (e.g., "native")
+}
+
+// LookupVirtual returns the virtual binding for the given key name, if any.
+func (r *Registry) LookupVirtual(name string) (*virtualBinding, bool) {
+	vb, ok := r.virtual[name]
+	return vb, ok
 }
 
 // BindingInfo describes a resolved keybinding for introspection
@@ -279,6 +298,8 @@ func allCommands() []*Command {
 		{Name: "next-tab", Category: "tab", Layer: "session", Description: "next tab"},
 		{Name: "prev-tab", Category: "tab", Layer: "session", Description: "previous tab"},
 		{Name: "switch-tab", Category: "tab", Layer: "session", Description: "switch to tab N"},
+		{Name: "scroll-up", Category: "tab", Layer: "session", Description: "enter scrollback / scroll up"},
+		{Name: "scroll-down", Category: "tab", Layer: "session", Description: "enter scrollback at bottom"},
 	}
 }
 
@@ -345,6 +366,10 @@ func nativePreset() stylePreset {
 			{"[", "enter-scrollback", ""},
 			{"r", "refresh-screen", ""},
 			{"u", "upgrade", ""},
+			{"pgup?normal-screen", "scroll-up", ""},
+			{"pgdown?normal-screen", "scroll-down", ""},
+			{"wheelup?normal-screen", "scroll-up", ""},
+			{"wheeldown?normal-screen", "scroll-down", ""},
 		},
 	}
 }
@@ -377,6 +402,10 @@ func tmuxPreset() stylePreset {
 			{"[", "enter-scrollback", ""},
 			{"l", "show-log", ""},
 			{"r", "refresh-screen", ""},
+			{"pgup?normal-screen", "scroll-up", ""},
+			{"pgdown?normal-screen", "scroll-down", ""},
+			{"wheelup?normal-screen", "scroll-up", ""},
+			{"wheeldown?normal-screen", "scroll-down", ""},
 		},
 	}
 }
@@ -406,6 +435,10 @@ func screenPreset() stylePreset {
 			{"?", "show-help", ""},
 			{"[", "enter-scrollback", ""},
 			{"l", "show-log", ""},
+			{"pgup?normal-screen", "scroll-up", ""},
+			{"pgdown?normal-screen", "scroll-down", ""},
+			{"wheelup?normal-screen", "scroll-up", ""},
+			{"wheeldown?normal-screen", "scroll-down", ""},
 		},
 	}
 }
@@ -437,6 +470,10 @@ func zellijPreset() stylePreset {
 			{"s", "show-status", ""},
 			{"l", "show-log", ""},
 			{"r", "refresh-screen", ""},
+			{"pgup?normal-screen", "scroll-up", ""},
+			{"pgdown?normal-screen", "scroll-down", ""},
+			{"wheelup?normal-screen", "scroll-up", ""},
+			{"wheeldown?normal-screen", "scroll-down", ""},
 		},
 	}
 }
@@ -467,6 +504,31 @@ var fnKeyCodes = map[string]struct {
 	"f9": {"20", '~'}, "f10": {"21", '~'}, "f11": {"23", '~'}, "f12": {"24", '~'},
 }
 
+// Named keys with known raw byte sequences (always-active bindings).
+var namedKeys = map[string][]byte{
+	"pgup":   {0x1b, '[', '5', '~'},
+	"pgdown": {0x1b, '[', '6', '~'},
+}
+
+// Virtual keys are logical names dispatched by application code (e.g. the
+// mouse handler), not matched against raw byte sequences.
+var virtualKeys = map[string]bool{
+	"wheelup":   true,
+	"wheeldown": true,
+}
+
+// parseKeyCondition splits a key spec like "pgup?normal-screen" into
+// the key name and the condition. Returns ("pgup", "normal-screen").
+// If no condition is present, when is "". The '?' must have content
+// on both sides to be treated as a separator (so "?" alone is the
+// literal key, not a condition).
+func parseKeyCondition(spec string) (key, when string) {
+	if i := strings.IndexByte(spec, '?'); i > 0 && i < len(spec)-1 {
+		return spec[:i], spec[i+1:]
+	}
+	return spec, ""
+}
+
 // Modifier codes for xterm-style CSI sequences.
 const (
 	modAlt  = "3" // xterm modifier for Alt
@@ -482,6 +544,9 @@ const (
 //	ctrl+,     → CSI 44;5u (kitty keyboard protocol)
 //	ctrl+.     → CSI 46;5u (kitty keyboard protocol)
 func keyToRawBytes(key string) []byte {
+	if raw, ok := namedKeys[key]; ok {
+		return raw
+	}
 	if strings.HasPrefix(key, "alt+") {
 		rest := key[len("alt+"):]
 		// alt+fN → xterm function key with alt modifier
@@ -533,6 +598,9 @@ func prefixKeyToByte(key string) byte {
 // isAlwaysKey returns true if the key spec is an always-active binding
 // (intercepted from raw bytes, no prefix key needed).
 func isAlwaysKey(key string) bool {
+	if _, ok := namedKeys[key]; ok {
+		return true
+	}
 	if strings.HasPrefix(key, "alt+") {
 		return true
 	}
@@ -622,10 +690,12 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 
 	var chordRoot chordNode
 	var always []alwaysBinding
+	var virtual map[string]*virtualBinding
 
 	type catBinding struct {
-		b   binding
-		cmd *Command
+		b       binding
+		cmd     *Command
+		keyBase string // key without ?condition
 	}
 	catBindings := make(map[string][]catBinding)
 	for _, b := range bindings {
@@ -633,18 +703,24 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 		if cmd == nil {
 			continue
 		}
-		if isAlwaysKey(b.key) {
-			raw := keyToRawBytes(b.key)
+		key, when := parseKeyCondition(b.key)
+		if virtualKeys[key] {
+			if virtual == nil {
+				virtual = make(map[string]*virtualBinding)
+			}
+			virtual[key] = &virtualBinding{command: cmd, args: b.args, key: key, when: when}
+		} else if isAlwaysKey(key) {
+			raw := keyToRawBytes(key)
 			if raw == nil {
-				slog.Warn("keybind: cannot parse always-key", "key", b.key)
+				slog.Warn("keybind: cannot parse always-key", "key", key)
 				continue
 			}
-			always = append(always, alwaysBinding{raw: raw, command: cmd, args: b.args, key: b.key})
+			always = append(always, alwaysBinding{raw: raw, command: cmd, args: b.args, key: key, when: when})
 		} else {
-			keys := strings.Fields(b.key)
-			chordRoot.insert(keys, resolvedBinding{command: cmd, args: b.args, key: b.key})
+			keys := strings.Fields(key)
+			chordRoot.insert(keys, resolvedBinding{command: cmd, args: b.args, key: key})
 		}
-		catBindings[cmd.Category] = append(catBindings[cmd.Category], catBinding{b: b, cmd: cmd})
+		catBindings[cmd.Category] = append(catBindings[cmd.Category], catBinding{b: b, cmd: cmd, keyBase: key})
 	}
 
 	var display []displayEntry
@@ -660,27 +736,29 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 			if cb.b.args != "" {
 				desc += " " + cb.b.args
 			}
-			keyDisp := cb.b.key
-			if !isAlwaysKey(cb.b.key) {
-				keyDisp = prefixStr + ", " + strings.ReplaceAll(cb.b.key, " ", ", ")
+			isVirtual := virtualKeys[cb.keyBase]
+			isAlways := isAlwaysKey(cb.keyBase)
+			keyDisp := cb.keyBase
+			if !isAlways && !isVirtual {
+				keyDisp = prefixStr + ", " + strings.ReplaceAll(cb.keyBase, " ", ", ")
 			}
 			de := displayEntry{
 				keyDisplay:  keyDisp,
 				description: desc,
 			}
-			if !isAlwaysKey(cb.b.key) {
+			if !isAlways && !isVirtual {
 				de.cmdFn = func() tea.Cmd { return cmdForBinding(cb.cmd, cb.b.args) }
-				de.chordKey = cb.b.key
+				de.chordKey = cb.keyBase
 			}
 			display = append(display, de)
 			bindingInfos = append(bindingInfos, BindingInfo{
 				Category:    cat,
-				Key:         cb.b.key,
+				Key:         cb.keyBase,
 				KeyDisplay:  keyDisp,
 				CommandName: cb.cmd.Name,
 				Args:        cb.b.args,
 				Description: cb.cmd.Description,
-				Always:      isAlwaysKey(cb.b.key),
+				Always:      isAlways || isVirtual,
 			})
 		}
 	}
@@ -690,6 +768,7 @@ func NewRegistry(style, prefix string, overrides map[string][]string) *Registry 
 		byName:       byName,
 		chordRoot:    chordRoot,
 		always:       always,
+		virtual:      virtual,
 		displayOrder: display,
 		bindings:     bindingInfos,
 		PrefixKey:    prefixByte,

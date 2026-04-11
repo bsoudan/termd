@@ -337,6 +337,14 @@ func (t *TerminalLayer) ForwardMouse(msg tea.MouseMsg) {
 	}
 }
 
+// IsAltScreen reports whether the child's alternate screen buffer is active.
+func (t *TerminalLayer) IsAltScreen() bool {
+	if t.screen == nil {
+		return false
+	}
+	return t.screen.IsAltScreenActive()
+}
+
 // ChildWantsMouse checks if the child application has mouse mode enabled.
 func (t *TerminalLayer) ChildWantsMouse() bool {
 	if t.screen == nil {
