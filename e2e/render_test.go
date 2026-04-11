@@ -619,11 +619,11 @@ func TestActiveTabBold(t *testing.T) {
 	}
 	tabRow := cells[0]
 
-	// Locate each tab number on row 0. After 98da964 the active tab
-	// renders as " <n> " (digit followed by space) and the inactive
-	// tab as " <n>:<name> " (digit followed by colon).
+	// Locate each tab number on row 0. The active tab renders as
+	// " <n> " (digit followed by ">") and the inactive tab as
+	// " n:<name> " (digit followed by ":").
 	tab1Col := findDigitFollowedBy(tabRow, "1", ":") // inactive
-	tab2Col := findDigitFollowedBy(tabRow, "2", " ") // active
+	tab2Col := findDigitFollowedBy(tabRow, "2", ">") // active
 	if tab1Col < 0 || tab2Col < 0 {
 		t.Fatalf("could not find tab labels on row 0: tab1=%d tab2=%d", tab1Col, tab2Col)
 	}
@@ -634,14 +634,14 @@ func TestActiveTabBold(t *testing.T) {
 		t.Errorf("active tab '2' at col %d should be bold", tab2Col)
 	}
 
-	// Switch to tab 1: tab 1 becomes active (" 1 "), tab 2 inactive (" 2:bash ").
+	// Switch to tab 1: tab 1 becomes active (" <1> "), tab 2 inactive (" 2:bash ").
 	pio.Write([]byte("\x021"))
 	pio.WaitFor(t, "nxterm$", 10*time.Second)
 	pio.WaitForSilence(200 * time.Millisecond)
 
 	cells = pio.ScreenCells()
 	tabRow = cells[0]
-	tab1Col = findDigitFollowedBy(tabRow, "1", " ") // active
+	tab1Col = findDigitFollowedBy(tabRow, "1", ">") // active
 	tab2Col = findDigitFollowedBy(tabRow, "2", ":") // inactive
 	if tab1Col < 0 || tab2Col < 0 {
 		t.Fatalf("could not find tab labels after switch: tab1=%d tab2=%d", tab1Col, tab2Col)
