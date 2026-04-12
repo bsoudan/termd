@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -59,9 +60,12 @@ func (s *ScrollbackLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 // prepends any lines the client is missing to the local history.
 func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	if msg.Error {
+		slog.Debug("scrollback sync error", "message", msg.Message)
 		s.synced = true
 		return
 	}
+
+	slog.Debug("scrollback sync chunk", "lines", len(msg.Lines), "total", msg.Total, "done", msg.Done, "buf_so_far", len(s.syncBuf))
 
 	// Convert protocol cells to te.Cell and accumulate.
 	for _, row := range msg.Lines {
@@ -93,6 +97,7 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	localCount := s.term.hscreen.Scrollback()
 	serverCount := len(s.syncBuf)
 	gap := serverCount - localCount
+	slog.Debug("scrollback sync complete", "server_lines", serverCount, "local_lines", localCount, "gap", gap)
 	if gap > 0 {
 		s.term.hscreen.PrependHistory(s.syncBuf[:gap])
 	}

@@ -436,6 +436,69 @@ func TestScrollbackAfterReconnect(t *testing.T) {
 	nxt.WaitFor("nxterm$", 5*time.Second)
 }
 
+// TestScrollbackAfterReconnectLarge verifies scrollback sync works with
+// a large scrollback that requires multiple server chunks (>1000 lines).
+func TestScrollbackAfterReconnectLarge(t *testing.T) {
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	nxt := startFrontend(t, socketPath)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Generate 2000+ lines so the server needs multiple chunks (1000 each).
+	nxt.Write([]byte("seq 1 2000\r"))
+	nxt.WaitFor("nxterm$", 30*time.Second)
+	nxt.WaitForSilence(500 * time.Millisecond)
+
+	// Kill the client connection to force a reconnect.
+	clientID := findFrontendClientID(t, socketPath)
+	runNxtermctl(t, socketPath, "client", "kill", clientID)
+
+	nxt.WaitFor("reconnecting", 10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Enter scrollback.
+	nxt.Write([]byte{0x02, '['})
+	nxt.WaitForScreen(func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback active after reconnect", 5*time.Second)
+
+	// Wait for sync to complete — the status bar total should be > 0.
+	nxt.WaitForScreen(func(lines []string) bool {
+		// Status shows "scrollback [N/M]" — M should be > 0.
+		status := lines[0]
+		if !strings.Contains(status, "scrollback") {
+			return false
+		}
+		// Check it's not [0/0] or [...]
+		return !strings.Contains(status, "/0]") && !strings.Contains(status, "[...]")
+	}, "scrollback sync complete (non-zero total)", 10*time.Second)
+
+	screen := nxt.ScreenLines()
+	t.Logf("scrollback after sync: %s", strings.TrimSpace(screen[0]))
+
+	// Scroll to the very top. Use 'g' (home key) for instant jump.
+	nxt.Write([]byte("g"))
+	time.Sleep(200 * time.Millisecond)
+
+	// Early numbers (single digits) should be visible near the top.
+	nxt.WaitForScreen(func(lines []string) bool {
+		for _, line := range lines[1:] {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && (fields[0] == "5" || fields[0] == "6" || fields[0] == "7") {
+				return true
+			}
+		}
+		return false
+	}, "early numbers (5/6/7) visible at top after large reconnect sync", 5*time.Second)
+
+	nxt.Write([]byte("q"))
+	nxt.WaitFor("nxterm$", 5*time.Second)
+}
+
 // TestScrollbackPageUpAltScreen verifies that pgup/pgdown are forwarded to
 // the terminal when the child is in alt-screen mode (less, vim, etc.)
 // and enter scrollback only when back in normal screen mode.

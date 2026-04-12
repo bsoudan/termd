@@ -1,4 +1,5 @@
-0.14.0-102-g63a7f5e*:  M e2e/scrollback_test.go  M internal/tui/changelog.txt  M internal/tui/scrollback.go  M internal/tui/terminal.go  M pkg/te/history_screen.go ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-103-gb5a5464*:  M internal/tui/changelog.txt  M internal/tui/scrollback.go ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-103-gb5a5464: fix: sync server scrollback on entering scrollback mode
 0.14.0-102-g63a7f5e: fix: use client-side HistoryScreen for scrollback
 0.14.0-101-ge1d2edd: fix: live upgrade rollback crash on inherited regions
 0.14.0-100-g74f89a7: clean up frontendlog: rename to nxlog, relocate pieces
@@ -98,4 +99,3 @@
 0.14.0-6-gb4e1b61: refactor: consolidate command messages into SessionCmd and MainCmd
 0.14.0-5-g93ea2ea: command registry with configurable keybindings and style presets
 0.14.0-4-gf644e9d: add alt+, and alt+. shortcuts for prev/next tab navigation
-0.14.0-3-g025ae2c: stress: add detach/kill/pause ops and test-stress-long target
