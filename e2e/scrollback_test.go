@@ -92,7 +92,6 @@ func TestScrollbackNavigation(t *testing.T) {
 	// Page up several times to reach early numbers
 	for range 20 {
 		nxt.Write([]byte{0x15}) // ctrl+u = page up
-		time.Sleep(30 * time.Millisecond)
 	}
 
 	// Verify early numbers appear on screen.
@@ -147,10 +146,13 @@ func TestScrollbackPageUpDown(t *testing.T) {
 		return strings.Contains(lines[0], "scrollback")
 	}, "scrollback activated by PageUp", 5*time.Second)
 
-	// Send more PageUp keys to scroll further back
+	// Send more PageUp keys to scroll further back.
+	// Small delay so InputParser emits them as separate messages
+	// rather than one large chunk (which costs one render cycle
+	// per sequence in handleFocusInput).
 	for range 20 {
 		nxt.Write([]byte("\x1b[5~"))
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	// Verify early numbers appear on screen.
@@ -217,10 +219,11 @@ func TestScrollbackScrollWheel(t *testing.T) {
 			!strings.Contains(lines[0], "/0]")
 	}, "scrollback data loaded", 5*time.Second)
 
-	// Send more scroll wheel up events to scroll to the top
+	// Scroll wheel up to reach early numbers. Each event scrolls ~3 lines;
+	// ~200 lines of scrollback / 3 ≈ 67 events needed.
+	wheelUp := fmt.Sprintf("%c[<64;5;5M", ansi.ESC)
 	for range 70 {
-		nxt.Write([]byte(fmt.Sprintf("%c[<64;5;5M", ansi.ESC)))
-		time.Sleep(20 * time.Millisecond)
+		nxt.Write([]byte(wheelUp))
 	}
 
 	// Verify early numbers appear on screen.
@@ -236,9 +239,9 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	}, "early numbers visible via scroll wheel", 5*time.Second)
 
 	// Scroll wheel down past offset 0 to auto-exit scrollback
+	wheelDown := fmt.Sprintf("%c[<65;5;5M", ansi.ESC)
 	for range 80 {
-		nxt.Write([]byte(fmt.Sprintf("%c[<65;5;5M", ansi.ESC)))
-		time.Sleep(20 * time.Millisecond)
+		nxt.Write([]byte(wheelDown))
 	}
 
 	// Verify scrollback exited and prompt is visible
@@ -275,7 +278,7 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 	nxt.WaitForSilence(200 * time.Millisecond)
 
 	// Start a delayed background job.
-	nxt.Write([]byte("(sleep 3; for i in $(seq 1 50); do echo \"SECOND_$i\"; done) &\r"))
+	nxt.Write([]byte("(sleep 1; for i in $(seq 1 50); do echo \"SECOND_$i\"; done) &\r"))
 	nxt.WaitFor("nxterm$", 5*time.Second)
 
 	// Enter scrollback.
@@ -284,14 +287,11 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 		return strings.Contains(lines[0], "scrollback")
 	}, "scrollback active", 5*time.Second)
 
-	// Record the initial scrollback total from the status bar.
-	// Note: the HintLayer may overlay the status bar text with
-	// "ctrl+b, ? for help", but scrollback is still active.
 	screen := nxt.ScreenLines()
 	t.Logf("initial: %s", strings.TrimSpace(screen[0]))
 
-	// Wait for the SECOND_ output to arrive on the server.
-	time.Sleep(5 * time.Second)
+	// Wait for the SECOND_ output to arrive (background job).
+	nxt.WaitFor("SECOND_50", 10*time.Second)
 
 	// While still in scrollback, go to the bottom (offset=0).
 	// In a correct implementation, SECOND_ lines should be visible.
@@ -409,7 +409,6 @@ func TestScrollbackAfterReconnect(t *testing.T) {
 
 	for range 15 {
 		nxt.Write([]byte{0x15}) // ctrl+u = page up
-		time.Sleep(30 * time.Millisecond)
 	}
 
 	// The pre-disconnect early lines should be visible. Use BEFORE_5
@@ -521,7 +520,6 @@ func TestScrollbackPageUpAltScreen(t *testing.T) {
 
 	// Send PageUp — should be forwarded to less, NOT enter scrollback.
 	nxt.Write([]byte("\x1b[5~"))
-	time.Sleep(300 * time.Millisecond)
 
 	// Scrollback should NOT be active.
 	nxt.WaitForScreen(func(lines []string) bool {
@@ -688,7 +686,6 @@ func TestScrollbackDesync(t *testing.T) {
 	// of scrollback (they're the most recent output).
 	for range 5 {
 		nxt.Write([]byte{0x15}) // ctrl+u
-		time.Sleep(30 * time.Millisecond)
 	}
 
 	// LATE_ lines should be in the scrollback.
@@ -704,7 +701,6 @@ func TestScrollbackDesync(t *testing.T) {
 	// Scroll all the way to the top to find LINE_1.
 	for range 30 {
 		nxt.Write([]byte{0x15})
-		time.Sleep(30 * time.Millisecond)
 	}
 
 	// LINE_1 should be at the top.

@@ -772,9 +772,16 @@ func TestScreenSyncAfterTop(t *testing.T) {
 
 	nxt.WaitFor("nxterm$",10*time.Second)
 
-	// Run top briefly then quit
+	// Run top, wait for it to render, then quit
 	nxt.Write([]byte("top\r"))
-	time.Sleep(2 * time.Second)
+	nxt.WaitForScreen(func(lines []string) bool {
+		for _, line := range lines {
+			if strings.Contains(line, "load average") {
+				return true
+			}
+		}
+		return false
+	}, "top showing load average", 5*time.Second)
 	nxt.Write([]byte("q"))
 
 	// Wait for prompt to reappear
