@@ -66,12 +66,20 @@ func (c *Client) writeLoop() {
 	defer c.conn.Close()
 
 	var writtenByteIndex uint64
+	writeFailed := false
 
 	for {
 		select {
 		case msg, ok := <-c.writeCh:
 			if !ok {
 				return
+			}
+
+			// After the first write error, skip all writes but keep
+			// draining the channel so readLoop can finish processing
+			// buffered input without senders blocking.
+			if writeFailed {
+				continue
 			}
 
 			if msg.byteIndex > writtenByteIndex {
@@ -87,14 +95,8 @@ func (c *Client) writeLoop() {
 			_, err := c.conn.Write(msg.data)
 			c.conn.SetWriteDeadline(time.Time{})
 			if err != nil {
-				slog.Debug("client write error, draining", "client_id", c.id, "err", err)
-				// Don't close the connection yet — let readLoop finish
-				// processing any buffered input. This prevents
-				// fire-and-forget messages (e.g. input from nxtermctl
-				// region send) from being lost when the client closes
-				// its end before the server writes its initial response.
-				<-c.closeCh
-				return
+				slog.Debug("client write error", "client_id", c.id, "err", err)
+				writeFailed = true
 			}
 			writtenByteIndex = msg.byteIndex + uint64(len(msg.data))
 

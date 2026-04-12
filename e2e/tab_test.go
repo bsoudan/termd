@@ -54,16 +54,20 @@ func TestSwitchTabs(t *testing.T) {
 	// Switch to tab 1
 	nxt.Write([]byte("\x021"))
 
-	// Tab 1 content should be restored (subscribe sends screen snapshot)
-	nxt.WaitFor("TAB1_MARKER", 10*time.Second)
-
-	// TAB2_MARKER should NOT be on screen
-	lines := nxt.ScreenLines()
-	for _, line := range lines {
-		if strings.Contains(line, "TAB2_MARKER") {
-			t.Fatalf("TAB2_MARKER should not be visible on tab 1")
+	// Tab 1 content should be restored with TAB1_MARKER visible
+	// and TAB2_MARKER NOT visible (they're in separate sessions).
+	nxt.WaitForScreen(func(lines []string) bool {
+		hasTAB1 := false
+		for _, line := range lines {
+			if strings.Contains(line, "TAB2_MARKER") {
+				return false
+			}
+			if strings.Contains(line, "TAB1_MARKER") {
+				hasTAB1 = true
+			}
 		}
-	}
+		return hasTAB1
+	}, "tab 1 with TAB1_MARKER and without TAB2_MARKER", 10*time.Second)
 }
 
 func TestRegionDestroyedRemovesTab(t *testing.T) {

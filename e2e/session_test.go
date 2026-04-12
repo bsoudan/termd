@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -205,7 +204,7 @@ func TestSessionCleanup(t *testing.T) {
 		if !strings.Contains(out, "temp") {
 			return
 		}
-		runtime.Gosched()
+		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("session 'temp' still exists after killing its only region:\n%s", out)
 }

@@ -73,7 +73,7 @@ func startServerWithUpgradeDir(t *testing.T, binDir string) (socketPath string, 
 		if _, err := os.Stat(socketPath); err == nil {
 			return
 		}
-		runtime.Gosched()
+		time.Sleep(50 * time.Millisecond)
 	}
 	cmd.Process.Kill()
 	t.Fatalf("server socket never appeared at %s", socketPath)
@@ -321,7 +321,7 @@ func TestTUIUpgradeE2E(t *testing.T) {
 		if _, err := os.Stat(socketPath); err == nil {
 			break
 		}
-		runtime.Gosched()
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	// Start TUI frontend from the temp copy.

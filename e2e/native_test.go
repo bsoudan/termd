@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +72,7 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 		if strings.Contains(out, "NATIVE") {
 			break
 		}
-		runtime.Gosched()
+		time.Sleep(50 * time.Millisecond)
 	}
 	if !strings.Contains(out, "NATIVE") {
 		t.Fatal("get_screen_request did not include overlay (expected 'NATIVE')")

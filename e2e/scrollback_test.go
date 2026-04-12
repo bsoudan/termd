@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +64,7 @@ func TestScrollbackBuffer(t *testing.T) {
 			}
 			return
 		default:
-			runtime.Gosched()
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
@@ -224,6 +223,7 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	wheelUp := fmt.Sprintf("%c[<64;5;5M", ansi.ESC)
 	for range 70 {
 		nxt.Write([]byte(wheelUp))
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	// Verify early numbers appear on screen.
@@ -238,10 +238,14 @@ func TestScrollbackScrollWheel(t *testing.T) {
 		return false
 	}, "early numbers visible via scroll wheel", 5*time.Second)
 
-	// Scroll wheel down past offset 0 to auto-exit scrollback
+	// Scroll wheel down past offset 0 to auto-exit scrollback.
+	// Small delay so InputParser doesn't bundle all events into
+	// one RawInputMsg (which costs one render cycle per sequence
+	// in handleFocusInput).
 	wheelDown := fmt.Sprintf("%c[<65;5;5M", ansi.ESC)
 	for range 80 {
 		nxt.Write([]byte(wheelDown))
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	// Verify scrollback exited and prompt is visible
