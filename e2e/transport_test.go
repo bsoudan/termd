@@ -15,6 +15,7 @@ import (
 )
 
 func TestTCPTransport(t *testing.T) {
+	t.Parallel()
 	socketPath, tcpAddr, serverCleanup := startServerWithTCP(t)
 	defer serverCleanup()
 
@@ -47,6 +48,7 @@ func TestTCPTransport(t *testing.T) {
 }
 
 func TestWebSocketTransport(t *testing.T) {
+	t.Parallel()
 	socketPath, addrs, serverCleanup := startServerWithListeners(t, "ws://127.0.0.1:0")
 	defer serverCleanup()
 
@@ -78,6 +80,7 @@ func TestWebSocketTransport(t *testing.T) {
 }
 
 func TestSSHTransport(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	hostKeyPath := filepath.Join(dir, "host_key")
 
@@ -159,6 +162,7 @@ func TestSSHTransport(t *testing.T) {
 // argv prefix and exec's `nxtermctl proxy` directly, so the test
 // covers everything except the actual SSH protocol exchange.
 func TestSSHExecTransport(t *testing.T) {
+	t.Parallel()
 	socketPath, _, serverCleanup := startServerWithListeners(t)
 	defer serverCleanup()
 
@@ -223,6 +227,7 @@ eval "$1"
 }
 
 func TestMultiTransportSharedRegion(t *testing.T) {
+	t.Parallel()
 	socketPath, tcpAddr, serverCleanup := startServerWithTCP(t)
 	defer serverCleanup()
 

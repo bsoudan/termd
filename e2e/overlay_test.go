@@ -11,6 +11,7 @@ import (
 )
 
 func TestHelpOverlay(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -55,6 +56,7 @@ func TestHelpOverlay(t *testing.T) {
 }
 
 func TestLogViewerOverlay(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -120,6 +122,7 @@ func TestLogViewerOverlay(t *testing.T) {
 }
 
 func TestCommandPalette(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -141,6 +144,7 @@ func TestCommandPalette(t *testing.T) {
 }
 
 func TestCommandPaletteEsc(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 

@@ -7,6 +7,7 @@ import (
 )
 
 func TestSpawnSecondRegion(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -29,6 +30,7 @@ func TestSpawnSecondRegion(t *testing.T) {
 }
 
 func TestSwitchTabs(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -65,6 +67,7 @@ func TestSwitchTabs(t *testing.T) {
 }
 
 func TestRegionDestroyedRemovesTab(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -95,6 +98,7 @@ func TestRegionDestroyedRemovesTab(t *testing.T) {
 }
 
 func TestCloseTab(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 

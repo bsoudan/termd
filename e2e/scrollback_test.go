@@ -11,6 +11,7 @@ import (
 )
 
 func TestScrollbackBuffer(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -70,6 +71,7 @@ func TestScrollbackBuffer(t *testing.T) {
 }
 
 func TestScrollbackNavigation(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -126,6 +128,7 @@ func TestScrollbackNavigation(t *testing.T) {
 // TestScrollbackPageUpDown verifies that PageUp and PageDown keys activate
 // scrollback mode directly from the terminal (without the prefix key).
 func TestScrollbackPageUpDown(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -193,6 +196,7 @@ func TestScrollbackPageUpDown(t *testing.T) {
 }
 
 func TestScrollbackScrollWheel(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -259,6 +263,7 @@ func TestScrollbackScrollWheel(t *testing.T) {
 // on entry and never updates it. Once the client uses a local
 // HistoryScreen, new lines should appear automatically.
 func TestScrollbackLiveUpdate(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -374,6 +379,7 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 // a disconnect is available after the client reconnects. The server keeps
 // the full scrollback; the client must sync the gap on reconnect.
 func TestScrollbackAfterReconnect(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -427,6 +433,7 @@ func TestScrollbackAfterReconnect(t *testing.T) {
 // TestScrollbackAfterReconnectLarge verifies scrollback sync works with
 // a large scrollback that requires multiple server chunks (>1000 lines).
 func TestScrollbackAfterReconnectLarge(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -491,6 +498,7 @@ func TestScrollbackAfterReconnectLarge(t *testing.T) {
 // the terminal when the child is in alt-screen mode (less, vim, etc.)
 // and enter scrollback only when back in normal screen mode.
 func TestScrollbackPageUpAltScreen(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -537,6 +545,7 @@ func TestScrollbackPageUpAltScreen(t *testing.T) {
 // forwarded to the child when it has requested mouse tracking, rather
 // than entering scrollback.
 func TestScrollbackWheelAltScreen(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -575,6 +584,7 @@ func TestScrollbackWheelAltScreen(t *testing.T) {
 // from the command palette regardless of screen mode (the condition is
 // on the key binding, not the command).
 func TestScrollbackCommandPalette(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -608,6 +618,7 @@ func TestScrollbackCommandPalette(t *testing.T) {
 // scrollback grows but the client doesn't know, causing the
 // scrollback/screen boundary to be wrong.
 func TestScrollbackDesync(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 

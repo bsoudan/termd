@@ -11,6 +11,7 @@ import (
 )
 
 func TestInputRoundTrip(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -44,6 +45,7 @@ func TestInputRoundTrip(t *testing.T) {
 }
 
 func TestRawInputPassthrough(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -62,6 +64,7 @@ func TestRawInputPassthrough(t *testing.T) {
 }
 
 func TestMousePassthrough(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -132,6 +135,7 @@ func TestMousePassthrough(t *testing.T) {
 }
 
 func TestMouseAfterTabSwitch(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -166,6 +170,7 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 }
 
 func TestInputIsolation(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 

@@ -398,11 +398,11 @@ func sequenceSafe(carry, chunk, carryBuf []byte) (safe []byte, carryN int) {
 func (r *PTYRegion) waitLoop() {
 	if r.cmdObj != nil {
 		r.cmdObj.Wait()
-	} else {
-		// Inherited region: child is not our process. Detect exit via
-		// PTY master EOF (readLoop closes readerDone).
-		<-r.readerDone
 	}
+	// Wait for readLoop to finish before closing notify. The readLoop
+	// may still be draining buffered PTY output after the child exits;
+	// closing notify while readLoop sends on it causes a panic.
+	<-r.readerDone
 	close(r.notify)
 }
 

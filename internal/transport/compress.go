@@ -103,7 +103,15 @@ func MaybeWrapCompression(conn net.Conn, endpoint string) net.Conn {
 	return conn
 }
 
-func (c *compressedConn) Read(p []byte) (int, error) {
+func (c *compressedConn) Read(p []byte) (n int, err error) {
+	// The zstd decoder can panic with a nil blockDec dereference when the
+	// underlying connection closes mid-frame. Recover and return EOF so
+	// the server's client ReadLoop treats it as a normal disconnect.
+	defer func() {
+		if r := recover(); r != nil {
+			n, err = 0, io.EOF
+		}
+	}()
 	return c.r.Read(p)
 }
 

@@ -87,7 +87,13 @@ func (c *Client) writeLoop() {
 			_, err := c.conn.Write(msg.data)
 			c.conn.SetWriteDeadline(time.Time{})
 			if err != nil {
-				slog.Debug("client write error, closing", "client_id", c.id, "err", err)
+				slog.Debug("client write error, draining", "client_id", c.id, "err", err)
+				// Don't close the connection yet — let readLoop finish
+				// processing any buffered input. This prevents
+				// fire-and-forget messages (e.g. input from nxtermctl
+				// region send) from being lost when the client closes
+				// its end before the server writes its initial response.
+				<-c.closeCh
 				return
 			}
 			writtenByteIndex = msg.byteIndex + uint64(len(msg.data))

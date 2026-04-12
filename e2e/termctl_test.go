@@ -1,13 +1,13 @@
 package e2e
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestTermctlStatus(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -24,6 +24,7 @@ func TestTermctlStatus(t *testing.T) {
 }
 
 func TestTermctlRegionSpawnAndList(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -39,26 +40,20 @@ func TestTermctlRegionSpawnAndList(t *testing.T) {
 }
 
 func TestTermctlRegionView(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
 	id := spawnRegion(t, socketPath, "shell")
 
-	// Send a command and wait a moment for bash to process it
-	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo viewtest_marker\r`)
-	// Poll region view until the marker appears
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		out := runNxtermctl(t, socketPath, "region", "view", id)
-		if strings.Contains(out, "viewtest_marker") {
-			return
-		}
-		runtime.Gosched()
-	}
-	t.Fatal("region view never showed 'viewtest_marker'")
+	// Wait for shell prompt before sending input — under parallel load
+	// bash startup can be slow and input sent before readline is ready
+	// gets lost.
+	regionSendAndWait(t, socketPath, id, `echo viewtest_marker\r`, "viewtest_marker")
 }
 
 func TestTermctlRegionKill(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -76,32 +71,22 @@ func TestTermctlRegionKill(t *testing.T) {
 		if strings.Contains(out, "no regions") {
 			return
 		}
-		runtime.Gosched()
+		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("region still listed after kill:\n%s", out)
 }
 
 func TestTermctlRegionSend(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
 	id := spawnRegion(t, socketPath, "shell")
-
-	// -e interprets \n as newline (acts as Enter)
-	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo sendtest_ok\r`)
-
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		out := runNxtermctl(t, socketPath, "region", "view", id)
-		if strings.Contains(out, "sendtest_ok") {
-			return
-		}
-		runtime.Gosched()
-	}
-	t.Fatal("region view never showed 'sendtest_ok'")
+	regionSendAndWait(t, socketPath, id, `echo sendtest_ok\r`, "sendtest_ok")
 }
 
 func TestTermctlClientList(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -128,6 +113,7 @@ func TestTermctlClientList(t *testing.T) {
 }
 
 func TestTermctlClientKill(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 

@@ -11,6 +11,7 @@ import (
 )
 
 func TestStartAndRender(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -31,6 +32,7 @@ func TestStartAndRender(t *testing.T) {
 }
 
 func TestCursorPosition(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -71,6 +73,7 @@ func TestCursorPosition(t *testing.T) {
 }
 
 func TestCursorMovementAfterProgram(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -126,6 +129,7 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 }
 
 func TestColorRendering(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -235,6 +239,7 @@ func TestColorRendering(t *testing.T) {
 // the client's screen state — without leaking unrelated attributes like
 // underline.
 func TestFaintRendering(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -359,6 +364,7 @@ func TestFaintRendering(t *testing.T) {
 // te.Stream → te.Screen cells → protocol → client te.Screen → test
 // harness te.Screen, so any cell-level corruption shows up here.
 func TestModifyOtherKeysDoesNotLeakSGR(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -415,6 +421,7 @@ func TestModifyOtherKeysDoesNotLeakSGR(t *testing.T) {
 // an unknown final byte), then drew "0;1u" as plain text on the
 // screen next to the cursor.
 func TestKittyKeyboardSequencesDoNotLeakAsText(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -477,6 +484,7 @@ func TestKittyKeyboardSequencesDoNotLeakAsText(t *testing.T) {
 // falls back to assuming features are unsupported and adds startup
 // latency. This test exercises the same query path via bash.
 func TestPTYRegionRespondsToDECRQM(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -523,6 +531,7 @@ func TestPTYRegionRespondsToDECRQM(t *testing.T) {
 // the outer renderer, causing doubled cursors in nested sessions and
 // stray cursors elsewhere.
 func TestCursorHiddenByDECTCEM(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -574,6 +583,7 @@ func TestCursorHiddenByDECTCEM(t *testing.T) {
 }
 
 func TestActiveTabBold(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -641,6 +651,7 @@ func findDigitFollowedBy(row []te.Cell, digit, next string) int {
 }
 
 func TestResize(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -657,6 +668,7 @@ func TestResize(t *testing.T) {
 }
 
 func TestResizeMidSession(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -704,38 +716,27 @@ func TestResizeMidSession(t *testing.T) {
 }
 
 func TestAltScreenRestore(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
 	// Use nxtermctl to verify server-side screen state (avoids bubbletea
 	// rendering diff issues in the test's go-te Screen).
 	id := spawnRegion(t, socketPath, "shell")
-
-	// Type a marker
-	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo alt_screen_marker\r`)
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		view := runNxtermctl(t, socketPath, "region", "view", id)
-		if strings.Contains(view, "alt_screen_marker") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	regionSendAndWait(t, socketPath, id, `echo alt_screen_marker\r`, "alt_screen_marker")
 
 	// Enter alt screen via less
 	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo 'line1\nline2\nline3' | less\r`)
 
-	// Wait for less to show "line1" AND marker to be gone (alt screen active)
 	// Wait for less to show content in alt screen AND be ready for input.
-	// Checking for "(END)" ensures less has fully initialized its display;
-	// sending 'q' before that can race with less's input setup.
-	deadline = time.Now().Add(10 * time.Second)
+	// Checking for "(END)" ensures less has fully initialized its display.
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		view := runNxtermctl(t, socketPath, "region", "view", id)
 		if strings.Contains(view, "(END)") && !strings.Contains(view, "alt_screen_marker") {
 			goto inAlt
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	{
 		view := runNxtermctl(t, socketPath, "region", "view", id)
@@ -753,7 +754,7 @@ inAlt:
 		if strings.Contains(view, "alt_screen_marker") {
 			return // success
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	{
 		view := runNxtermctl(t, socketPath, "region", "view", id)
@@ -762,6 +763,7 @@ inAlt:
 }
 
 func TestScreenSyncAfterTop(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 

@@ -7,6 +7,7 @@ import (
 )
 
 func TestRegionKilledExternally(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -37,6 +38,7 @@ func TestRegionKilledExternally(t *testing.T) {
 }
 
 func TestExit(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 

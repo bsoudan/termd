@@ -22,6 +22,7 @@ func connectViaUI(t *testing.T, nxt *nxtest.T, socketPath string) {
 }
 
 func TestNewSession(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -37,6 +38,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestKillSession(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -51,6 +53,7 @@ func TestKillSession(t *testing.T) {
 }
 
 func TestConnectOverlayCancel(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 

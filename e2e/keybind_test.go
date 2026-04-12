@@ -8,6 +8,7 @@ import (
 )
 
 func TestPrefixKeyDetach(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -22,6 +23,7 @@ func TestPrefixKeyDetach(t *testing.T) {
 }
 
 func TestPrefixKeyLiteralCtrlB(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -48,6 +50,7 @@ func TestPrefixKeyLiteralCtrlB(t *testing.T) {
 }
 
 func TestPrefixKeyStatusIndicator(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -76,6 +79,7 @@ func TestPrefixKeyStatusIndicator(t *testing.T) {
 }
 
 func TestKeybindNativeNextPrevTab(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -105,6 +109,7 @@ func TestKeybindNativeNextPrevTab(t *testing.T) {
 }
 
 func TestKeybindTmuxStyle(t *testing.T) {
+	t.Parallel()
 	socketPath, env, serverCleanup := startServerReturnEnv(t)
 	defer serverCleanup()
 
@@ -139,6 +144,7 @@ func TestKeybindTmuxStyle(t *testing.T) {
 }
 
 func TestKeybindScreenPrefix(t *testing.T) {
+	t.Parallel()
 	socketPath, env, serverCleanup := startServerReturnEnv(t)
 	defer serverCleanup()
 
@@ -159,6 +165,7 @@ func TestKeybindScreenPrefix(t *testing.T) {
 }
 
 func TestKeybindCustomOverride(t *testing.T) {
+	t.Parallel()
 	socketPath, env, serverCleanup := startServerReturnEnv(t)
 	defer serverCleanup()
 
@@ -179,6 +186,7 @@ func TestKeybindCustomOverride(t *testing.T) {
 }
 
 func TestKeybindOpenSessionTmux(t *testing.T) {
+	t.Parallel()
 	socketPath, env, serverCleanup := startServerReturnEnv(t)
 	defer serverCleanup()
 

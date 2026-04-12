@@ -22,6 +22,7 @@ import (
 // listeners. Connects a frontend to each. Triggers SIGUSR2 and verifies
 // all four frontends reconnect and their shells are still alive.
 func TestLiveUpgrade(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
@@ -197,6 +198,7 @@ func TestLiveUpgrade(t *testing.T) {
 // one frontend, triggers SIGUSR2, and verifies the old process is gone and
 // the frontend reconnects with its shell intact.
 func TestLiveUpgradeSimple(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
@@ -277,6 +279,7 @@ func TestLiveUpgradeSimple(t *testing.T) {
 // is the raw-wire test for the phase-tracking that the upgrade dialog
 // relies on.
 func TestLiveUpgradeStatusBroadcast(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	env := testEnv(t)
 	writeTestServerConfig(t, env)
@@ -351,6 +354,7 @@ loop:
 // counter values are strictly contiguous (no gaps from a stale snapshot
 // missing bytes that the old readLoop drained after the snapshot).
 func TestLiveUpgradeNoDataLoss(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	env := testEnv(t)
 	writeTestServerConfig(t, env)

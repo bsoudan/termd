@@ -11,6 +11,7 @@ import (
 )
 
 func TestNativeOverlayRender(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -24,6 +25,7 @@ func TestNativeOverlayRender(t *testing.T) {
 }
 
 func TestNativeOverlayInput(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
@@ -38,6 +40,7 @@ func TestNativeOverlayInput(t *testing.T) {
 }
 
 func TestNativeOverlayGetScreen(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -86,6 +89,7 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 }
 
 func TestNativeOverlayExit(t *testing.T) {
+	t.Parallel()
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 

@@ -3,13 +3,13 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestProgramListDefault(t *testing.T) {
+	t.Parallel()
 	// Start server with no programs config — should auto-create "default".
 	socketPath, cleanup := startServerCustom(t, "")
 	defer cleanup()
@@ -21,6 +21,7 @@ func TestProgramListDefault(t *testing.T) {
 }
 
 func TestProgramAddAndRemove(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -55,6 +56,7 @@ func TestProgramAddAndRemove(t *testing.T) {
 }
 
 func TestProgramSpawnByName(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -71,6 +73,7 @@ func TestProgramSpawnByName(t *testing.T) {
 }
 
 func TestProgramSpawnUnknown(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -88,6 +91,7 @@ func TestProgramSpawnUnknown(t *testing.T) {
 }
 
 func TestProgramDefaultSession(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -105,6 +109,7 @@ func TestProgramDefaultSession(t *testing.T) {
 }
 
 func TestProgramPickerMultiple(t *testing.T) {
+	t.Parallel()
 	shell, _ := exec.LookPath("bash")
 	if shell == "" {
 		shell = "bash"
@@ -143,6 +148,7 @@ func TestProgramPickerMultiple(t *testing.T) {
 }
 
 func TestProgramPickerSingleAutoSpawn(t *testing.T) {
+	t.Parallel()
 	socketPath, cleanup := startServer(t)
 	defer cleanup()
 
@@ -166,6 +172,7 @@ func TestProgramPickerSingleAutoSpawn(t *testing.T) {
 }
 
 func TestProgramEnvVars(t *testing.T) {
+	t.Parallel()
 	shell, _ := exec.LookPath("bash")
 	if shell == "" {
 		shell = "bash"
@@ -178,16 +185,5 @@ func TestProgramEnvVars(t *testing.T) {
 	defer cleanup()
 
 	id := spawnRegion(t, socketPath, "envtest")
-
-	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo $MY_TEST_VAR\r`)
-
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		out := runNxtermctl(t, socketPath, "region", "view", id)
-		if strings.Contains(out, "hello_from_program") {
-			return
-		}
-		runtime.Gosched()
-	}
-	t.Fatal("region view never showed 'hello_from_program'")
+	regionSendAndWait(t, socketPath, id, `echo $MY_TEST_VAR\r`, "hello_from_program")
 }

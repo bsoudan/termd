@@ -10,6 +10,7 @@ import (
 )
 
 func TestReconnectUnix(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -42,6 +43,7 @@ func TestReconnectUnix(t *testing.T) {
 }
 
 func TestReconnectTCP(t *testing.T) {
+	t.Parallel()
 	socketPath, tcpAddr, serverCleanup := startServerWithTCP(t)
 	defer serverCleanup()
 

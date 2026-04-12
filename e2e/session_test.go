@@ -36,6 +36,7 @@ func startFrontendWithSession(t *testing.T, socketPath, session string) *nxtest.
 }
 
 func TestSessionConnectDefault(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -58,6 +59,7 @@ func TestSessionConnectDefault(t *testing.T) {
 }
 
 func TestSessionConnectNamed(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -82,6 +84,7 @@ func TestSessionConnectNamed(t *testing.T) {
 }
 
 func TestSessionMultiple(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -126,6 +129,7 @@ func TestSessionMultiple(t *testing.T) {
 }
 
 func TestSessionReconnect(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -177,6 +181,7 @@ func TestSessionReconnect(t *testing.T) {
 }
 
 func TestSessionCleanup(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -206,6 +211,7 @@ func TestSessionCleanup(t *testing.T) {
 }
 
 func TestSessionSpawnIntoSession(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -231,6 +237,7 @@ func TestSessionSpawnIntoSession(t *testing.T) {
 }
 
 func TestSessionClientListShowsSession(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -263,6 +270,7 @@ func TestSessionClientListShowsSession(t *testing.T) {
 }
 
 func TestSessionPersistence(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -346,6 +354,7 @@ reconnect:
 }
 
 func TestConnectPicksUpExistingRegions(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -369,6 +378,7 @@ func TestConnectPicksUpExistingRegions(t *testing.T) {
 }
 
 func TestReconnectRestoresTabs(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 
@@ -403,6 +413,7 @@ func TestReconnectRestoresTabs(t *testing.T) {
 }
 
 func TestAllRegionsDestroyedShowsNoSession(t *testing.T) {
+	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
 	defer serverCleanup()
 

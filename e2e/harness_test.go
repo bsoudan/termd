@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"nxtermd/internal/nxtest"
@@ -209,6 +210,38 @@ func runNxtermctl(t *testing.T, socketPath string, args ...string) string {
 		t.Fatalf("termctl %v failed: %v\n%s", args, err, out)
 	}
 	return string(out)
+}
+
+// waitForRegionPrompt polls region view until a shell prompt ("$")
+// appears, indicating bash has started.
+func waitForRegionPrompt(t *testing.T, socketPath, regionID string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		out := runNxtermctl(t, socketPath, "region", "view", regionID)
+		if strings.Contains(out, "$") {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("region never showed shell prompt")
+}
+
+// regionSendAndWait waits for the shell prompt, sends input, and polls
+// region view until marker appears.
+func regionSendAndWait(t *testing.T, socketPath, regionID, input, marker string) {
+	t.Helper()
+	waitForRegionPrompt(t, socketPath, regionID)
+	runNxtermctl(t, socketPath, "region", "send", "-e", regionID, input)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		out := runNxtermctl(t, socketPath, "region", "view", regionID)
+		if strings.Contains(out, marker) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("region view never showed %q", marker)
 }
 
 // spawnRegion uses nxtermctl to spawn a region using the named program
