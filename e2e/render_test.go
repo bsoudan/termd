@@ -759,10 +759,13 @@ func TestAltScreenRestore(t *testing.T) {
 	runNxtermctl(t, socketPath, "region", "send", "-e", id, `echo 'line1\nline2\nline3' | less\r`)
 
 	// Wait for less to show "line1" AND marker to be gone (alt screen active)
+	// Wait for less to show content in alt screen AND be ready for input.
+	// Checking for "(END)" ensures less has fully initialized its display;
+	// sending 'q' before that can race with less's input setup.
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		view := runNxtermctl(t, socketPath, "region", "view", id)
-		if strings.Contains(view, "line1") && !strings.Contains(view, "alt_screen_marker") {
+		if strings.Contains(view, "(END)") && !strings.Contains(view, "alt_screen_marker") {
 			goto inAlt
 		}
 		time.Sleep(10 * time.Millisecond)
