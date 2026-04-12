@@ -1,4 +1,5 @@
-0.14.0-99-g46c673b*:  M cmd/nxtermctl/main.go  M internal/client/client.go D  internal/frontendlog/protocol.go RM internal/frontendlog/log.go -> internal/nxlog/log.go  M internal/server/main.go  M internal/tui/changelog.txt  M internal/tui/main.go  M internal/tui/mainlayer.go  M internal/tui/model.go  M internal/tui/scrollablelayer.go  M internal/tui/session.go ?? claude ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? internal/protocol/log.go ?? internal/tui/logring.go ?? logos ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-100-g74f89a7*:  M internal/server/region.go  M internal/tui/changelog.txt ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-100-g74f89a7: clean up frontendlog: rename to nxlog, relocate pieces
 0.14.0-99-g46c673b: merge internal/ui into internal/tui
 0.14.0-98-gce946c3: restructure repository to follow Go conventions
 0.14.0-97-gd9468dc: remove vendored urfave/cli, use upstream module directly
@@ -98,4 +99,3 @@
 0.14.0-3-g025ae2c: stress: add detach/kill/pause ops and test-stress-long target
 0.14.0-2-gff5c0b4: stress test harness: TUI + raw protocol clients with periodic snapshots
 0.14.0-1-g3086860: fix: forward stdin to bubbletea during init to prevent escape sequence leak
-           0.14.0: multiple sessions: MainLayer manages session lifecycle with create/kill/switch

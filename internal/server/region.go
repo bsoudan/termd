@@ -325,13 +325,24 @@ func (r *PTYRegion) StopReadLoop() error {
 
 // ResumeReadLoop clears the read deadline and restarts the readLoop
 // after a failed upgrade rollback. The caller must have observed
-// readerDone before invoking this. The new readerDone channel is
-// installed atomically before launching the goroutine.
+// readerDone before invoking this.
+//
+// For inherited regions (cmdObj == nil), waitLoop watches readerDone
+// to detect child exit and closes notify when it fires. Since
+// StopReadLoop already closed readerDone, waitLoop has already run
+// and closed notify — so both channels must be recreated and
+// waitLoop restarted. For spawned regions, waitLoop watches
+// cmdObj.Wait() instead, so notify is still open.
 func (r *PTYRegion) ResumeReadLoop() error {
 	if err := r.ptmx.SetReadDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("clear read deadline: %w", err)
 	}
 	r.readerDone = make(chan struct{})
+	if r.cmdObj == nil {
+		// Inherited region: waitLoop already exited and closed notify.
+		r.notify = make(chan struct{}, 1)
+		go r.waitLoop()
+	}
 	go r.readLoop()
 	return nil
 }
@@ -601,6 +612,13 @@ func RestoreRegion(id, name, cmd, session string, pid, width, height int, ptmxFi
 
 	proxy := NewEventProxy(hscreen)
 	stream := te.NewStream(proxy, false)
+
+	// Ensure the inherited PTY FD is registered with the runtime
+	// poller so SetReadDeadline works (needed for live upgrade
+	// rollback). os.NewFile on a dup'd FD does not always do this.
+	if err := setNonblockPollable(ptmxFile); err != nil {
+		slog.Warn("restore: setNonblockPollable failed", "region_id", id, "err", err)
+	}
 
 	r := &PTYRegion{
 		id:      id,
