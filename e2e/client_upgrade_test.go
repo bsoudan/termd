@@ -106,7 +106,7 @@ func dialClient(t *testing.T, socketPath string) *client.Client {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	c := client.New(conn)
+	c := client.New(transport.WrapCompression(conn))
 	c.SendIdentify("test")
 	// Drain the server's identify message.
 	select {

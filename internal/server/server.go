@@ -138,7 +138,8 @@ func (s *Server) acceptLoop(ln net.Listener) {
 			conn.Close()
 			continue
 		}
-		s.acceptClient(transport.WrapTracing(conn, fmt.Sprintf("server:%s", conn.RemoteAddr())))
+		wrapped := transport.WrapTracing(conn, fmt.Sprintf("server:%s", conn.RemoteAddr()))
+		s.acceptClient(transport.NegotiateCompressionServer(wrapped))
 	}
 }
 

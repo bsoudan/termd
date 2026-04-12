@@ -181,7 +181,7 @@ func connect(cmd *cli.Command) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	cl := client.New(conn)
+	cl := client.New(transport.WrapCompression(conn))
 	cl.SendIdentify("nxtermctl")
 	return cl, nil
 }

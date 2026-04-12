@@ -171,7 +171,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 			if err != nil {
 				return nil, err
 			}
-			return transport.WrapTracing(c, "client"), nil
+			return transport.MaybeWrapCompression(transport.WrapTracing(c, "client"), endpoint), nil
 		}
 		if userSetSocket {
 			var err error
@@ -219,7 +219,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 				p.Send(ConnectErrorMsg{Endpoint: ep, Error: err.Error()})
 				return
 			}
-			c = transport.WrapTracing(c, "client")
+			c = transport.MaybeWrapCompression(transport.WrapTracing(c, "client"), ep)
 			df := func() (net.Conn, error) {
 				rc, err := transport.DialWithPrompter(ep, uiPrompter)
 				if err != nil {
@@ -259,7 +259,7 @@ func runFrontend(_ context.Context, cmd *cli.Command) error {
 			if err != nil {
 				return nil, err
 			}
-			return transport.WrapTracing(c, "client"), nil
+			return transport.MaybeWrapCompression(transport.WrapTracing(c, "client"), endpoint), nil
 		}
 		wg.Add(1)
 		go func() { defer wg.Done(); server.Run(conn, dialFn, p) }()

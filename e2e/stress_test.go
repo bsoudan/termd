@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"nxtermd/internal/transport"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -522,10 +524,11 @@ var rawOps = []struct {
 }
 
 func newRawClient(socketPath string, id int, rng *rand.Rand, errs *errorCollector, t *testing.T) (*rawClient, error) {
-	conn, err := net.Dial("unix", socketPath)
+	rawConn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
+	conn := transport.WrapCompression(rawConn)
 	session := fmt.Sprintf("stress-raw-%d", id)
 	rc := &rawClient{
 		id:          id,

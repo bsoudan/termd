@@ -20,6 +20,7 @@ require (
 require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/grandcat/zeroconf v1.0.0
+	github.com/klauspost/compress v1.18.5
 	github.com/mattn/go-runewidth v0.0.21
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/term v0.41.0

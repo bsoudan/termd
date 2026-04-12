@@ -1,4 +1,6 @@
-0.14.0-104-gd257c7e*:  M internal/tui/changelog.txt  M internal/tui/scrollback.go ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-106-ga40e37f*:  M cmd/nxtermctl/main.go  M cmd/nxtermctl/proxy.go  M e2e/client_upgrade_test.go  M e2e/stress_test.go  M go.mod  M go.sum  M internal/server/server.go  M internal/tui/changelog.txt  M internal/tui/main.go ?? TODO.md ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? internal/transport/compress.go ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape 
+0.14.0-106-ga40e37f: add object tree state synchronization (Phase 1: server infrastructure)
+0.14.0-105-g13f0c8f: fix: allow scrolling during scrollback sync with x-marker gap
 0.14.0-104-gd257c7e: add scrollback sync debug logging and large reconnect test
 0.14.0-103-gb5a5464: fix: sync server scrollback on entering scrollback mode
 0.14.0-102-g63a7f5e: fix: use client-side HistoryScreen for scrollback
@@ -97,5 +99,3 @@
 0.14.0-9-g7fae2ad: fix: buffer incomplete UTF-8 and ANSI sequences across PTY reads
 0.14.0-8-g2b73dfb: add alt+fN, ctrl+fN, and ctrl+./ctrl+, keybindings
 0.14.0-7-g4a0025e: help overlay: use bubbles/v2/table widget, reorder categories
-0.14.0-6-gb4e1b61: refactor: consolidate command messages into SessionCmd and MainCmd
-0.14.0-5-g93ea2ea: command registry with configurable keybindings and style presets

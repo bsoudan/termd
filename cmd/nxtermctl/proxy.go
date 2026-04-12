@@ -52,11 +52,12 @@ func cmdProxy(_ context.Context, cmd *cli.Command) error {
 		os.Exit(2)
 	}
 
-	conn, err := transport.Dial(spec)
+	rawConn, err := transport.Dial(spec)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "nxtermctl proxy: dial %s: %v\n", spec, err)
 		os.Exit(3)
 	}
+	conn := transport.WrapCompression(rawConn)
 	defer conn.Close()
 
 	// Sentinel must be on its own line and must precede any protocol
