@@ -18,11 +18,13 @@ import (
 // dispatches messages top-down. Protocol message unwrapping, req_id
 // matching, raw input routing, and overlay compositing happen here.
 type Model struct {
-	stack    *layer.Stack[RenderState]
-	registry *Registry
-	req      *requestState
-	Tasks    *layer.TaskRunner[RenderState]
-	Detached bool
+	stack     *layer.Stack[RenderState]
+	registry  *Registry
+	req       *requestState
+	Tasks     *layer.TaskRunner[RenderState]
+	treeStore TreeStore
+	server    *Server
+	Detached  bool
 }
 
 func NewModel(s *Server, pipeW io.Writer, registry *Registry, ring *LogRingBuffer, endpoint, version, changelog, sessionName string, statusBarMargin int, connectFn func(endpoint, session string)) Model {
@@ -47,6 +49,7 @@ func NewModel(s *Server, pipeW io.Writer, registry *Registry, ring *LogRingBuffe
 		registry: registry,
 		req:      req,
 		Tasks:    tasks,
+		server:   s,
 	}
 }
 
@@ -65,6 +68,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		msg = pmsg.Payload
+	}
+
+	// Handle tree sync messages before anything else.
+	switch tmsg := msg.(type) {
+	case protocol.TreeSnapshot:
+		m.treeStore.HandleSnapshot(tmsg)
+		cmd := m.stack.Update(TreeChangedMsg{Tree: m.treeStore.Tree()})
+		return m, cmd
+	case protocol.TreeEvents:
+		if !m.treeStore.HandleEvents(tmsg) {
+			m.server.Send(protocol.Tagged(protocol.TreeResyncRequest{}))
+			return m, nil
+		}
+		cmd := m.stack.Update(TreeChangedMsg{Tree: m.treeStore.Tree()})
+		return m, cmd
 	}
 
 	// Route task messages from task goroutines.
