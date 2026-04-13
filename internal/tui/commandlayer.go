@@ -16,7 +16,7 @@ func (h *HintLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg.(type) {
 	case hideHintMsg:
 		return QuitLayerMsg{}, nil, true
-	case MainCmd, SessionCmd, PushLayerMsg:
+	case MainCmd, SessionManagerCmd, SessionCmd, PushLayerMsg:
 		// Dismiss immediately when the user takes any action.
 		return QuitLayerMsg{}, nil, false
 	}

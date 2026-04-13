@@ -61,7 +61,7 @@ func (p *SessionPickerLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, b
 		}
 		return nil, nil, true
 	case "enter":
-		return QuitLayerMsg{}, cmdMsg(MainCmd{Name: "switch-session", Args: fmt.Sprintf("%d", p.cursor+1)}), true
+		return QuitLayerMsg{}, cmdMsg(SessionManagerCmd{Name: "switch-session", Args: fmt.Sprintf("%d", p.cursor+1)}), true
 	default:
 		return nil, nil, true
 	}

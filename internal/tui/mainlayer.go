@@ -292,6 +292,9 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case MainCmd:
 		return m.handleCmd(msg)
 
+	case SessionManagerCmd:
+		return m.handleSessionManagerCmd(msg)
+
 	// ── Connect overlay flow ────────────────────────────────────────────
 
 	case ConnectToServerMsg:
@@ -402,36 +405,20 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }, true
 	}
 	switch msg.Name {
-
-	// ── Session management ─────────────────────────────────────────────
-	case "open-session":
-		recents := LoadRecents()
-		return push(NewConnectLayer(recents))
-	case "close-session":
-		return m.killSession()
-	case "next-session":
-		m.nextSession()
-		return nil, nil, true
-	case "prev-session":
-		m.prevSession()
-		return nil, nil, true
-	case "switch-session":
-		if msg.Args == "" {
-			return nil, m.openSessionPicker(), true
-		}
-		idx, err := strconv.Atoi(msg.Args)
-		if err == nil && idx > 0 {
-			m.switchSession(idx - 1)
-		}
-		return nil, nil, true
 	case "detach":
 		resp, cmd := m.detach()
 		return resp, cmd, true
-
+	case "run-command":
+		return push(NewCommandPaletteLayer(m.registry))
+	case "show-help":
+		return push(NewHelpLayer(m.registry))
+	case "show-log":
+		return push(NewScrollableLayer("logviewer", m.logRing.String(), true, m.logRing, m.termWidth, m.termHeight))
+	case "show-release-notes":
+		return push(NewScrollableLayer("release notes", strings.TrimRight(m.changelog, "\n"), false, nil, m.termWidth, m.termHeight))
 	case "upgrade":
 		m.tasks.Run(func(h *layer.Handle[RenderState]) {
 			t := &TermdHandle{Handle: h}
-			// Fresh upgrade check.
 			resp, err := t.Request(protocol.UpgradeCheckRequest{
 				ClientVersion: m.version,
 				OS:            runtime.GOOS,
@@ -462,16 +449,36 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 				ucr.ClientAvailable, ucr.ClientVersion, m.version)
 		})
 		return nil, nil, true
+	default:
+		return nil, nil, true
+	}
+}
 
-	// ── Overlays ───────────────────────────────────────────────────────
-	case "run-command":
-		return push(NewCommandPaletteLayer(m.registry))
-	case "show-help":
-		return push(NewHelpLayer(m.registry))
-	case "show-log":
-		return push(NewScrollableLayer("logviewer", m.logRing.String(), true, m.logRing, m.termWidth, m.termHeight))
-	case "show-release-notes":
-		return push(NewScrollableLayer("release notes", strings.TrimRight(m.changelog, "\n"), false, nil, m.termWidth, m.termHeight))
+func (m *MainLayer) handleSessionManagerCmd(msg SessionManagerCmd) (tea.Msg, tea.Cmd, bool) {
+	push := func(layer layer.Layer[RenderState]) (tea.Msg, tea.Cmd, bool) {
+		return nil, func() tea.Msg { return PushLayerMsg{Layer: layer} }, true
+	}
+	switch msg.Name {
+	case "open-session":
+		recents := LoadRecents()
+		return push(NewConnectLayer(recents))
+	case "close-session":
+		return m.killSession()
+	case "next-session":
+		m.nextSession()
+		return nil, nil, true
+	case "prev-session":
+		m.prevSession()
+		return nil, nil, true
+	case "switch-session":
+		if msg.Args == "" {
+			return nil, m.openSessionPicker(), true
+		}
+		idx, err := strconv.Atoi(msg.Args)
+		if err == nil && idx > 0 {
+			m.switchSession(idx - 1)
+		}
+		return nil, nil, true
 	case "show-status":
 		caps := StatusCaps{
 			Hostname:           m.localHostname,
@@ -505,29 +512,6 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 			}
 		})
 		return push(sl)
-
-	// ── Commands that require an active session ────────────────────────
-	case "send-prefix":
-		if s := m.activeSessionLayer(); s != nil {
-			s.sendRawToServer([]byte{m.registry.PrefixKey})
-		}
-		return nil, nil, true
-	case "enter-scrollback":
-		if s := m.activeSessionLayer(); s != nil {
-			if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
-				return push(t.NewScrollbackLayer(0))
-			}
-		}
-		return nil, nil, true
-	case "refresh-screen":
-		if s := m.activeSessionLayer(); s != nil {
-			if t := s.activeTerm(); t != nil {
-				t.SetPendingClear()
-				m.server.Send(protocol.GetScreenRequest{RegionID: t.RegionID()})
-			}
-		}
-		return nil, nil, true
-
 	default:
 		return nil, nil, true
 	}

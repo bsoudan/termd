@@ -10,11 +10,11 @@ import (
 
 // Command is a named user action. Category is for user-facing grouping
 // in the help overlay and TOML config. Layer determines which layer
-// handles the command ("session" → SessionLayer, "main" → MainLayer).
+// handles the command.
 type Command struct {
 	Name        string
 	Category    string // "tab", "session", "main"
-	Layer       string // "session" or "main"
+	Layer       string // "session", "session-manager", or "main"
 	Description string
 }
 
@@ -153,12 +153,14 @@ func cmdMsg(msg tea.Msg) tea.Cmd {
 	return func() tea.Msg { return msg }
 }
 
-// cmdForBinding returns a tea.Cmd that dispatches a SessionCmd or MainCmd
+// cmdForBinding returns a tea.Cmd that dispatches a command message
 // based on the command's Layer field.
 func cmdForBinding(cmd *Command, args string) tea.Cmd {
 	switch cmd.Layer {
 	case "session":
 		return cmdMsg(SessionCmd{Name: cmd.Name, Args: args})
+	case "session-manager":
+		return cmdMsg(SessionManagerCmd{Name: cmd.Name, Args: args})
 	case "main":
 		return cmdMsg(MainCmd{Name: cmd.Name, Args: args})
 	default:
@@ -275,24 +277,20 @@ var categories = []string{"main", "session", "tab"}
 
 func allCommands() []*Command {
 	return []*Command{
-		// Main — user category "main"
+		// Main — app-global commands handled by NxtermModel
 		{Name: "run-command", Category: "main", Layer: "main", Description: "command palette"},
 		{Name: "detach", Category: "main", Layer: "main", Description: "detach"},
-		{Name: "send-prefix", Category: "main", Layer: "main", Description: "send literal prefix key"},
 		{Name: "show-help", Category: "main", Layer: "main", Description: "show keybindings"},
 		{Name: "show-log", Category: "main", Layer: "main", Description: "open log viewer"},
-		{Name: "show-status", Category: "main", Layer: "main", Description: "show status"},
 		{Name: "show-release-notes", Category: "main", Layer: "main", Description: "show release notes"},
-		{Name: "enter-scrollback", Category: "main", Layer: "main", Description: "enter scrollback mode"},
-		{Name: "refresh-screen", Category: "main", Layer: "main", Description: "refresh screen"},
-		{Name: "upgrade", Category: "main", Layer: "main", Description: "upgrade server/client"},
-		// Session — user category "session"
-		{Name: "open-session", Category: "session", Layer: "main", Description: "create new session"},
-		{Name: "close-session", Category: "session", Layer: "main", Description: "kill current session"},
-		{Name: "next-session", Category: "session", Layer: "main", Description: "next session"},
-		{Name: "prev-session", Category: "session", Layer: "main", Description: "previous session"},
-		{Name: "switch-session", Category: "session", Layer: "main", Description: "switch session"},
-		// Tab — user category "tab", handled by SessionLayer
+		// Session manager — session list commands handled by SessionManagerLayer
+		{Name: "open-session", Category: "session", Layer: "session-manager", Description: "create new session"},
+		{Name: "close-session", Category: "session", Layer: "session-manager", Description: "kill current session"},
+		{Name: "next-session", Category: "session", Layer: "session-manager", Description: "next session"},
+		{Name: "prev-session", Category: "session", Layer: "session-manager", Description: "previous session"},
+		{Name: "switch-session", Category: "session", Layer: "session-manager", Description: "switch session"},
+		{Name: "show-status", Category: "session", Layer: "session-manager", Description: "show status"},
+		// Session — tab/terminal commands handled by SessionLayer
 		{Name: "open-tab", Category: "tab", Layer: "session", Description: "open new tab"},
 		{Name: "close-tab", Category: "tab", Layer: "session", Description: "close active tab"},
 		{Name: "next-tab", Category: "tab", Layer: "session", Description: "next tab"},
@@ -300,6 +298,10 @@ func allCommands() []*Command {
 		{Name: "switch-tab", Category: "tab", Layer: "session", Description: "switch to tab N"},
 		{Name: "scroll-up", Category: "tab", Layer: "session", Description: "enter scrollback / scroll up"},
 		{Name: "scroll-down", Category: "tab", Layer: "session", Description: "scroll down (in scrollback)"},
+		{Name: "send-prefix", Category: "tab", Layer: "session", Description: "send literal prefix key"},
+		{Name: "enter-scrollback", Category: "tab", Layer: "session", Description: "enter scrollback mode"},
+		{Name: "refresh-screen", Category: "tab", Layer: "session", Description: "refresh screen"},
+		{Name: "upgrade", Category: "main", Layer: "main", Description: "upgrade server/client"},
 	}
 }
 

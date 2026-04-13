@@ -2,13 +2,19 @@ package tui
 
 // SessionCmd is dispatched for commands handled by SessionLayer.
 type SessionCmd struct {
-	Name string // command name: "open-tab", "close-tab", etc.
+	Name string // command name: "open-tab", "close-tab", "upgrade", etc.
 	Args string // optional arguments: "3" for switch-tab 3
 }
 
-// MainCmd is dispatched for commands handled by MainLayer.
+// SessionManagerCmd is dispatched for commands handled by SessionManagerLayer.
+type SessionManagerCmd struct {
+	Name string // command name: "open-session", "close-session", etc.
+	Args string // optional arguments
+}
+
+// MainCmd is dispatched for commands handled by NxtermModel.
 type MainCmd struct {
-	Name string // command name: "open-session", "detach", etc.
+	Name string // command name: "detach", "show-help", etc.
 	Args string // optional arguments
 }
 

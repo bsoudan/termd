@@ -37,7 +37,7 @@ func (l *SessionNameLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, boo
 		if name == "" {
 			return QuitLayerMsg{}, nil, true
 		}
-		return QuitLayerMsg{}, cmdMsg(MainCmd{Name: "open-session", Args: name}), true
+		return QuitLayerMsg{}, cmdMsg(SessionManagerCmd{Name: "open-session", Args: name}), true
 	case "backspace":
 		if l.cursor > 0 {
 			l.input = append(l.input[:l.cursor-1], l.input[l.cursor:]...)

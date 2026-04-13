@@ -413,6 +413,21 @@ func (s *SessionLayer) handleCmd(msg SessionCmd) (tea.Msg, tea.Cmd, bool) {
 			return t.Update(msg)
 		}
 		return nil, nil, true
+	case "send-prefix":
+		s.sendRawToServer([]byte{s.registry.PrefixKey})
+		return nil, nil, true
+	case "enter-scrollback":
+		if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
+			sl := t.NewScrollbackLayer(0)
+			return nil, func() tea.Msg { return PushLayerMsg{Layer: sl} }, true
+		}
+		return nil, nil, true
+	case "refresh-screen":
+		if t := s.activeTerm(); t != nil {
+			t.SetPendingClear()
+			s.server.Send(protocol.GetScreenRequest{RegionID: t.RegionID()})
+		}
+		return nil, nil, true
 	default:
 		return nil, nil, true
 	}
