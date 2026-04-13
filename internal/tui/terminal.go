@@ -103,9 +103,9 @@ func (t *TerminalLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 
 	switch msg := msg.(type) {
 	case protocol.ScreenUpdate:
-		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes, msg.Title, msg.IconName), true
+		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes, msg.Title, msg.IconName, msg.ScrollbackLen), true
 	case protocol.GetScreenResponse:
-		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes, msg.Title, msg.IconName), true
+		return nil, t.handleScreenUpdate(msg.Lines, msg.Cells, msg.CursorRow, msg.CursorCol, msg.Modes, msg.Title, msg.IconName, msg.ScrollbackLen), true
 	case protocol.TerminalEvents:
 		return nil, t.handleTerminalEvents(msg.Events), true
 	case protocol.ResizeResponse:
@@ -139,7 +139,7 @@ func (t *TerminalLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	}
 }
 
-func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.ScreenCell, cursorRow, cursorCol uint16, modes map[int]bool, title, iconName string) tea.Cmd {
+func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.ScreenCell, cursorRow, cursorCol uint16, modes map[int]bool, title, iconName string, serverScrollback int) tea.Cmd {
 	height := t.contentHeight()
 	if t.termHeight <= 0 {
 		height = 23
@@ -155,9 +155,18 @@ func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.Sc
 	// (e.g., from synchronized output mode 2026) replaces the screen but
 	// the scrollback lines accumulated by the client — including any
 	// prepended from a server sync — should survive.
+	//
+	// The client's history may have grown past the server's scrollback
+	// count because terminal_events replayed before this snapshot pushed
+	// lines into history that are now part of the screen content in the
+	// snapshot. Trim to the server's count to avoid duplicates at the
+	// history/screen boundary.
 	var prevHistory [][]te.Cell
 	if t.hscreen != nil {
 		prevHistory = t.hscreen.History()
+		if serverScrollback > 0 && len(prevHistory) > serverScrollback {
+			prevHistory = prevHistory[:serverScrollback]
+		}
 	}
 	t.hscreen = te.NewHistoryScreen(width, height, 10000)
 	if len(prevHistory) > 0 {

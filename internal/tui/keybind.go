@@ -299,7 +299,7 @@ func allCommands() []*Command {
 		{Name: "prev-tab", Category: "tab", Layer: "session", Description: "previous tab"},
 		{Name: "switch-tab", Category: "tab", Layer: "session", Description: "switch to tab N"},
 		{Name: "scroll-up", Category: "tab", Layer: "session", Description: "enter scrollback / scroll up"},
-		{Name: "scroll-down", Category: "tab", Layer: "session", Description: "enter scrollback at bottom"},
+		{Name: "scroll-down", Category: "tab", Layer: "session", Description: "scroll down (in scrollback)"},
 	}
 }
 

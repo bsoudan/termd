@@ -347,15 +347,16 @@ func (s *Server) sendTerminalEvents(region Region) {
 // sync across snapshot, overlay, and subscribe paths.
 func newScreenUpdate(regionID string, snap Snapshot) protocol.ScreenUpdate {
 	return protocol.ScreenUpdate{
-		Type:      "screen_update",
-		RegionID:  regionID,
-		CursorRow: snap.CursorRow,
-		CursorCol: snap.CursorCol,
-		Lines:     snap.Lines,
-		Cells:     snap.Cells,
-		Modes:     snap.Modes,
-		Title:     snap.Title,
-		IconName:  snap.IconName,
+		Type:          "screen_update",
+		RegionID:      regionID,
+		CursorRow:     snap.CursorRow,
+		CursorCol:     snap.CursorCol,
+		Lines:         snap.Lines,
+		Cells:         snap.Cells,
+		Modes:         snap.Modes,
+		Title:         snap.Title,
+		IconName:      snap.IconName,
+		ScrollbackLen: snap.ScrollbackLen,
 	}
 }
 

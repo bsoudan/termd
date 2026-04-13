@@ -54,13 +54,14 @@ type Region interface {
 }
 
 type Snapshot struct {
-	Lines     []string
-	CursorRow uint16
-	CursorCol uint16
-	Cells     [][]protocol.ScreenCell
-	Modes     map[int]bool
-	Title     string
-	IconName  string
+	Lines         []string
+	CursorRow     uint16
+	CursorCol     uint16
+	Cells         [][]protocol.ScreenCell
+	Modes         map[int]bool
+	Title         string
+	IconName      string
+	ScrollbackLen int
 }
 
 // scrollbackSize is the maximum number of lines kept in the scrollback buffer.
@@ -468,13 +469,14 @@ func (r *PTYRegion) Snapshot() Snapshot {
 	}
 
 	return Snapshot{
-		Lines:     lines,
-		CursorRow: uint16(r.screen.Cursor.Row),
-		CursorCol: uint16(r.screen.Cursor.Col),
-		Cells:     cells,
-		Modes:     modes,
-		Title:     r.screen.Title,
-		IconName:  r.screen.IconName,
+		Lines:         lines,
+		CursorRow:     uint16(r.screen.Cursor.Row),
+		CursorCol:     uint16(r.screen.Cursor.Col),
+		Cells:         cells,
+		Modes:         modes,
+		Title:         r.screen.Title,
+		IconName:      r.screen.IconName,
+		ScrollbackLen: r.hscreen.Scrollback(),
 	}
 }
 

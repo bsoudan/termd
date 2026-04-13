@@ -167,15 +167,16 @@ type ScreenCell struct {
 }
 
 type ScreenUpdate struct {
-	Type      string         `json:"type"`
-	RegionID  string         `json:"region_id"`
-	CursorRow uint16         `json:"cursor_row"`
-	CursorCol uint16         `json:"cursor_col"`
-	Lines     []string       `json:"lines"`
-	Cells     [][]ScreenCell `json:"cells,omitempty"`
-	Modes     map[int]bool   `json:"modes,omitempty"`
-	Title     string         `json:"title,omitempty"`
-	IconName  string         `json:"icon_name,omitempty"`
+	Type          string         `json:"type"`
+	RegionID      string         `json:"region_id"`
+	CursorRow     uint16         `json:"cursor_row"`
+	CursorCol     uint16         `json:"cursor_col"`
+	Lines         []string       `json:"lines"`
+	Cells         [][]ScreenCell `json:"cells,omitempty"`
+	Modes         map[int]bool   `json:"modes,omitempty"`
+	Title         string         `json:"title,omitempty"`
+	IconName      string         `json:"icon_name,omitempty"`
+	ScrollbackLen int            `json:"scrollback_len,omitempty"`
 }
 
 type RegionDestroyed struct {
@@ -218,17 +219,18 @@ type StatusResponse struct {
 }
 
 type GetScreenResponse struct {
-	Type      string         `json:"type"`
-	RegionID  string         `json:"region_id"`
-	CursorRow uint16         `json:"cursor_row"`
-	CursorCol uint16         `json:"cursor_col"`
-	Lines     []string       `json:"lines"`
-	Cells     [][]ScreenCell `json:"cells,omitempty"`
-	Modes     map[int]bool   `json:"modes,omitempty"`
-	Title     string         `json:"title,omitempty"`
-	IconName  string         `json:"icon_name,omitempty"`
-	Error     bool           `json:"error"`
-	Message   string         `json:"message"`
+	Type          string         `json:"type"`
+	RegionID      string         `json:"region_id"`
+	CursorRow     uint16         `json:"cursor_row"`
+	CursorCol     uint16         `json:"cursor_col"`
+	Lines         []string       `json:"lines"`
+	Cells         [][]ScreenCell `json:"cells,omitempty"`
+	Modes         map[int]bool   `json:"modes,omitempty"`
+	Title         string         `json:"title,omitempty"`
+	IconName      string         `json:"icon_name,omitempty"`
+	ScrollbackLen int            `json:"scrollback_len,omitempty"`
+	Error         bool           `json:"error"`
+	Message       string         `json:"message"`
 }
 
 type KillRegionResponse struct {

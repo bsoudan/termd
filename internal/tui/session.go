@@ -453,9 +453,8 @@ func (s *SessionLayer) handleCmd(msg SessionCmd) (tea.Msg, tea.Cmd, bool) {
 		}
 		return nil, nil, true
 	case "scroll-down":
-		if t := s.activeTerm(); t != nil && !t.ScrollbackActive() {
-			t.EnterScrollback(0)
-		}
+		// scroll-down is only meaningful when already in scrollback
+		// (handled by ScrollbackLayer). It should not initiate scrollback.
 		return nil, nil, true
 	default:
 		return nil, nil, true

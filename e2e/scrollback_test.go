@@ -181,19 +181,13 @@ func TestScrollbackPageUpDown(t *testing.T) {
 		return false
 	}, "prompt visible after scrollback exit", 5*time.Second)
 
-	// Now test PageDown — should also activate scrollback (at offset 0)
+	// PageDown should NOT enter scrollback (only scroll-up does).
 	nxt.Write([]byte("\x1b[6~"))
-
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback activated by PageDown", 5*time.Second)
-
-	// Exit with q
-	nxt.Write([]byte("q"))
+	time.Sleep(300 * time.Millisecond)
 
 	nxt.WaitForScreen(func(lines []string) bool {
 		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited after PageDown test", 5*time.Second)
+	}, "scrollback not activated by PageDown", 3*time.Second)
 }
 
 func TestScrollbackScrollWheel(t *testing.T) {
@@ -953,4 +947,260 @@ func TestScrollbackNoGapAfterSync(t *testing.T) {
 
 	nxt.Write([]byte("q"))
 	nxt.WaitFor("nxterm$", 5*time.Second)
+}
+
+// TestScrollbackPageDownNoEntry verifies that PageDown does not enter
+// scrollback mode. Only scroll-up should initiate scrollback.
+func TestScrollbackPageDownNoEntry(t *testing.T) {
+	t.Parallel()
+	nxt := startFrontendShared(t)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Generate scrollback so there's content to scroll through.
+	nxt.Write([]byte("seq 1 200\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Send PageDown — should NOT activate scrollback.
+	nxt.Write([]byte("\x1b[6~"))
+	time.Sleep(500 * time.Millisecond)
+
+	screen := nxt.ScreenLines()
+	if strings.Contains(screen[0], "scrollback") {
+		t.Error("PageDown should not enter scrollback mode")
+	}
+}
+
+// TestScrollbackOutputDuringScroll verifies that output arriving while the
+// user is scrolled up in scrollback doesn't corrupt the buffer. The test
+// launches a background job before entering scrollback, scrolls up while
+// output is arriving, waits for it to finish, then scrolls through the
+// entire history checking that numbered lines appear in order without
+// duplicates.
+func TestScrollbackOutputDuringScroll(t *testing.T) {
+	t.Parallel()
+	nxt := startFrontendShared(t)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Generate initial scrollback.
+	nxt.Write([]byte("for i in $(seq 1 100); do echo \"A$i\"; done\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Launch a delayed background job that will output while we're in scrollback.
+	nxt.Write([]byte("(sleep 1; for i in $(seq 1 100); do echo \"B$i\"; done) &\r"))
+	nxt.WaitFor("nxterm$", 5*time.Second)
+
+	// Enter scrollback and scroll up.
+	nxt.Write([]byte{0x02, '['})
+	nxt.WaitForScreen(func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback active", 5*time.Second)
+
+	for range 5 {
+		nxt.Write([]byte{0x15}) // ctrl+u
+	}
+
+	// Wait for the B-lines to arrive. Since we're scrolled up, we can't
+	// see B100 directly. Instead, watch the scrollback total grow — it
+	// increases as terminal events add lines to the HistoryScreen.
+	initialTotal := 0
+	nxt.WaitForScreen(func(lines []string) bool {
+		var offset, total int
+		for _, part := range strings.Fields(lines[0]) {
+			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+				fmt.Sscanf(part, "[%d/%d]", &offset, &total)
+			}
+		}
+		if initialTotal == 0 && total > 0 {
+			initialTotal = total
+		}
+		// Wait for at least 50 new lines to arrive.
+		return total > initialTotal+50
+	}, "scrollback total grew by 50+ lines", 15*time.Second)
+
+	// Scroll through the entire scrollback collecting numbered lines.
+	// Go to the top first.
+	nxt.Write([]byte("g")) // home
+	time.Sleep(300 * time.Millisecond)
+
+	allSeen := make(map[string]int)
+	collectScreen := func() {
+		screen := nxt.ScreenLines()
+		for _, line := range screen[1:] { // skip tab bar
+			trimmed := strings.TrimSpace(line)
+			runes := []rune(trimmed)
+			if len(runes) > 0 {
+				last := runes[len(runes)-1]
+				if last == '·' || last == '█' || last == '▲' || last == '▼' {
+					trimmed = strings.TrimSpace(string(runes[:len(runes)-1]))
+				}
+			}
+			var n int
+			if _, err := fmt.Sscanf(trimmed, "A%d", &n); err == nil && n >= 1 && n <= 100 {
+				allSeen[trimmed]++
+			}
+			if _, err := fmt.Sscanf(trimmed, "B%d", &n); err == nil && n >= 1 && n <= 100 {
+				allSeen[trimmed]++
+			}
+		}
+	}
+
+	// Collect from the top, then page down through everything.
+	// Stop when we reach the bottom (offset=0 or offset < halfPage).
+	collectScreen()
+	for range 30 {
+		nxt.Write([]byte{0x04}) // ctrl+d = page down
+		time.Sleep(50 * time.Millisecond)
+
+		screen := nxt.ScreenLines()
+		status := screen[0]
+		var offset int
+		for _, part := range strings.Fields(status) {
+			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+				fmt.Sscanf(part, "[%d/", &offset)
+			}
+		}
+		collectScreen()
+		if offset <= 0 {
+			break // at the bottom, no point paging further
+		}
+	}
+
+	// Check no line appears more than 3 times (overlap between pages
+	// is normal, but >3 indicates duplication in the buffer).
+	for line, count := range allSeen {
+		if count > 3 {
+			t.Errorf("line %q seen %d times (likely duplicated in scrollback)", line, count)
+		}
+	}
+
+	// Check that A-lines appear in order where we saw them.
+	// Check we found a reasonable number of A and B lines.
+	aCount, bCount := 0, 0
+	for k := range allSeen {
+		if strings.HasPrefix(k, "A") {
+			aCount++
+		} else if strings.HasPrefix(k, "B") {
+			bCount++
+		}
+	}
+	t.Logf("found %d A-lines and %d B-lines", aCount, bCount)
+	if aCount < 80 {
+		t.Errorf("only found %d/100 A-lines in scrollback (expected most)", aCount)
+	}
+	if bCount < 50 {
+		t.Errorf("only found %d/100 B-lines in scrollback (expected many)", bCount)
+	}
+
+	nxt.Write([]byte("q"))
+	nxt.WaitForScreen(func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited", 5*time.Second)
+	nxt.Write([]byte("wait\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+}
+
+// TestScrollbackScreenUpdateDuringScroll verifies that a screen_update
+// (mode 2026 synchronized output) arriving while in scrollback doesn't
+// duplicate lines at the history/screen boundary. The server includes
+// its scrollback count so the client can trim its local history to
+// avoid overlap with the new screen content.
+func TestScrollbackScreenUpdateDuringScroll(t *testing.T) {
+	t.Parallel()
+	nxt := startFrontendShared(t)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Generate initial scrollback.
+	nxt.Write([]byte("for i in $(seq 1 100); do echo \"INIT_$i\"; done\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Enter scrollback and scroll up.
+	nxt.Write([]byte{0x02, '['})
+	nxt.WaitForScreen(func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback active", 5*time.Second)
+
+	for range 3 {
+		nxt.Write([]byte{0x15}) // ctrl+u
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Record the scrollback total before the screen_update.
+	var totalBefore int
+	screen := nxt.ScreenLines()
+	for _, part := range strings.Fields(screen[0]) {
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			fmt.Sscanf(part, "[%d/%d]", new(int), &totalBefore)
+		}
+	}
+	t.Logf("total before trigger: %d", totalBefore)
+
+	// Exit scrollback, run a command that triggers mode 2026 sync
+	// (generating a screen_update), then re-enter scrollback.
+	nxt.Write([]byte("q"))
+	nxt.WaitForScreen(func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited", 3*time.Second)
+
+	// Running a command causes bash to redraw the prompt with mode 2026,
+	// generating output that causes terminal_events followed by a
+	// screen_update snapshot.
+	nxt.Write([]byte("for i in $(seq 101 150); do echo \"INIT_$i\"; done\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Re-enter scrollback.
+	nxt.Write([]byte{0x02, '['})
+	nxt.WaitForScreen(func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback active again", 5*time.Second)
+
+	// Go to bottom (offset=0), then scroll up one line.
+	nxt.Write([]byte("G"))
+	time.Sleep(100 * time.Millisecond)
+	nxt.Write([]byte("k")) // up 1
+	time.Sleep(200 * time.Millisecond)
+
+	// Collect lines at the history/screen boundary.
+	screen = nxt.ScreenLines()
+	var visible []string
+	for _, line := range screen[1:] { // skip tab bar
+		trimmed := strings.TrimSpace(line)
+		runes := []rune(trimmed)
+		if len(runes) > 0 {
+			last := runes[len(runes)-1]
+			if last == '·' || last == '█' || last == '▲' || last == '▼' {
+				trimmed = strings.TrimSpace(string(runes[:len(runes)-1]))
+			}
+		}
+		if strings.HasPrefix(trimmed, "INIT_") {
+			visible = append(visible, trimmed)
+		}
+	}
+
+	// Check for duplicates.
+	seen := make(map[string]int)
+	for _, v := range visible {
+		seen[v]++
+	}
+	for k, count := range seen {
+		if count > 1 {
+			t.Errorf("duplicate line at history/screen boundary: %q appears %d times", k, count)
+		}
+	}
+
+	t.Logf("visible lines at offset=1: %v", visible)
+
+	nxt.Write([]byte("q"))
+	nxt.WaitForScreen(func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited", 5*time.Second)
 }

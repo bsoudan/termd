@@ -611,17 +611,18 @@ func (c *Client) handleGetScreen(msg protocol.GetScreenRequest, reply func(any))
 		snap = compositeSnapshot(snap, ov)
 	}
 	reply(protocol.GetScreenResponse{
-		Type:      "get_screen_response",
-		RegionID:  region.ID(),
-		CursorRow: snap.CursorRow,
-		CursorCol: snap.CursorCol,
-		Lines:     snap.Lines,
-		Cells:     snap.Cells,
-		Modes:     snap.Modes,
-		Title:     snap.Title,
-		IconName:  snap.IconName,
-		Error:     false,
-		Message:   "",
+		Type:          "get_screen_response",
+		RegionID:      region.ID(),
+		CursorRow:     snap.CursorRow,
+		CursorCol:     snap.CursorCol,
+		Lines:         snap.Lines,
+		Cells:         snap.Cells,
+		Modes:         snap.Modes,
+		Title:         snap.Title,
+		IconName:      snap.IconName,
+		ScrollbackLen: snap.ScrollbackLen,
+		Error:         false,
+		Message:       "",
 	})
 }
 
