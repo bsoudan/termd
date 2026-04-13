@@ -212,129 +212,78 @@ type envelope struct {
 	ReqID uint64 `json:"req_id,omitempty"`
 }
 
+type msgHandler = func(*Client, []byte, func(any))
+
+func withMsg[T any](fn func(*Client, T, func(any))) msgHandler {
+	return func(c *Client, line []byte, reply func(any)) {
+		var msg T
+		if json.Unmarshal(line, &msg) == nil {
+			fn(c, msg, reply)
+		}
+	}
+}
+
+func withMsgOnly[T any](fn func(*Client, T)) msgHandler {
+	return func(c *Client, line []byte, _ func(any)) {
+		var msg T
+		if json.Unmarshal(line, &msg) == nil {
+			fn(c, msg)
+		}
+	}
+}
+
+func withReplyOnly(fn func(*Client, func(any))) msgHandler {
+	return func(c *Client, _ []byte, reply func(any)) {
+		fn(c, reply)
+	}
+}
+
+var messageHandlers = map[string]msgHandler{
+	"identify":               withMsgOnly((*Client).handleIdentify),
+	"spawn_request":          withMsg((*Client).handleSpawn),
+	"subscribe_request":      withMsg((*Client).handleSubscribe),
+	"input":                  withMsgOnly((*Client).handleInput),
+	"resize_request":         withMsg((*Client).handleResize),
+	"list_regions_request":   withMsg((*Client).handleListRegions),
+	"status_request":         withReplyOnly((*Client).handleStatus),
+	"get_screen_request":     withMsg((*Client).handleGetScreen),
+	"get_scrollback_request": withMsg((*Client).handleGetScrollback),
+	"kill_region_request":    withMsg((*Client).handleKillRegion),
+	"list_clients_request":   withReplyOnly((*Client).handleListClients),
+	"kill_client_request":    withMsg((*Client).handleKillClient),
+	"unsubscribe_request":    withMsg((*Client).handleUnsubscribe),
+	"session_connect_request": withMsg((*Client).handleSessionConnect),
+	"list_sessions_request":  withReplyOnly((*Client).handleListSessions),
+	"list_programs_request":  withReplyOnly((*Client).handleListPrograms),
+	"add_program_request":    withMsg((*Client).handleAddProgram),
+	"remove_program_request": withMsg((*Client).handleRemoveProgram),
+	"upgrade_check_request":  withMsg((*Client).handleUpgradeCheck),
+	"server_upgrade_request": withReplyOnly((*Client).handleServerUpgrade),
+	"client_binary_request":  withMsg((*Client).handleClientBinaryDownload),
+	"overlay_register":       withMsg((*Client).handleOverlayRegister),
+	"overlay_render":         withMsgOnly((*Client).handleOverlayRender),
+	"overlay_clear":          withMsgOnly((*Client).handleOverlayClear),
+	"tree_resync_request": func(c *Client, _ []byte, _ func(any)) {
+		c.server.send(treeSnapshotReq{clientID: c.id})
+	},
+	"disconnect": func(c *Client, _ []byte, _ func(any)) {
+		slog.Info("client disconnecting gracefully", "client_id", c.id)
+		c.Close()
+	},
+}
+
 func (c *Client) handleMessage(line []byte) {
 	var env envelope
 	if err := json.Unmarshal(line, &env); err != nil {
 		slog.Debug("parse error", "client_id", c.id, "err", err)
 		return
 	}
-
-	reply := c.replyFunc(env.ReqID)
-
-	switch env.Type {
-	case "identify":
-		var msg protocol.Identify
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleIdentify(msg)
-		}
-	case "spawn_request":
-		var msg protocol.SpawnRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleSpawn(msg, reply)
-		}
-	case "subscribe_request":
-		var msg protocol.SubscribeRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleSubscribe(msg, reply)
-		}
-	case "input":
-		var msg protocol.InputMsg
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleInput(msg)
-		}
-	case "resize_request":
-		var msg protocol.ResizeRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleResize(msg, reply)
-		}
-	case "list_regions_request":
-		var msg protocol.ListRegionsRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleListRegions(msg, reply)
-		}
-	case "status_request":
-		c.handleStatus(reply)
-	case "get_screen_request":
-		var msg protocol.GetScreenRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleGetScreen(msg, reply)
-		}
-	case "get_scrollback_request":
-		var msg protocol.GetScrollbackRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleGetScrollback(msg, reply)
-		}
-	case "kill_region_request":
-		var msg protocol.KillRegionRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleKillRegion(msg, reply)
-		}
-	case "list_clients_request":
-		c.handleListClients(reply)
-	case "kill_client_request":
-		var msg protocol.KillClientRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleKillClient(msg, reply)
-		}
-	case "unsubscribe_request":
-		var msg protocol.UnsubscribeRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleUnsubscribe(msg, reply)
-		}
-	case "session_connect_request":
-		var msg protocol.SessionConnectRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleSessionConnect(msg, reply)
-		}
-	case "list_sessions_request":
-		c.handleListSessions(reply)
-	case "list_programs_request":
-		c.handleListPrograms(reply)
-	case "add_program_request":
-		var msg protocol.AddProgramRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleAddProgram(msg, reply)
-		}
-	case "remove_program_request":
-		var msg protocol.RemoveProgramRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleRemoveProgram(msg, reply)
-		}
-	case "upgrade_check_request":
-		var msg protocol.UpgradeCheckRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleUpgradeCheck(msg, reply)
-		}
-	case "server_upgrade_request":
-		c.handleServerUpgrade(reply)
-	case "client_binary_request":
-		var msg protocol.ClientBinaryRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleClientBinaryDownload(msg, reply)
-		}
-	case "overlay_register":
-		var msg protocol.OverlayRegisterRequest
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleOverlayRegister(msg, reply)
-		}
-	case "overlay_render":
-		var msg protocol.OverlayRender
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleOverlayRender(msg)
-		}
-	case "overlay_clear":
-		var msg protocol.OverlayClear
-		if json.Unmarshal(line, &msg) == nil {
-			c.handleOverlayClear(msg)
-		}
-	case "tree_resync_request":
-		c.server.send(treeSnapshotReq{clientID: c.id})
-	case "disconnect":
-		slog.Info("client disconnecting gracefully", "client_id", c.id)
-		c.Close()
-	default:
+	handler, ok := messageHandlers[env.Type]
+	if !ok {
 		slog.Debug("unknown message type", "client_id", c.id, "type", env.Type)
+		return
 	}
+	handler(c, line, c.replyFunc(env.ReqID))
 }
 
 func (c *Client) handleOverlayRegister(msg protocol.OverlayRegisterRequest, reply func(any)) {

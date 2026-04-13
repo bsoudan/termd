@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 // ── Outbound (frontend/termctl → server) ────────────────────────────────────
@@ -468,104 +469,51 @@ func ParseInbound(line []byte) (Message, error) {
 	return Message{ReqID: env.ReqID, Payload: payload}, nil
 }
 
+func parseAs[T any](data []byte) (any, error) {
+	var msg T
+	return msg, json.Unmarshal(data, &msg)
+}
+
+var payloadParsers = map[string]func([]byte) (any, error){
+	"identify":                  parseAs[Identify],
+	"spawn_response":            parseAs[SpawnResponse],
+	"subscribe_response":        parseAs[SubscribeResponse],
+	"resize_response":           parseAs[ResizeResponse],
+	"region_created":            parseAs[RegionCreated],
+	"screen_update":             parseAs[ScreenUpdate],
+	"region_destroyed":          parseAs[RegionDestroyed],
+	"list_regions_response":     parseAs[ListRegionsResponse],
+	"status_response":           parseAs[StatusResponse],
+	"get_screen_response":       parseAs[GetScreenResponse],
+	"kill_region_response":      parseAs[KillRegionResponse],
+	"list_clients_response":     parseAs[ListClientsResponse],
+	"kill_client_response":      parseAs[KillClientResponse],
+	"get_scrollback_response":   parseAs[GetScrollbackResponse],
+	"terminal_events":           parseAs[TerminalEvents],
+	"unsubscribe_response":      parseAs[UnsubscribeResponse],
+	"session_connect_response":  parseAs[SessionConnectResponse],
+	"list_sessions_response":    parseAs[ListSessionsResponse],
+	"list_programs_response":    parseAs[ListProgramsResponse],
+	"add_program_response":      parseAs[AddProgramResponse],
+	"remove_program_response":   parseAs[RemoveProgramResponse],
+	"upgrade_check_response":    parseAs[UpgradeCheckResponse],
+	"server_upgrade_response":   parseAs[ServerUpgradeResponse],
+	"server_upgrade_status":     parseAs[ServerUpgradeStatus],
+	"client_binary_chunk":       parseAs[ClientBinaryChunk],
+	"client_binary_response":    parseAs[ClientBinaryResponse],
+	"overlay_register_response": parseAs[OverlayRegisterResponse],
+	"overlay_input":             parseAs[OverlayInput],
+	"tree_snapshot":             parseAs[TreeSnapshot],
+	"tree_events":               parseAs[TreeEvents],
+	"tree_resync_request":       parseAs[TreeResyncRequest],
+}
+
 func parsePayload(typ string, line []byte) (any, error) {
-	switch typ {
-	case "identify":
-		var msg Identify
-		return msg, json.Unmarshal(line, &msg)
-	case "spawn_response":
-		var msg SpawnResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "subscribe_response":
-		var msg SubscribeResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "resize_response":
-		var msg ResizeResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "region_created":
-		var msg RegionCreated
-		return msg, json.Unmarshal(line, &msg)
-	case "screen_update":
-		var msg ScreenUpdate
-		return msg, json.Unmarshal(line, &msg)
-	case "region_destroyed":
-		var msg RegionDestroyed
-		return msg, json.Unmarshal(line, &msg)
-	case "list_regions_response":
-		var msg ListRegionsResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "status_response":
-		var msg StatusResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "get_screen_response":
-		var msg GetScreenResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "kill_region_response":
-		var msg KillRegionResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "list_clients_response":
-		var msg ListClientsResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "kill_client_response":
-		var msg KillClientResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "get_scrollback_response":
-		var msg GetScrollbackResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "terminal_events":
-		var msg TerminalEvents
-		return msg, json.Unmarshal(line, &msg)
-	case "unsubscribe_response":
-		var msg UnsubscribeResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "session_connect_response":
-		var msg SessionConnectResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "list_sessions_response":
-		var msg ListSessionsResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "list_programs_response":
-		var msg ListProgramsResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "add_program_response":
-		var msg AddProgramResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "remove_program_response":
-		var msg RemoveProgramResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "upgrade_check_response":
-		var msg UpgradeCheckResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "server_upgrade_response":
-		var msg ServerUpgradeResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "server_upgrade_status":
-		var msg ServerUpgradeStatus
-		return msg, json.Unmarshal(line, &msg)
-	case "client_binary_chunk":
-		var msg ClientBinaryChunk
-		return msg, json.Unmarshal(line, &msg)
-	case "client_binary_response":
-		var msg ClientBinaryResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "overlay_register_response":
-		var msg OverlayRegisterResponse
-		return msg, json.Unmarshal(line, &msg)
-	case "overlay_input":
-		var msg OverlayInput
-		return msg, json.Unmarshal(line, &msg)
-	case "tree_snapshot":
-		var msg TreeSnapshot
-		return msg, json.Unmarshal(line, &msg)
-	case "tree_events":
-		var msg TreeEvents
-		return msg, json.Unmarshal(line, &msg)
-	case "tree_resync_request":
-		var msg TreeResyncRequest
-		return msg, json.Unmarshal(line, &msg)
-	default:
+	parser, ok := payloadParsers[typ]
+	if !ok {
 		return nil, fmt.Errorf("unknown message type: %s", typ)
 	}
+	return parser(line)
 }
 
 // UnwrapTagged returns the inner Msg if msg is a tagged wrapper,
@@ -626,67 +574,41 @@ func TaggedWithReqID(msg any, reqID uint64) any {
 	return tagged{Type: tag, ReqID: reqID, Msg: msg}
 }
 
+var typeTagMap = map[reflect.Type]string{
+	reflect.TypeOf(Identify{}):              "identify",
+	reflect.TypeOf(SpawnRequest{}):           "spawn_request",
+	reflect.TypeOf(SubscribeRequest{}):       "subscribe_request",
+	reflect.TypeOf(InputMsg{}):               "input",
+	reflect.TypeOf(ResizeRequest{}):          "resize_request",
+	reflect.TypeOf(ListRegionsRequest{}):     "list_regions_request",
+	reflect.TypeOf(StatusRequest{}):          "status_request",
+	reflect.TypeOf(GetScreenRequest{}):       "get_screen_request",
+	reflect.TypeOf(KillRegionRequest{}):      "kill_region_request",
+	reflect.TypeOf(ListClientsRequest{}):     "list_clients_request",
+	reflect.TypeOf(KillClientRequest{}):      "kill_client_request",
+	reflect.TypeOf(GetScrollbackRequest{}):   "get_scrollback_request",
+	reflect.TypeOf(UnsubscribeRequest{}):     "unsubscribe_request",
+	reflect.TypeOf(SessionConnectRequest{}):  "session_connect_request",
+	reflect.TypeOf(ListSessionsRequest{}):    "list_sessions_request",
+	reflect.TypeOf(ListProgramsRequest{}):    "list_programs_request",
+	reflect.TypeOf(AddProgramRequest{}):      "add_program_request",
+	reflect.TypeOf(RemoveProgramRequest{}):   "remove_program_request",
+	reflect.TypeOf(UpgradeCheckRequest{}):    "upgrade_check_request",
+	reflect.TypeOf(ServerUpgradeRequest{}):   "server_upgrade_request",
+	reflect.TypeOf(ServerUpgradeStatus{}):    "server_upgrade_status",
+	reflect.TypeOf(ClientBinaryRequest{}):    "client_binary_request",
+	reflect.TypeOf(Disconnect{}):             "disconnect",
+	reflect.TypeOf(OverlayRegisterRequest{}): "overlay_register",
+	reflect.TypeOf(OverlayRender{}):          "overlay_render",
+	reflect.TypeOf(OverlayClear{}):           "overlay_clear",
+	reflect.TypeOf(TreeSnapshot{}):           "tree_snapshot",
+	reflect.TypeOf(TreeEvents{}):             "tree_events",
+	reflect.TypeOf(TreeResyncRequest{}):      "tree_resync_request",
+}
+
 func typeTag(msg any) string {
-	switch msg.(type) {
-	case Identify:
-		return "identify"
-	case SpawnRequest:
-		return "spawn_request"
-	case SubscribeRequest:
-		return "subscribe_request"
-	case InputMsg:
-		return "input"
-	case ResizeRequest:
-		return "resize_request"
-	case ListRegionsRequest:
-		return "list_regions_request"
-	case StatusRequest:
-		return "status_request"
-	case GetScreenRequest:
-		return "get_screen_request"
-	case KillRegionRequest:
-		return "kill_region_request"
-	case ListClientsRequest:
-		return "list_clients_request"
-	case KillClientRequest:
-		return "kill_client_request"
-	case GetScrollbackRequest:
-		return "get_scrollback_request"
-	case UnsubscribeRequest:
-		return "unsubscribe_request"
-	case SessionConnectRequest:
-		return "session_connect_request"
-	case ListSessionsRequest:
-		return "list_sessions_request"
-	case ListProgramsRequest:
-		return "list_programs_request"
-	case AddProgramRequest:
-		return "add_program_request"
-	case RemoveProgramRequest:
-		return "remove_program_request"
-	case UpgradeCheckRequest:
-		return "upgrade_check_request"
-	case ServerUpgradeRequest:
-		return "server_upgrade_request"
-	case ServerUpgradeStatus:
-		return "server_upgrade_status"
-	case ClientBinaryRequest:
-		return "client_binary_request"
-	case Disconnect:
-		return "disconnect"
-	case OverlayRegisterRequest:
-		return "overlay_register"
-	case OverlayRender:
-		return "overlay_render"
-	case OverlayClear:
-		return "overlay_clear"
-	case TreeSnapshot:
-		return "tree_snapshot"
-	case TreeEvents:
-		return "tree_events"
-	case TreeResyncRequest:
-		return "tree_resync_request"
-	default:
-		return ""
+	if tag, ok := typeTagMap[reflect.TypeOf(msg)]; ok {
+		return tag
 	}
+	return ""
 }
