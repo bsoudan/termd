@@ -26,7 +26,7 @@ type ScrollbackLayer struct {
 	term         *TerminalLayer // reference to the terminal for history + screen
 	serverTotal  int            // total server scrollback lines (0 until first chunk)
 	synced       bool           // true once all server chunks have arrived
-	syncBuf      [][]te.Cell    // server chunks accumulated oldest-first
+	syncBuf      [][]te.Cell    // server lines in oldest-first order (built by prepending newest-first chunks)
 	localAtEntry int            // local scrollback count when scrollback was entered
 }
 
@@ -63,10 +63,11 @@ func (s *ScrollbackLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	return nil, nil, false // pass through (terminal events, etc.)
 }
 
-// handleSyncChunk accumulates server scrollback chunks. Once all
-// chunks have arrived, the older lines the client missed are
-// prepended to the local HistoryScreen. While chunks are streaming,
-// the user can still scroll — unloaded regions render as x-markers.
+// handleSyncChunk accumulates server scrollback chunks. Chunks arrive
+// newest-first so the lines closest to the user's view load first.
+// Each chunk is prepended to syncBuf so it stays in oldest-first order.
+// While chunks are streaming, the user can scroll — unloaded regions
+// render as x-markers.
 func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	if msg.Error {
 		slog.Debug("scrollback sync error", "message", msg.Message)
@@ -77,7 +78,9 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	s.serverTotal = msg.Total
 	slog.Debug("scrollback sync chunk", "lines", len(msg.Lines), "total", msg.Total, "done", msg.Done, "buf_so_far", len(s.syncBuf))
 
-	for _, row := range msg.Lines {
+	// Convert protocol cells to te.Cell.
+	chunk := make([][]te.Cell, len(msg.Lines))
+	for j, row := range msg.Lines {
 		cells := make([]te.Cell, len(row))
 		for i, c := range row {
 			cells[i].Data = c.Char
@@ -91,8 +94,14 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 			cells[i].Attr.Blink = c.A&32 != 0
 			cells[i].Attr.Conceal = c.A&64 != 0
 		}
-		s.syncBuf = append(s.syncBuf, cells)
+		chunk[j] = cells
 	}
+	// Prepend: chunks arrive newest-first, so each new chunk is older
+	// and goes in front to maintain oldest-first order in syncBuf.
+	combined := make([][]te.Cell, 0, len(chunk)+len(s.syncBuf))
+	combined = append(combined, chunk...)
+	combined = append(combined, s.syncBuf...)
+	s.syncBuf = combined
 
 	if !msg.Done {
 		return
@@ -215,21 +224,20 @@ func scrollbarGeometry(height, totalLines, offset int) (thumbStart, thumbLen int
 func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.Layer {
 	history := s.term.ScrollbackLines()
 	screenCells := s.term.ScreenCells()
-	syncBufLen := len(s.syncBuf) // loaded server lines (oldest-first)
+	syncBufLen := len(s.syncBuf)
 
-	// Layout: syncBuf | gap (unloaded) | local history | screen
-	// syncBuf contains the oldest server lines received so far.
-	// gap = serverTotal - syncBufLen - localHistoryLen (not yet loaded).
-	// local history = lines accumulated from terminal events.
+	// Layout: gap (unloaded oldest) | syncBuf (loaded) | local history | screen
+	// Chunks arrive newest-first, so syncBuf fills from the bottom up:
+	// the most recent server lines (adjacent to local history) load
+	// first, and the gap at the top shrinks as older chunks stream in.
 	// After sync completes, syncBuf is cleared and all loadable lines
-	// are in local history — any remaining difference vs serverTotal
-	// is due to capacity limits, not unloaded data, so gap is 0.
+	// are in local history — gap is 0.
 	localLen := len(history)
 	gapLen := 0
 	if !s.synced && s.serverTotal > syncBufLen+localLen {
 		gapLen = s.serverTotal - syncBufLen - localLen
 	}
-	totalLines := syncBufLen + gapLen + localLen + len(screenCells)
+	totalLines := gapLen + syncBufLen + localLen + len(screenCells)
 	totalScrollback := s.scrollbackTotal()
 
 	offset := s.offset
@@ -242,19 +250,16 @@ func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.L
 		startIdx = 0
 	}
 
-	// Region boundaries.
-	syncEnd := syncBufLen
-	gapEnd := syncEnd + gapLen
-	histEnd := gapEnd + localLen
+	// Region boundaries: gap | sync | local history | screen.
+	gapEnd := gapLen
+	syncEnd := gapEnd + syncBufLen
+	histEnd := syncEnd + localLen
 
 	// Content layer.
 	var sb strings.Builder
 	for i := range height {
 		idx := startIdx + i
-		if idx < syncEnd {
-			// Loaded server scrollback.
-			renderCellLine(&sb, s.syncBuf[idx], width, i, -1, -1, false, false, false)
-		} else if idx < gapEnd {
+		if idx < gapEnd {
 			// Unloaded gap: x markers with spacing.
 			for col := range width {
 				if idx%2 == 0 && col%2 == 0 {
@@ -263,9 +268,12 @@ func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.L
 					sb.WriteByte(' ')
 				}
 			}
+		} else if idx < syncEnd {
+			// Loaded server scrollback (oldest-first in syncBuf).
+			renderCellLine(&sb, s.syncBuf[idx-gapEnd], width, i, -1, -1, false, false, false)
 		} else if idx < histEnd {
 			// Local history (from terminal events).
-			renderCellLine(&sb, history[idx-gapEnd], width, i, -1, -1, false, false, false)
+			renderCellLine(&sb, history[idx-syncEnd], width, i, -1, -1, false, false, false)
 		} else {
 			// Screen.
 			screenIdx := idx - histEnd
@@ -303,7 +311,7 @@ func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.L
 		} else {
 			// Show dots for loaded regions, spaces for gap.
 			contentPos := i * totalLines / height
-			if contentPos < syncEnd || contentPos >= gapEnd {
+			if contentPos >= gapEnd {
 				bar.WriteString(scrollbarTrackStyle.Render(scrollbarTrack))
 			} else {
 				bar.WriteByte(' ')

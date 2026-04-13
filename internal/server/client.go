@@ -570,9 +570,12 @@ func (c *Client) handleGetScrollback(msg protocol.GetScrollbackRequest, reply fu
 	total := len(lines)
 	regionID := region.ID()
 
+	// Send chunks newest-first so the client can render recent lines
+	// (adjacent to its local history) before older ones stream in.
 	for len(lines) > scrollbackChunkSize {
-		chunk := lines[:scrollbackChunkSize]
-		lines = lines[scrollbackChunkSize:]
+		start := len(lines) - scrollbackChunkSize
+		chunk := lines[start:]
+		lines = lines[:start]
 		reply(protocol.GetScrollbackResponse{
 			Type:     "get_scrollback_response",
 			RegionID: regionID,
