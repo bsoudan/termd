@@ -130,3 +130,37 @@ func TestCloseTab(t *testing.T) {
 	nxt.Write([]byte("echo STILL_ALIVE\r"))
 	nxt.WaitFor("STILL_ALIVE", 10*time.Second)
 }
+
+// TestSpawnNoGhostTab verifies that spawning a new region creates exactly
+// one tab, not two. A ghost tab would appear if both the SpawnResponse
+// and tree sync each create a tab for the same region.
+func TestSpawnNoGhostTab(t *testing.T) {
+	t.Parallel()
+	nxt := startFrontendShared(t)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Spawn a second region.
+	nxt.Write([]byte("\x02c"))
+	nxt.WaitFor("1:bash", 10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Wait a moment for any delayed tree events to be processed.
+	time.Sleep(500 * time.Millisecond)
+
+	// The tab bar should show exactly 2 tabs: "1:bash" (inactive) and
+	// " 2 " (active). A ghost tab would show "3:bash" or "3:" as a
+	// third tab label.
+	screen := nxt.ScreenLines()
+	tabBar := screen[0]
+	if strings.Contains(tabBar, "3:") {
+		t.Errorf("ghost tab detected: tab bar shows a third tab: %q", tabBar)
+	}
+	// Tab 2 is active, so it renders as " 2 " (no program name).
+	// If it shows "2:bash" that means tab 2 is inactive and something
+	// else (a ghost tab) is active.
+	if strings.Contains(tabBar, "2:bash") {
+		t.Errorf("tab 2 appears inactive (ghost tab is active): %q", tabBar)
+	}
+}

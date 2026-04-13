@@ -317,10 +317,12 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			s.status = ""
 			return nil, nil, true
 		}
-		s.Deactivate()
-		s.tabs = append(s.tabs, tab{regionID: msg.RegionID, regionName: msg.Name})
-		s.activeTab = len(s.tabs) - 1
-		s.Activate()
+		// The tab is created by syncFromTree when the tree event arrives
+		// (which the server broadcasts before sending this response).
+		// Just switch to it if it already exists.
+		if idx := s.findTabIndex(msg.RegionID); idx >= 0 {
+			s.switchToTab(idx)
+		}
 		return nil, nil, true
 
 	case protocol.SubscribeResponse:
