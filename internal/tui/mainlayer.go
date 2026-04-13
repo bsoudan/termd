@@ -84,7 +84,6 @@ type MainLayer struct {
 	// program and rawCh are set by Run and used by the event loop.
 	program       *tea.Program
 	rawCh         <-chan RawInputMsg
-	quitRequested bool
 
 	// focusBuf holds raw input buffered for one-at-a-time sequence
 	// processing when a focus-routing layer is active. Between each
@@ -281,15 +280,16 @@ func (m *MainLayer) Deactivate() {
 
 func (m *MainLayer) quit() (tea.Msg, tea.Cmd) {
 	m.Deactivate()
-	m.server.Send(protocol.Disconnect{})
 	return nil, tea.Quit
 }
 
 func (m *MainLayer) detach() (tea.Msg, tea.Cmd) {
 	m.Deactivate()
-	m.server.Send(protocol.Disconnect{})
-	detachCmd := func() tea.Msg { return DetachMsg{} }
-	return nil, tea.Batch(detachCmd, tea.Quit)
+	m.Detached = true
+	// Don't send protocol.Disconnect here — it races with the quit
+	// by triggering a reconnect loop. The shutdown path in main.go
+	// calls server.Close() which handles the disconnect cleanly.
+	return nil, tea.Quit
 }
 
 func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
@@ -761,19 +761,11 @@ func (m *MainLayer) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 		default:
 		}
 
-		// Check quit after priority drain — a bubbletea message
-		// (e.g. detach via command palette) may have set it.
-		if m.quitRequested {
-			p.Stop(nil)
-			return nil
-		}
-
 		// Process one buffered focus-mode sequence before blocking
 		// for new input, so priority channels get checked between
 		// every keystroke.
 		if len(m.focusBuf) > 0 {
-			m.stepFocusSequence()
-			if m.quitRequested {
+			if err := m.stepFocusSequence(); err != nil {
 				p.Stop(nil)
 				return nil
 			}
@@ -790,8 +782,7 @@ func (m *MainLayer) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 			}
 
 		case raw := <-rawCh:
-			m.processRawInput(raw)
-			if m.quitRequested {
+			if err := m.processRawInput(raw); err != nil {
 				p.Stop(nil)
 				return nil
 			}
@@ -817,15 +808,16 @@ func (m *MainLayer) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 // stepFocusSequence consumes one ANSI sequence from focusBuf and
 // sends it through pipeW. If focus routing is no longer active (a
 // layer was popped by a previous keystroke), the remaining buffer is
-// re-processed as normal raw input.
-func (m *MainLayer) stepFocusSequence() {
+// re-processed as normal raw input. Returns an error if p.Handle
+// fails (e.g. QuitMsg → ErrProgramQuit).
+func (m *MainLayer) stepFocusSequence() error {
 	if !needsFocusRouting(m.stack) {
 		rest := m.focusBuf
 		m.focusBuf = nil
 		if len(rest) > 0 {
-			m.processRawInput(RawInputMsg(rest))
+			return m.processRawInput(RawInputMsg(rest))
 		}
-		return
+		return nil
 	}
 
 	_, _, n, _ := ansi.DecodeSequence(m.focusBuf, ansi.NormalState, nil)
@@ -845,34 +837,30 @@ func (m *MainLayer) stepFocusSequence() {
 	go m.pipeW.Write(seq)
 	msg := <-m.program.Msgs()
 	if _, err := m.program.Handle(msg); err != nil {
-		m.quitRequested = true
-		return
+		return err
 	}
 	for {
 		select {
 		case msg := <-m.program.Msgs():
 			if _, err := m.program.Handle(msg); err != nil {
-				m.quitRequested = true
-				return
+				return err
 			}
 		case <-time.After(time.Millisecond):
-			return
+			return nil
 		}
 	}
 }
 
-// processRawInput handles raw bytes from stdin.
-func (m *MainLayer) processRawInput(raw RawInputMsg) {
+// processRawInput handles raw bytes from stdin. Returns an error if
+// a command produces a QuitMsg (the caller should exit).
+func (m *MainLayer) processRawInput(raw RawInputMsg) error {
 	if m.commandMode {
 		cmd := m.handleCommandInput([]byte(raw))
-		m.execCmdSync(cmd)
-		return
+		return m.execCmdSync(cmd)
 	}
 	if needsFocusRouting(m.stack) {
-		// Buffer for one-at-a-time processing — the main loop
-		// drains priority channels between each sequence.
 		m.focusBuf = append(m.focusBuf, raw...)
-		return
+		return nil
 	}
 	if idx := bytes.IndexByte([]byte(raw), m.registry.PrefixKey); idx >= 0 {
 		if idx > 0 {
@@ -880,58 +868,53 @@ func (m *MainLayer) processRawInput(raw RawInputMsg) {
 		}
 		m.enterCommandMode()
 		if rest := raw[idx+1:]; len(rest) > 0 {
-			m.execCmdSync(m.handleCommandInput(rest))
+			return m.execCmdSync(m.handleCommandInput(rest))
 		}
-		return
+		return nil
 	}
-	// Normal mode — forward to active session.
 	if s := m.activeSessionLayer(); s != nil {
 		_, cmd := s.handleRawInput([]byte(raw))
 		if cmd != nil {
-			m.execCmdSync(cmd)
+			return m.execCmdSync(cmd)
 		}
 	}
+	return nil
 }
 
-// execCmdSync executes a tea.Cmd synchronously. Handles RawInputMsg
-// re-sends recursively; other messages go through bubbletea.
-func (m *MainLayer) execCmdSync(cmd tea.Cmd) {
+// execCmdSync executes a tea.Cmd synchronously. Returns an error if
+// a QuitMsg is produced (the caller should exit the event loop).
+func (m *MainLayer) execCmdSync(cmd tea.Cmd) error {
 	if cmd == nil {
-		return
+		return nil
 	}
 	msg := cmd()
 	if msg == nil {
-		return
+		return nil
 	}
 	// Handle batch commands (from handleCommandInput when there's
 	// remaining input after the matched chord).
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, c := range batch {
-			m.execCmdSync(c)
+			if err := m.execCmdSync(c); err != nil {
+				return err
+			}
 		}
-		return
+		return nil
 	}
 	if raw, ok := msg.(RawInputMsg); ok {
 		m.processRawInput(raw)
-		return
-	}
-	// Handle quit/detach messages directly — they can't go through
-	// bubbletea's message pipeline from inside the main loop.
-	if _, ok := msg.(DetachMsg); ok {
-		m.Detached = true
-		m.quitRequested = true
-		return
+		return nil
 	}
 	if _, ok := msg.(tea.QuitMsg); ok {
-		m.quitRequested = true
-		return
+		return tea.ErrProgramQuit
 	}
 	// Dispatch through the layer stack. Use stack.Update so
 	// PushLayerMsg/popLayerMsg are handled at the stack level.
 	nextCmd := m.stack.Update(msg)
 	if nextCmd != nil {
-		m.execCmdSync(nextCmd)
+		return m.execCmdSync(nextCmd)
 	}
+	return nil
 }
 
 // processServerMsg handles a protocol message from the server.
@@ -964,16 +947,16 @@ func (m *MainLayer) processServerMsg(msg protocol.Message) {
 
 // drainUntil reads from all channels, processing each message through
 // its handler, and returns when a message from any source matches the
-// filter. Returns nil if the context is cancelled.
-func (m *MainLayer) drainUntil(match func(source string, msg any) bool) any {
+// filter. Returns (nil, err) if p.Handle fails (e.g. QuitMsg) or the
+// context is cancelled.
+func (m *MainLayer) drainUntil(match func(source string, msg any) bool) (any, error) {
 	for {
 		// Process buffered focus-mode input before blocking, just like
 		// the main event loop does. Without this, overlays that use
 		// focus routing (ConnectLayer, etc.) would never receive input.
 		if len(m.focusBuf) > 0 {
-			m.stepFocusSequence()
-			if m.quitRequested {
-				return nil
+			if err := m.stepFocusSequence(); err != nil {
+				return nil, err
 			}
 			m.program.Render()
 			continue
@@ -983,43 +966,47 @@ func (m *MainLayer) drainUntil(match func(source string, msg any) bool) any {
 		case msg := <-m.program.Msgs():
 			processed, err := m.program.Handle(msg)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			if processed != nil && match("tea", processed) {
-				return processed
+				return processed, nil
 			}
 
 		case raw := <-m.rawCh:
-			m.processRawInput(raw)
+			if err := m.processRawInput(raw); err != nil {
+				return nil, err
+			}
 			m.program.Render()
 			if match("raw", raw) {
-				return raw
+				return raw, nil
 			}
 
 		case msg := <-m.server.Inbound:
 			m.processServerMsg(msg)
 			m.program.Render()
 			if match("server", msg) {
-				return msg
+				return msg, nil
 			}
 
 		case msg := <-m.server.Lifecycle:
 			if match("lifecycle", msg) {
-				return msg
+				return msg, nil
 			}
 
 		case <-m.program.Context().Done():
-			return nil
+			return nil, m.program.Context().Err()
 		}
 	}
 }
 
 // initialSetup waits for the window size then sends SessionConnectRequest.
 func (m *MainLayer) initialSetup() {
-	m.drainUntil(func(source string, msg any) bool {
+	if _, err := m.drainUntil(func(source string, msg any) bool {
 		_, ok := msg.(tea.WindowSizeMsg)
 		return source == "tea" && ok
-	})
+	}); err != nil {
+		return
+	}
 
 	if len(m.sessions) == 0 {
 		return
@@ -1058,7 +1045,7 @@ func (m *MainLayer) reconnectLoop(initial DisconnectedMsg) {
 	}()
 
 	for {
-		msg := m.drainUntil(func(source string, msg any) bool {
+		msg, err := m.drainUntil(func(source string, msg any) bool {
 			if source != "lifecycle" {
 				return false
 			}
@@ -1069,10 +1056,11 @@ func (m *MainLayer) reconnectLoop(initial DisconnectedMsg) {
 			return false
 		})
 
-		switch msg := msg.(type) {
-		case nil:
+		if err != nil {
 			close(tickDone)
 			return
+		}
+		switch msg := msg.(type) {
 		case DisconnectedMsg:
 			m.retryAt = msg.RetryAt
 		case ReconnectedMsg:
@@ -1097,7 +1085,7 @@ func (m *MainLayer) reconnectLoop(initial DisconnectedMsg) {
 // connectOverlay handles the initial disconnected-mode connect flow.
 func (m *MainLayer) connectOverlay(dialFn func(string) (net.Conn, error)) {
 	for {
-		msg := m.drainUntil(func(source string, msg any) bool {
+		msg, err := m.drainUntil(func(source string, msg any) bool {
 			if source != "tea" {
 				return false
 			}
@@ -1105,7 +1093,7 @@ func (m *MainLayer) connectOverlay(dialFn func(string) (net.Conn, error)) {
 			return ok
 		})
 
-		if msg == nil {
+		if err != nil {
 			return
 		}
 

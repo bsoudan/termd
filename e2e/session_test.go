@@ -411,6 +411,51 @@ func TestReconnectRestoresTabs(t *testing.T) {
 	}, "both tabs restored after reconnect", 10*time.Second)
 }
 
+// TestDetachSeparateKeys verifies that detach works when ctrl+b and 'd'
+// arrive as separate key events (which is normal with a real keyboard).
+func TestDetachSeparateKeys(t *testing.T) {
+	t.Parallel()
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	nxt := startFrontend(t, socketPath)
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Send ctrl+b and 'd' separately with a small delay between them.
+	nxt.Write([]byte{0x02})
+	time.Sleep(50 * time.Millisecond)
+	nxt.Write([]byte("d"))
+
+	// The frontend should exit within a few seconds.
+	if err := nxt.Wait(5 * time.Second); err != nil {
+		nxt.Kill()
+		t.Fatalf("frontend did not exit after detach: %v", err)
+	}
+}
+
+// TestDetachCommandPalette verifies that detach works from the command
+// palette (ctrl+b : detach).
+func TestDetachCommandPalette(t *testing.T) {
+	t.Parallel()
+	socketPath, serverCleanup := startServer(t)
+	defer serverCleanup()
+
+	nxt := startFrontend(t, socketPath)
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Open command palette and type "detach".
+	nxt.Write([]byte{0x02, ':'})
+	nxt.WaitFor("detach", 5*time.Second)
+	nxt.Write([]byte("detach\r"))
+
+	if err := nxt.Wait(5 * time.Second); err != nil {
+		nxt.Kill()
+		t.Fatalf("frontend did not exit after detach via command palette: %v", err)
+	}
+}
+
 func TestAllRegionsDestroyedShowsNoSession(t *testing.T) {
 	t.Parallel()
 	socketPath, serverCleanup := startServer(t)
