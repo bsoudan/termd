@@ -967,6 +967,18 @@ func (m *MainLayer) processServerMsg(msg protocol.Message) {
 // filter. Returns nil if the context is cancelled.
 func (m *MainLayer) drainUntil(match func(source string, msg any) bool) any {
 	for {
+		// Process buffered focus-mode input before blocking, just like
+		// the main event loop does. Without this, overlays that use
+		// focus routing (ConnectLayer, etc.) would never receive input.
+		if len(m.focusBuf) > 0 {
+			m.stepFocusSequence()
+			if m.quitRequested {
+				return nil
+			}
+			m.program.Render()
+			continue
+		}
+
 		select {
 		case msg := <-m.program.Msgs():
 			processed, err := m.program.Handle(msg)
