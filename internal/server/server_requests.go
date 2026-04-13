@@ -55,11 +55,7 @@ func (st *eventLoopState) notifySessionsChanged() {
 
 type addClientReq struct {
 	client *Client
-	resp   chan addClientResult
-}
-
-type addClientResult struct {
-	treeSnapshot protocol.TreeSnapshot
+	resp   chan struct{}
 }
 
 type removeClientReq struct {
@@ -275,26 +271,15 @@ func (s *Server) eventLoop() {
 // ── Request handlers ─────────────────────────────────────────────────────────
 
 func (r addClientReq) handle(st *eventLoopState) {
-	// Add the client node and broadcast to EXISTING clients before
-	// the new client is reachable, so it doesn't receive tree_events
-	// before its own tree_snapshot.
+	// Deliver identify + snapshot BEFORE adding to the tree. The
+	// snapshot captures the pre-add state at version V. After the
+	// handler returns, commitAndBroadcast sends tree_events at
+	// version V+1 with the "client added" patch — normal sequential
+	// versioning, no special transaction management needed.
+	r.client.sendIdentify()
+	r.client.SendMessage(st.tree.Snapshot())
 	st.tree.AddClient(r.client.id, r.client)
-	v, ops := st.tree.CommitTx()
-	if len(ops) > 0 {
-		msg := protocol.TreeEvents{
-			Type:    "tree_events",
-			Version: v,
-			Ops:     ops,
-		}
-		st.tree.ForEachClient(func(id uint32, c *Client) {
-			if id != r.client.id {
-				c.SendMessage(msg)
-			}
-		})
-	}
-	r.resp <- addClientResult{treeSnapshot: st.tree.Snapshot()}
-	// Re-start tx so the event loop's commitAndBroadcast is a no-op.
-	st.tree.StartTx()
+	r.resp <- struct{}{}
 }
 
 func (r removeClientReq) handle(st *eventLoopState) {
