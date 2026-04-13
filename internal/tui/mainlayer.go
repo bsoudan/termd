@@ -800,7 +800,7 @@ func (m *MainLayer) processRawInput(raw RawInputMsg) {
 	if s := m.activeSessionLayer(); s != nil {
 		_, cmd := s.handleRawInput([]byte(raw))
 		if cmd != nil {
-			m.program.Send(cmd())
+			m.execCmdSync(cmd)
 		}
 	}
 }
@@ -821,7 +821,9 @@ func (m *MainLayer) handleFilteredInput(raw RawInputMsg, filters [][]byte) bool 
 				if pos > 0 {
 					m.sendRawToServer(buf[:pos])
 				}
-				m.pipeW.Write(seq)
+				data := make([]byte, len(seq))
+				copy(data, seq)
+				go m.pipeW.Write(data)
 				if rest := buf[pos+n:]; len(rest) > 0 {
 					m.processRawInput(RawInputMsg(rest))
 				}
