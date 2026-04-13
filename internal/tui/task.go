@@ -16,9 +16,9 @@ type TermdHandle struct {
 
 // Request sends a protocol request and blocks until the matching response
 // arrives. The request is sent via Handle.Send which routes it through
-// the bubbletea event loop, ensuring requestFn runs on the bubbletea
-// goroutine. The task goroutine stays blocked until the response is
-// delivered via TaskRunner.Deliver.
+// the bubbletea event loop where it is tagged with a req_id and sent
+// to the server. The task goroutine stays blocked until the response
+// is delivered via TaskRunner.Deliver.
 func (h *TermdHandle) Request(req any) (any, error) {
 	return h.Send(req)
 }

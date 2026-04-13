@@ -28,10 +28,9 @@ import (
 // runner, and connection lifecycle. The mainLoop drives it; bubbletea
 // sees it through a thin teaModel adapter for Init/Update/View.
 type MainLayer struct {
-	server    *Server
-	pipeW     io.Writer
-	requestFn RequestFunc
-	registry  *Registry
+	server   *Server
+	pipeW    io.Writer
+	registry *Registry
 
 	sessions      []*SessionLayer
 	activeSession int
@@ -60,7 +59,6 @@ type MainLayer struct {
 
 	connectFn   func(endpoint, session string) // dials a server and sends ConnectedMsg
 	sessionName string                         // initial session name, used after deferred connect
-	swapServer  func(*Server)                  // updates requestFn's server closure
 
 	// Number of blank rows between the tab/status bar at row 0 and the
 	// terminal content. Configured via FrontendConfig.StatusBarMargin.
@@ -74,8 +72,13 @@ type MainLayer struct {
 	// stack is the layer stack that MainLayer sits at the bottom of.
 	stack *layer.Stack[RenderState]
 
-	// req holds the shared request state (req_id counter, pending replies).
-	req *requestState
+	// nextReqID and pendingReplies track protocol request/response
+	// matching for task goroutines. When a task calls Handle.Send(),
+	// the message is tagged with a req_id and the task_id is stored
+	// in pendingReplies. When the server response arrives, the task
+	// is delivered the payload.
+	nextReqID      uint64
+	pendingReplies map[uint64]uint64 // reqID → taskID
 
 	// Detached is set by the detach command to signal the main loop
 	// to print "detached" after shutdown.
@@ -100,19 +103,10 @@ func NewMainLayer(
 	connectFn func(endpoint, session string),
 ) *MainLayer {
 	hostname, _ := os.Hostname()
-	req := &requestState{pending: make(map[uint64]ReplyFunc)}
-	currentServer := server
-	requestFn := func(msg any, reply ReplyFunc) {
-		req.nextReqID++
-		req.pending[req.nextReqID] = reply
-		currentServer.Send(protocol.TaggedWithReqID(msg, req.nextReqID))
-	}
-	req.requestFn = requestFn
 
 	m := &MainLayer{
 		server:          server,
 		pipeW:           pipeW,
-		requestFn:       requestFn,
 		registry:        registry,
 		logRing:         logRing,
 		localHostname:   hostname,
@@ -123,16 +117,15 @@ func NewMainLayer(
 		connectFn:       connectFn,
 		sessionName:     sessionName,
 		statusBarMargin: statusBarMargin,
-		req:             req,
+		pendingReplies:  make(map[uint64]uint64),
 	}
 
-	m.swapServer = func(newSrv *Server) { currentServer = newSrv }
 	m.treeStore = &TreeStore{}
 	m.tasks = layer.NewTaskRunner[RenderState]()
 	m.stack = layer.NewStack[RenderState](m)
 
 	if endpoint != "" {
-		session := NewSessionLayer(server, requestFn, registry, m.treeStore, logRing, endpoint, version, changelog, hostname, sessionName, statusBarMargin)
+		session := NewSessionLayer(server, registry, m.treeStore, logRing, endpoint, version, changelog, hostname, sessionName, statusBarMargin)
 		m.sessions = []*SessionLayer{session}
 	}
 	return m
@@ -312,7 +305,6 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 
 	case ConnectedMsg:
 		m.server = msg.Server
-		m.swapServer(msg.Server)
 		m.endpoint = msg.Endpoint
 		m.connStatus = "connected"
 		// If the connect overlay specified a session, adopt it so
@@ -320,7 +312,7 @@ func (m *MainLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		if msg.Session != "" {
 			m.sessionName = msg.Session
 		}
-		session := NewSessionLayer(m.server, m.requestFn, m.registry, m.treeStore, m.logRing, m.endpoint, m.version, m.changelog, m.localHostname, m.sessionName, m.statusBarMargin)
+		session := NewSessionLayer(m.server, m.registry, m.treeStore, m.logRing, m.endpoint, m.version, m.changelog, m.localHostname, m.sessionName, m.statusBarMargin)
 		session.termWidth = m.termWidth
 		session.termHeight = m.termHeight
 		m.sessions = []*SessionLayer{session}
@@ -502,9 +494,14 @@ func (m *MainLayer) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 			}
 		}
 		sl := NewStatusLayer(caps)
-		m.requestFn(protocol.StatusRequest{}, func(payload any) {
-			if resp, ok := payload.(protocol.StatusResponse); ok {
-				sl.SetStatus(&resp)
+		m.tasks.Run(func(h *layer.Handle[RenderState]) {
+			t := &TermdHandle{Handle: h}
+			resp, err := t.Request(protocol.StatusRequest{})
+			if err != nil {
+				return
+			}
+			if sr, ok := resp.(protocol.StatusResponse); ok {
+				sl.SetStatus(&sr)
 			}
 		})
 		return push(sl)
@@ -695,16 +692,21 @@ func (m *MainLayer) UpgradeAvailable() bool {
 }
 
 func (m *MainLayer) checkForUpgrades() {
-	m.requestFn(protocol.UpgradeCheckRequest{
-		ClientVersion: m.version,
-		OS:            runtime.GOOS,
-		Arch:          runtime.GOARCH,
-	}, func(payload any) {
-		if resp, ok := payload.(protocol.UpgradeCheckResponse); ok && !resp.Error {
-			m.upgradeServerAvail = resp.ServerAvailable
-			m.upgradeServerVer = resp.ServerVersion
-			m.upgradeClientAvail = resp.ClientAvailable
-			m.upgradeClientVer = resp.ClientVersion
+	m.tasks.Run(func(h *layer.Handle[RenderState]) {
+		t := &TermdHandle{Handle: h}
+		resp, err := t.Request(protocol.UpgradeCheckRequest{
+			ClientVersion: m.version,
+			OS:            runtime.GOOS,
+			Arch:          runtime.GOARCH,
+		})
+		if err != nil {
+			return
+		}
+		if ucr, ok := resp.(protocol.UpgradeCheckResponse); ok && !ucr.Error {
+			m.upgradeServerAvail = ucr.ServerAvailable
+			m.upgradeServerVer = ucr.ServerVersion
+			m.upgradeClientAvail = ucr.ClientAvailable
+			m.upgradeClientVer = ucr.ClientVersion
 		}
 	})
 }
@@ -920,9 +922,9 @@ func (m *MainLayer) execCmdSync(cmd tea.Cmd) error {
 // processServerMsg handles a protocol message from the server.
 func (m *MainLayer) processServerMsg(msg protocol.Message) {
 	if msg.ReqID > 0 {
-		if reply, ok := m.req.pending[msg.ReqID]; ok {
-			delete(m.req.pending, msg.ReqID)
-			reply(msg.Payload)
+		if taskID, ok := m.pendingReplies[msg.ReqID]; ok {
+			delete(m.pendingReplies, msg.ReqID)
+			m.tasks.Deliver(taskID, msg.Payload)
 			return
 		}
 	}
@@ -1121,7 +1123,6 @@ func (m *MainLayer) connectOverlay(dialFn func(string) (net.Conn, error)) {
 
 		m.server.Close()
 		m.server = newSrv
-		m.swapServer(newSrv)
 		m.endpoint = connectMsg.Endpoint
 		m.connStatus = "connected"
 
@@ -1129,7 +1130,7 @@ func (m *MainLayer) connectOverlay(dialFn func(string) (net.Conn, error)) {
 			m.sessionName = connectMsg.Session
 		}
 
-		session := NewSessionLayer(newSrv, m.requestFn, m.registry,
+		session := NewSessionLayer(newSrv, m.registry,
 			m.treeStore, m.logRing, m.endpoint, m.version, m.changelog,
 			m.localHostname, m.sessionName, m.statusBarMargin)
 		session.termWidth = m.termWidth

@@ -42,9 +42,9 @@ func (m teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle task Send messages — request/response from task goroutines.
 	if tsm, ok := msg.(layer.TaskSendMsg); ok {
-		m.req.requestFn(tsm.Payload, func(payload any) {
-			m.tasks.Deliver(tsm.TaskID, payload)
-		})
+		m.nextReqID++
+		m.pendingReplies[m.nextReqID] = tsm.TaskID
+		m.server.Send(protocol.TaggedWithReqID(tsm.Payload, m.nextReqID))
 		return m, nil
 	}
 
