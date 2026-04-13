@@ -8,3 +8,7 @@ Possible fixes:
 - Process scrollback responses outside bubbletea's message loop (in the Server.Run goroutine) and only send a single completion message to bubbletea
 - Prioritize input and terminal event messages over scrollback responses in the message queue
 - Cancel the server-side scrollback stream when scrollback exits
+
+## Config validation
+
+`internal/config/` parses TOML into typed structs but performs no constraint validation. Invalid listen addresses, negative timeouts, and other bad values pass silently. Add a validation pass after parsing that checks constraints and returns actionable errors.
