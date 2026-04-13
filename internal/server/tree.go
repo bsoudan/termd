@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"strconv"
 
 	"nxtermd/internal/config"
 	"nxtermd/internal/protocol"
@@ -155,10 +156,34 @@ type identifyReq struct {
 	identity clientIdentity
 }
 
+func (r identifyReq) handle(st *eventLoopState) {
+	cid := strconv.FormatUint(uint64(r.clientID), 10)
+	if cn, ok := st.tree.Clients[cid]; ok {
+		cn.Hostname = r.identity.hostname
+		cn.Username = r.identity.username
+		cn.Pid = r.identity.pid
+		cn.Process = r.identity.process
+		st.tree.Clients[cid] = cn
+		var pb patchBuilder
+		pb.Set("/clients/"+cid, cn)
+		st.broadcastTree(&pb)
+	}
+}
+
 // treeSnapshotReq requests a deep copy of the current tree + version.
 // Used for tree_resync_request handling.
 type treeSnapshotReq struct {
 	clientID uint32
+}
+
+func (r treeSnapshotReq) handle(st *eventLoopState) {
+	if c, ok := st.clients[r.clientID]; ok {
+		c.SendMessage(protocol.TreeSnapshot{
+			Type:    "tree_snapshot",
+			Version: st.treeVersion,
+			Tree:    deepCopyTree(st.tree),
+		})
+	}
 }
 
 func removeString(ss []string, v string) []string {

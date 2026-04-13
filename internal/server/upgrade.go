@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -343,6 +344,33 @@ func (s *Server) resumeAfterFailedUpgrade(result upgradeResult) {
 type upgradeReq struct{ resp chan upgradeResult }
 type resumeUpgradeReq struct{}
 type snapshotClientsReq struct{ resp chan map[uint32]*Client }
+
+func (r snapshotClientsReq) handle(st *eventLoopState) {
+	snap := make(map[uint32]*Client, len(st.clients))
+	maps.Copy(snap, st.clients)
+	r.resp <- snap
+}
+
+func (r upgradeReq) handle(st *eventLoopState) {
+	r.resp <- upgradeResult{
+		regions:  st.regions,
+		sessions: st.sessions,
+		programs: st.programs,
+		clients:  st.clients,
+	}
+	// Pause: wait for resume (rollback) or done (successful upgrade).
+	select {
+	case <-st.srv.requests:
+		// resumeUpgradeReq — put state back and continue.
+	case <-st.srv.done:
+		st.srv.shutdownResp <- shutdownResult{}
+		st.exit = true
+	}
+}
+
+// resumeUpgradeReq is a no-op; it is consumed by the pause select
+// in upgradeReq.handle above.
+func (r resumeUpgradeReq) handle(st *eventLoopState) {}
 
 type upgradeResult struct {
 	regions  map[string]Region

@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"nxtermd/internal/config"
+	"nxtermd/internal/protocol"
 	"nxtermd/internal/transport"
 )
 
@@ -135,4 +136,34 @@ type restoreRegionReq struct {
 	region  Region
 	session string
 	resp    chan struct{}
+}
+
+func (r restoreRegionReq) handle(st *eventLoopState) {
+	var pb patchBuilder
+	st.regions[r.region.ID()] = r.region
+	sess, ok := st.sessions[r.session]
+	created := false
+	if !ok {
+		sess = &Session{name: r.session, regions: make(map[string]Region)}
+		st.sessions[r.session] = sess
+		created = true
+		snode := protocol.SessionNode{Name: r.session, RegionIDs: []string{}}
+		st.tree.Sessions[r.session] = snode
+		pb.Set("/sessions/"+r.session, snode)
+	}
+	sess.regions[r.region.ID()] = r.region
+	r.region.SetSession(r.session)
+	rnode := regionToNode(r.region)
+	st.tree.Regions[r.region.ID()] = rnode
+	pb.Set("/regions/"+r.region.ID(), rnode)
+	snode := st.tree.Sessions[r.session]
+	snode.RegionIDs = append(snode.RegionIDs, r.region.ID())
+	st.tree.Sessions[r.session] = snode
+	pb.Add("/sessions/"+r.session+"/region_ids", r.region.ID())
+	st.broadcastTree(&pb)
+	go st.srv.watchRegion(r.region)
+	r.resp <- struct{}{}
+	if created {
+		st.notifySessionsChanged()
+	}
 }

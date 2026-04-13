@@ -24,7 +24,7 @@ type Server struct {
 	nextClientID atomic.Uint32
 	sessionsCfg  config.SessionsConfig
 
-	requests     chan any
+	requests     chan request
 	done         chan struct{}
 	shutdownResp chan shutdownResult
 	shutdown     atomic.Bool
@@ -81,7 +81,7 @@ func NewServer(listeners []net.Listener, version string, cfg config.ServerConfig
 		listeners:    listeners,
 		startTime:    time.Now(),
 		sessionsCfg:  sessionsCfg,
-		requests:     make(chan any, 256),
+		requests:     make(chan request, 256),
 		done:         make(chan struct{}),
 		shutdownResp: make(chan shutdownResult, 1),
 		initRegions:  make(map[string]Region),
@@ -99,7 +99,7 @@ func NewServer(listeners []net.Listener, version string, cfg config.ServerConfig
 // send sends a request to the event loop, returning false if the server
 // is shutting down. Callers that need a response should check the return
 // value before reading from their response channel.
-func (s *Server) send(req any) bool {
+func (s *Server) send(req request) bool {
 	select {
 	case s.requests <- req:
 		return true

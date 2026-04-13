@@ -3,13 +3,53 @@ package server
 import (
 	"fmt"
 	"log/slog"
-	"maps"
 	"sort"
 	"strconv"
 
 	"nxtermd/internal/config"
 	"nxtermd/internal/protocol"
 )
+
+// request is the interface all event loop requests must implement.
+// This provides compile-time safety: forgetting to add a handle
+// method on a new request type will cause a compilation error when
+// the request is sent on the typed channel.
+type request interface {
+	handle(st *eventLoopState)
+}
+
+// eventLoopState holds all mutable state owned by the event loop.
+type eventLoopState struct {
+	srv            *Server
+	regions        map[string]Region
+	clients        map[uint32]*Client
+	sessions       map[string]*Session
+	programs       map[string]config.ProgramConfig
+	subscriptions  map[uint32]string              // clientID → regionID
+	regionSubs     map[string]map[uint32]struct{} // regionID → set of clientIDs
+	clientSessions map[uint32]string              // clientID → sessionName
+	overlays       map[string]*overlayState       // regionID → overlay
+	tree           protocol.Tree
+	treeVersion    uint64
+	exit           bool // set by upgrade handler to exit the event loop
+}
+
+func (st *eventLoopState) broadcastTree(pb *patchBuilder) {
+	broadcastTreeEvents(pb, &st.treeVersion, st.clients)
+}
+
+func (st *eventLoopState) notifySessionsChanged() {
+	fn, _ := st.srv.sessionsChanged.Load().(func([]string))
+	if fn == nil {
+		return
+	}
+	names := make([]string, 0, len(st.sessions))
+	for name := range st.sessions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	go fn(names)
+}
 
 // ── Request types sent to the server event loop ──────────────────────────────
 
@@ -208,10 +248,18 @@ type subscribersData struct {
 // ── Event loop ───────────────────────────────────────────────────────────────
 
 func (s *Server) eventLoop() {
-	regions := s.initRegions
-	clients := s.initClients
-	sessions := s.initSessions
-	programs := s.initPrograms
+	st := &eventLoopState{
+		srv:            s,
+		regions:        s.initRegions,
+		clients:        s.initClients,
+		sessions:       s.initSessions,
+		programs:       s.initPrograms,
+		subscriptions:  make(map[uint32]string),
+		regionSubs:     make(map[string]map[uint32]struct{}),
+		clientSessions: make(map[uint32]string),
+		overlays:       make(map[string]*overlayState),
+		tree:           buildTreeFromMaps(s.initRegions, s.initSessions, s.initPrograms, s.version, s.startTime.Unix(), s.listenerAddrs()),
+	}
 
 	// Clear init references so only the event loop owns these maps.
 	s.initRegions = nil
@@ -219,576 +267,499 @@ func (s *Server) eventLoop() {
 	s.initSessions = nil
 	s.initPrograms = nil
 
-	subscriptions := make(map[uint32]string)          // clientID → regionID
-	regionSubs := make(map[string]map[uint32]struct{}) // regionID → set of clientIDs
-	clientSessions := make(map[uint32]string)          // clientID → sessionName
-	overlays := make(map[string]*overlayState)         // regionID → overlay
-
-	// Object tree: structural/metadata state synchronized to clients.
-	tree := buildTreeFromMaps(regions, sessions, programs, s.version, s.startTime.Unix(), s.listenerAddrs())
-	var treeVersion uint64
-
-	// notifySessionsChanged dispatches the SetSessionsChanged callback
-	// (if any) with a sorted snapshot of session names. Called after any
-	// session create or destroy from inside the event loop. The callback
-	// runs in its own goroutine to avoid blocking the loop.
-	notifySessionsChanged := func() {
-		fn, _ := s.sessionsChanged.Load().(func([]string))
-		if fn == nil {
-			return
-		}
-		names := make([]string, 0, len(sessions))
-		for name := range sessions {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		go fn(names)
-	}
-
 	for {
 		select {
 		case req := <-s.requests:
-			switch r := req.(type) {
-
-			case addClientReq:
-				// Broadcast the client-added patch to existing clients
-				// BEFORE adding the new client, so it doesn't receive
-				// tree_events before its own identify + tree_snapshot.
-				cid := strconv.FormatUint(uint64(r.client.id), 10)
-				cnode := protocol.ClientNode{ID: cid}
-				tree.Clients[cid] = cnode
-				var pb patchBuilder
-				pb.Set("/clients/"+cid, cnode)
-				broadcastTreeEvents(&pb, &treeVersion, clients)
-				// Now add the client and prepare its snapshot.
-				clients[r.client.id] = r.client
-				snap := protocol.TreeSnapshot{
-					Type:    "tree_snapshot",
-					Version: treeVersion,
-					Tree:    deepCopyTree(tree),
-				}
-				r.resp <- addClientResult{treeSnapshot: snap}
-
-			case removeClientReq:
-				if rid, ok := subscriptions[r.clientID]; ok {
-					delete(subscriptions, r.clientID)
-					if s := regionSubs[rid]; s != nil {
-						delete(s, r.clientID)
-						if len(s) == 0 {
-							delete(regionSubs, rid)
-						}
-					}
-				}
-				// Clean up any overlay owned by this client.
-				for rid, ov := range overlays {
-					if ov.clientID == r.clientID {
-						delete(overlays, rid)
-						// Restore PTY terminal attributes and re-send plain snapshot.
-						if region, ok := regions[rid]; ok {
-							region.RestoreTermios()
-							snapMsg := newScreenUpdate(rid, region.Snapshot())
-							for cid := range regionSubs[rid] {
-								if c, ok := clients[cid]; ok {
-									c.SendMessage(snapMsg)
-								}
-							}
-						}
-					}
-				}
-				delete(clients, r.clientID)
-				delete(clientSessions, r.clientID)
-				cid := strconv.FormatUint(uint64(r.clientID), 10)
-				delete(tree.Clients, cid)
-				var pb patchBuilder
-				pb.Delete("/clients/" + cid)
-				broadcastTreeEvents(&pb, &treeVersion, clients)
-				slog.Debug("client disconnected", "id", r.clientID)
-
-			case spawnRegionReq:
-				var pb patchBuilder
-				regions[r.region.ID()] = r.region
-				sess := sessions[r.sessionName]
-				created := false
-				if sess == nil {
-					sess = NewSession(r.sessionName)
-					sessions[r.sessionName] = sess
-					created = true
-					snode := protocol.SessionNode{Name: r.sessionName, RegionIDs: []string{}}
-					tree.Sessions[r.sessionName] = snode
-					pb.Set("/sessions/"+r.sessionName, snode)
-				}
-				sess.regions[r.region.ID()] = r.region
-				r.region.SetSession(r.sessionName)
-				rnode := regionToNode(r.region)
-				tree.Regions[r.region.ID()] = rnode
-				pb.Set("/regions/"+r.region.ID(), rnode)
-				snode := tree.Sessions[r.sessionName]
-				snode.RegionIDs = append(snode.RegionIDs, r.region.ID())
-				tree.Sessions[r.sessionName] = snode
-				pb.Add("/sessions/"+r.sessionName+"/region_ids", r.region.ID())
-				broadcastTreeEvents(&pb, &treeVersion, clients)
-				r.resp <- struct{}{}
-				if created {
-					notifySessionsChanged()
-				}
-
-			case destroyRegionReq:
-				region, ok := regions[r.regionID]
-				if !ok {
-					r.resp <- destroyResult{found: false}
-					break
-				}
-				var pb patchBuilder
-				delete(regions, r.regionID)
-				delete(overlays, r.regionID)
-				delete(tree.Regions, r.regionID)
-				pb.Delete("/regions/" + r.regionID)
-				sessionName := region.Session()
-				sessionRemoved := false
-				if sess := sessions[sessionName]; sess != nil {
-					delete(sess.regions, r.regionID)
-					snode := tree.Sessions[sessionName]
-					snode.RegionIDs = removeString(snode.RegionIDs, r.regionID)
-					tree.Sessions[sessionName] = snode
-					pb.Remove("/sessions/"+sessionName+"/region_ids", r.regionID)
-					if len(sess.regions) == 0 {
-						delete(sessions, sessionName)
-						delete(tree.Sessions, sessionName)
-						pb.Delete("/sessions/" + sessionName)
-						sessionRemoved = true
-						slog.Info("removed empty session", "session", sessionName)
-					}
-				}
-				if subs := regionSubs[r.regionID]; subs != nil {
-					for clientID := range subs {
-						delete(subscriptions, clientID)
-					}
-					delete(regionSubs, r.regionID)
-				}
-				broadcastTreeEvents(&pb, &treeVersion, clients)
-				r.resp <- destroyResult{region: region, found: true}
-				if sessionRemoved {
-					notifySessionsChanged()
-				}
-
-			case findRegionReq:
-				r.resp <- regions[r.regionID]
-
-			case killRegionReq:
-				r.resp <- regions[r.regionID]
-
-			case killClientReq:
-				r.resp <- clients[r.clientID]
-
-			case getSubscribersReq:
-				var subs []*Client
-				for clientID := range regionSubs[r.regionID] {
-					if c, ok := clients[clientID]; ok {
-						subs = append(subs, c)
-					}
-				}
-				r.resp <- subscribersData{clients: subs, overlay: overlays[r.regionID]}
-
-			case getStatusReq:
-				r.resp <- statusCounts{
-					numClients:  len(clients),
-					numRegions:  len(regions),
-					numSessions: len(sessions),
-				}
-
-			case lookupProgramReq:
-				if p, ok := programs[r.name]; ok {
-					r.resp <- &p
-				} else {
-					r.resp <- nil
-				}
-
-			case sessionConnectReq:
-				name := r.name
-				if name == "" {
-					name = s.sessionsCfg.DefaultName
-				}
-				if sess, exists := sessions[name]; exists {
-					infos := make([]protocol.RegionInfo, 0, len(sess.regions))
-					for _, reg := range sess.regions {
-						infos = append(infos, protocol.RegionInfo{
-							RegionID: reg.ID(),
-							Name:     reg.Name(),
-							Cmd:      reg.Cmd(),
-							Pid:      reg.Pid(),
-							Session:  sess.name,
-						})
-					}
-					r.resp <- sessionConnectResult{exists: true, regionInfos: infos}
-					break
-				}
-				programNames := s.sessionsCfg.DefaultPrograms
-				if len(programNames) == 0 {
-					if _, ok := programs["default"]; ok {
-						programNames = []string{"default"}
-					} else {
-						for pname := range programs {
-							programNames = []string{pname}
-							break
-						}
-					}
-				}
-				var configs []config.ProgramConfig
-				for _, pname := range programNames {
-					if p, ok := programs[pname]; ok {
-						configs = append(configs, p)
-					}
-				}
-				r.resp <- sessionConnectResult{exists: false, programConfigs: configs}
-
-			case listProgramsReq:
-				infos := make([]protocol.ProgramInfo, 0, len(programs))
-				for _, p := range programs {
-					infos = append(infos, protocol.ProgramInfo{Name: p.Name, Cmd: p.Cmd})
-				}
-				r.resp <- infos
-
-			case addProgramReq:
-				if _, exists := programs[r.prog.Name]; exists {
-					r.resp <- fmt.Errorf("program %q already exists", r.prog.Name)
-				} else {
-					programs[r.prog.Name] = r.prog
-					pnode := programToNode(r.prog.Name, r.prog)
-					tree.Programs[r.prog.Name] = pnode
-					var pb patchBuilder
-					pb.Set("/programs/"+r.prog.Name, pnode)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-					r.resp <- nil
-				}
-
-			case removeProgramReq:
-				if _, exists := programs[r.name]; !exists {
-					r.resp <- fmt.Errorf("program %q not found", r.name)
-				} else {
-					delete(programs, r.name)
-					delete(tree.Programs, r.name)
-					var pb patchBuilder
-					pb.Delete("/programs/" + r.name)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-					r.resp <- nil
-				}
-
-			case getRegionInfosReq:
-				if r.session != "" {
-					sess := sessions[r.session]
-					if sess == nil {
-						r.resp <- nil
-						break
-					}
-					infos := make([]protocol.RegionInfo, 0, len(sess.regions))
-					for _, reg := range sess.regions {
-						infos = append(infos, protocol.RegionInfo{
-							RegionID:      reg.ID(),
-							Name:          reg.Name(),
-							Cmd:           reg.Cmd(),
-							Pid:           reg.Pid(),
-							Session:       sess.name,
-							Width:         reg.Width(),
-							Height:        reg.Height(),
-							ScrollbackLen: reg.ScrollbackLen(),
-							Native:        reg.IsNative(),
-						})
-					}
-					r.resp <- infos
-					break
-				}
-				infos := make([]protocol.RegionInfo, 0, len(regions))
-				for _, reg := range regions {
-					infos = append(infos, protocol.RegionInfo{
-						RegionID:      reg.ID(),
-						Name:          reg.Name(),
-						Cmd:           reg.Cmd(),
-						Pid:           reg.Pid(),
-						Session:       reg.Session(),
-						Width:         reg.Width(),
-						Height:        reg.Height(),
-						ScrollbackLen: reg.ScrollbackLen(),
-						Native:        reg.IsNative(),
-					})
-				}
-				r.resp <- infos
-
-			case getClientInfosReq:
-				infos := make([]protocol.ClientInfoData, 0, len(clients))
-				for _, c := range clients {
-					infos = append(infos, protocol.ClientInfoData{
-						ClientID:           c.id,
-						Hostname:           c.GetHostname(),
-						Username:           c.GetUsername(),
-						Pid:                c.GetPid(),
-						Process:            c.GetProcess(),
-						Session:            clientSessions[c.id],
-						SubscribedRegionID: subscriptions[c.id],
-					})
-				}
-				r.resp <- infos
-
-			case subscribeReq:
-				region, exists := regions[r.regionID]
-				if !exists {
-					r.resp <- nil
-					break
-				}
-				// Remove from previous subscription if any.
-				if prev, ok := subscriptions[r.clientID]; ok && prev != r.regionID {
-					if s := regionSubs[prev]; s != nil {
-						delete(s, r.clientID)
-						if len(s) == 0 {
-							delete(regionSubs, prev)
-						}
-					}
-				}
-				snap := region.Snapshot()
-				if ov, ok := overlays[r.regionID]; ok {
-					snap = compositeSnapshot(snap, ov)
-				}
-				// Enqueue the initial snapshot to the client's writeCh
-				// BEFORE adding the client to the subscriber set. The
-				// watcher goroutine sends terminal_events via SendMessage,
-				// which writes to the same writeCh; pushing the snapshot
-				// first guarantees it lands ahead of any events the
-				// watcher might emit between the next two statements.
-				// Without this ordering, the client could receive
-				// terminal_events before its initial screen_update,
-				// drop them (no local screen yet), and be left with a
-				// stale snapshot.
-				if client, ok := clients[r.clientID]; ok {
-					client.SendMessage(newScreenUpdate(region.ID(), snap))
-				}
-				subscriptions[r.clientID] = r.regionID
-				if regionSubs[r.regionID] == nil {
-					regionSubs[r.regionID] = make(map[uint32]struct{})
-				}
-				regionSubs[r.regionID][r.clientID] = struct{}{}
-				// Update tree: client subscription changed.
-				cid := strconv.FormatUint(uint64(r.clientID), 10)
-				if cn, ok := tree.Clients[cid]; ok {
-					cn.SubscribedRegionID = r.regionID
-					tree.Clients[cid] = cn
-					var pb patchBuilder
-					pb.Set("/clients/"+cid, cn)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-				}
-				r.resp <- &subscribeResult{region: region, snapshot: snap}
-
-			case unsubscribeReq:
-				if rid, ok := subscriptions[r.clientID]; ok {
-					delete(subscriptions, r.clientID)
-					if s := regionSubs[rid]; s != nil {
-						delete(s, r.clientID)
-						if len(s) == 0 {
-							delete(regionSubs, rid)
-						}
-					}
-				}
-				cid := strconv.FormatUint(uint64(r.clientID), 10)
-				if cn, ok := tree.Clients[cid]; ok && cn.SubscribedRegionID != "" {
-					cn.SubscribedRegionID = ""
-					tree.Clients[cid] = cn
-					var pb patchBuilder
-					pb.Set("/clients/"+cid, cn)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-				}
-
-			case setClientSessionReq:
-				clientSessions[r.clientID] = r.sessionName
-				cid := strconv.FormatUint(uint64(r.clientID), 10)
-				if cn, ok := tree.Clients[cid]; ok {
-					cn.Session = r.sessionName
-					tree.Clients[cid] = cn
-					var pb patchBuilder
-					pb.Set("/clients/"+cid, cn)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-				}
-
-			case getClientSessionReq:
-				r.resp <- clientSessions[r.clientID]
-
-			case getSessionInfosReq:
-				infos := make([]protocol.SessionInfo, 0, len(sessions))
-				for _, sess := range sessions {
-					infos = append(infos, protocol.SessionInfo{
-						Name:       sess.name,
-						NumRegions: len(sess.regions),
-					})
-				}
-				r.resp <- infos
-
-			// --- Tree support ---
-
-			case identifyReq:
-				cid := strconv.FormatUint(uint64(r.clientID), 10)
-				if cn, ok := tree.Clients[cid]; ok {
-					cn.Hostname = r.identity.hostname
-					cn.Username = r.identity.username
-					cn.Pid = r.identity.pid
-					cn.Process = r.identity.process
-					tree.Clients[cid] = cn
-					var pb patchBuilder
-					pb.Set("/clients/"+cid, cn)
-					broadcastTreeEvents(&pb, &treeVersion, clients)
-				}
-
-			case treeSnapshotReq:
-				if c, ok := clients[r.clientID]; ok {
-					c.SendMessage(protocol.TreeSnapshot{
-						Type:    "tree_snapshot",
-						Version: treeVersion,
-						Tree:    deepCopyTree(tree),
-					})
-				}
-
-			// --- Overlay support ---
-
-			case overlayRegisterReq:
-				region, ok := regions[r.regionID]
-				if !ok {
-					r.resp <- overlayRegisterResult{err: "region not found"}
-					break
-				}
-				// Save PTY state before the overlay app potentially changes it.
-				region.SaveTermios()
-				overlays[r.regionID] = &overlayState{
-					clientID: r.clientID,
-					regionID: r.regionID,
-				}
-				slog.Info("overlay registered", "region_id", r.regionID, "client_id", r.clientID)
-				r.resp <- overlayRegisterResult{width: region.Width(), height: region.Height()}
-
-			case overlayRenderReq:
-				ov := overlays[r.regionID]
-				if ov == nil || ov.clientID != r.clientID {
-					break
-				}
-				ov.cells = r.cells
-				ov.cursorRow = r.cursorRow
-				ov.cursorCol = r.cursorCol
-				ov.modes = r.modes
-				// Send composited snapshot to subscribers.
-				region := regions[r.regionID]
-				if region == nil {
-					break
-				}
-				snap := region.Snapshot()
-				composited := compositeSnapshot(snap, ov)
-				snapMsg := newScreenUpdate(r.regionID, composited)
-				for cid := range regionSubs[r.regionID] {
-					if c, ok := clients[cid]; ok {
-						c.SendMessage(snapMsg)
-					}
-				}
-
-			case overlayClearReq:
-				ov := overlays[r.regionID]
-				if ov == nil || ov.clientID != r.clientID {
-					break
-				}
-				delete(overlays, r.regionID)
-				// Restore PTY terminal attributes in case the overlay app left raw mode.
-				if region, ok := regions[r.regionID]; ok {
-					region.RestoreTermios()
-				}
-				slog.Info("overlay cleared", "region_id", r.regionID, "client_id", r.clientID)
-				// Re-send plain PTY snapshot.
-				if region, ok := regions[r.regionID]; ok {
-					snapMsg := newScreenUpdate(r.regionID, region.Snapshot())
-					for cid := range regionSubs[r.regionID] {
-						if c, ok := clients[cid]; ok {
-							c.SendMessage(snapMsg)
-						}
-					}
-				}
-
-			case getOverlayReq:
-				r.resp <- overlays[r.regionID]
-
-			case inputRouteReq:
-				region, ok := regions[r.regionID]
-				if !ok {
-					r.resp <- inputRouteResult{}
-					break
-				}
-				if ov, ok := overlays[r.regionID]; ok {
-					if c, ok := clients[ov.clientID]; ok {
-						r.resp <- inputRouteResult{overlayClient: c}
-						break
-					}
-				}
-				r.resp <- inputRouteResult{region: region}
-
-			// --- Live upgrade support ---
-
-			case snapshotClientsReq:
-				snap := make(map[uint32]*Client, len(clients))
-				maps.Copy(snap, clients)
-				r.resp <- snap
-
-			case upgradeReq:
-				r.resp <- upgradeResult{
-					regions:  regions,
-					sessions: sessions,
-					programs: programs,
-					clients:  clients,
-				}
-				// Pause: wait for resume (rollback) or done (successful upgrade).
-				select {
-				case <-s.requests:
-					// resumeUpgradeReq — put state back and continue.
-					// (The actual type is checked below; here we just drain.)
-				case <-s.done:
-					s.shutdownResp <- shutdownResult{}
-					return
-				}
-
-			case resumeUpgradeReq:
-				// No-op; handled by the pause select in upgradeReq above.
-
-			case restoreRegionReq:
-				var pb patchBuilder
-				regions[r.region.ID()] = r.region
-				sess, ok := sessions[r.session]
-				created := false
-				if !ok {
-					sess = &Session{name: r.session, regions: make(map[string]Region)}
-					sessions[r.session] = sess
-					created = true
-					snode := protocol.SessionNode{Name: r.session, RegionIDs: []string{}}
-					tree.Sessions[r.session] = snode
-					pb.Set("/sessions/"+r.session, snode)
-				}
-				sess.regions[r.region.ID()] = r.region
-				r.region.SetSession(r.session)
-				rnode := regionToNode(r.region)
-				tree.Regions[r.region.ID()] = rnode
-				pb.Set("/regions/"+r.region.ID(), rnode)
-				snode := tree.Sessions[r.session]
-				snode.RegionIDs = append(snode.RegionIDs, r.region.ID())
-				tree.Sessions[r.session] = snode
-				pb.Add("/sessions/"+r.session+"/region_ids", r.region.ID())
-				broadcastTreeEvents(&pb, &treeVersion, clients)
-				go s.watchRegion(r.region)
-				r.resp <- struct{}{}
-				if created {
-					notifySessionsChanged()
-				}
+			req.handle(st)
+			if st.exit {
+				return
 			}
-
 		case <-s.done:
-			clientList := make([]*Client, 0, len(clients))
-			for _, c := range clients {
+			clientList := make([]*Client, 0, len(st.clients))
+			for _, c := range st.clients {
 				clientList = append(clientList, c)
 			}
-			regionList := make([]Region, 0, len(regions))
-			for _, r := range regions {
+			regionList := make([]Region, 0, len(st.regions))
+			for _, r := range st.regions {
 				regionList = append(regionList, r)
 			}
 			s.shutdownResp <- shutdownResult{clients: clientList, regions: regionList}
 			return
 		}
 	}
+}
+
+// ── Request handlers ─────────────────────────────────────────────────────────
+
+func (r addClientReq) handle(st *eventLoopState) {
+	// Broadcast the client-added patch to existing clients
+	// BEFORE adding the new client, so it doesn't receive
+	// tree_events before its own identify + tree_snapshot.
+	cid := strconv.FormatUint(uint64(r.client.id), 10)
+	cnode := protocol.ClientNode{ID: cid}
+	st.tree.Clients[cid] = cnode
+	var pb patchBuilder
+	pb.Set("/clients/"+cid, cnode)
+	st.broadcastTree(&pb)
+	// Now add the client and prepare its snapshot.
+	st.clients[r.client.id] = r.client
+	snap := protocol.TreeSnapshot{
+		Type:    "tree_snapshot",
+		Version: st.treeVersion,
+		Tree:    deepCopyTree(st.tree),
+	}
+	r.resp <- addClientResult{treeSnapshot: snap}
+}
+
+func (r removeClientReq) handle(st *eventLoopState) {
+	if rid, ok := st.subscriptions[r.clientID]; ok {
+		delete(st.subscriptions, r.clientID)
+		if s := st.regionSubs[rid]; s != nil {
+			delete(s, r.clientID)
+			if len(s) == 0 {
+				delete(st.regionSubs, rid)
+			}
+		}
+	}
+	// Clean up any overlay owned by this client.
+	for rid, ov := range st.overlays {
+		if ov.clientID == r.clientID {
+			delete(st.overlays, rid)
+			// Restore PTY terminal attributes and re-send plain snapshot.
+			if region, ok := st.regions[rid]; ok {
+				region.RestoreTermios()
+				snapMsg := newScreenUpdate(rid, region.Snapshot())
+				for cid := range st.regionSubs[rid] {
+					if c, ok := st.clients[cid]; ok {
+						c.SendMessage(snapMsg)
+					}
+				}
+			}
+		}
+	}
+	delete(st.clients, r.clientID)
+	delete(st.clientSessions, r.clientID)
+	cid := strconv.FormatUint(uint64(r.clientID), 10)
+	delete(st.tree.Clients, cid)
+	var pb patchBuilder
+	pb.Delete("/clients/" + cid)
+	st.broadcastTree(&pb)
+	slog.Debug("client disconnected", "id", r.clientID)
+}
+
+func (r spawnRegionReq) handle(st *eventLoopState) {
+	var pb patchBuilder
+	st.regions[r.region.ID()] = r.region
+	sess := st.sessions[r.sessionName]
+	created := false
+	if sess == nil {
+		sess = NewSession(r.sessionName)
+		st.sessions[r.sessionName] = sess
+		created = true
+		snode := protocol.SessionNode{Name: r.sessionName, RegionIDs: []string{}}
+		st.tree.Sessions[r.sessionName] = snode
+		pb.Set("/sessions/"+r.sessionName, snode)
+	}
+	sess.regions[r.region.ID()] = r.region
+	r.region.SetSession(r.sessionName)
+	rnode := regionToNode(r.region)
+	st.tree.Regions[r.region.ID()] = rnode
+	pb.Set("/regions/"+r.region.ID(), rnode)
+	snode := st.tree.Sessions[r.sessionName]
+	snode.RegionIDs = append(snode.RegionIDs, r.region.ID())
+	st.tree.Sessions[r.sessionName] = snode
+	pb.Add("/sessions/"+r.sessionName+"/region_ids", r.region.ID())
+	st.broadcastTree(&pb)
+	r.resp <- struct{}{}
+	if created {
+		st.notifySessionsChanged()
+	}
+}
+
+func (r destroyRegionReq) handle(st *eventLoopState) {
+	region, ok := st.regions[r.regionID]
+	if !ok {
+		r.resp <- destroyResult{found: false}
+		return
+	}
+	var pb patchBuilder
+	delete(st.regions, r.regionID)
+	delete(st.overlays, r.regionID)
+	delete(st.tree.Regions, r.regionID)
+	pb.Delete("/regions/" + r.regionID)
+	sessionName := region.Session()
+	sessionRemoved := false
+	if sess := st.sessions[sessionName]; sess != nil {
+		delete(sess.regions, r.regionID)
+		snode := st.tree.Sessions[sessionName]
+		snode.RegionIDs = removeString(snode.RegionIDs, r.regionID)
+		st.tree.Sessions[sessionName] = snode
+		pb.Remove("/sessions/"+sessionName+"/region_ids", r.regionID)
+		if len(sess.regions) == 0 {
+			delete(st.sessions, sessionName)
+			delete(st.tree.Sessions, sessionName)
+			pb.Delete("/sessions/" + sessionName)
+			sessionRemoved = true
+			slog.Info("removed empty session", "session", sessionName)
+		}
+	}
+	if subs := st.regionSubs[r.regionID]; subs != nil {
+		for clientID := range subs {
+			delete(st.subscriptions, clientID)
+		}
+		delete(st.regionSubs, r.regionID)
+	}
+	st.broadcastTree(&pb)
+	r.resp <- destroyResult{region: region, found: true}
+	if sessionRemoved {
+		st.notifySessionsChanged()
+	}
+}
+
+func (r findRegionReq) handle(st *eventLoopState) {
+	r.resp <- st.regions[r.regionID]
+}
+
+func (r killRegionReq) handle(st *eventLoopState) {
+	r.resp <- st.regions[r.regionID]
+}
+
+func (r killClientReq) handle(st *eventLoopState) {
+	r.resp <- st.clients[r.clientID]
+}
+
+func (r getSubscribersReq) handle(st *eventLoopState) {
+	var subs []*Client
+	for clientID := range st.regionSubs[r.regionID] {
+		if c, ok := st.clients[clientID]; ok {
+			subs = append(subs, c)
+		}
+	}
+	r.resp <- subscribersData{clients: subs, overlay: st.overlays[r.regionID]}
+}
+
+func (r getStatusReq) handle(st *eventLoopState) {
+	r.resp <- statusCounts{
+		numClients:  len(st.clients),
+		numRegions:  len(st.regions),
+		numSessions: len(st.sessions),
+	}
+}
+
+func (r lookupProgramReq) handle(st *eventLoopState) {
+	if p, ok := st.programs[r.name]; ok {
+		r.resp <- &p
+	} else {
+		r.resp <- nil
+	}
+}
+
+func (r sessionConnectReq) handle(st *eventLoopState) {
+	name := r.name
+	if name == "" {
+		name = st.srv.sessionsCfg.DefaultName
+	}
+	if sess, exists := st.sessions[name]; exists {
+		infos := make([]protocol.RegionInfo, 0, len(sess.regions))
+		for _, reg := range sess.regions {
+			infos = append(infos, protocol.RegionInfo{
+				RegionID: reg.ID(),
+				Name:     reg.Name(),
+				Cmd:      reg.Cmd(),
+				Pid:      reg.Pid(),
+				Session:  sess.name,
+			})
+		}
+		r.resp <- sessionConnectResult{exists: true, regionInfos: infos}
+		return
+	}
+	programNames := st.srv.sessionsCfg.DefaultPrograms
+	if len(programNames) == 0 {
+		if _, ok := st.programs["default"]; ok {
+			programNames = []string{"default"}
+		} else {
+			for pname := range st.programs {
+				programNames = []string{pname}
+				break
+			}
+		}
+	}
+	var configs []config.ProgramConfig
+	for _, pname := range programNames {
+		if p, ok := st.programs[pname]; ok {
+			configs = append(configs, p)
+		}
+	}
+	r.resp <- sessionConnectResult{exists: false, programConfigs: configs}
+}
+
+func (r listProgramsReq) handle(st *eventLoopState) {
+	infos := make([]protocol.ProgramInfo, 0, len(st.programs))
+	for _, p := range st.programs {
+		infos = append(infos, protocol.ProgramInfo{Name: p.Name, Cmd: p.Cmd})
+	}
+	r.resp <- infos
+}
+
+func (r addProgramReq) handle(st *eventLoopState) {
+	if _, exists := st.programs[r.prog.Name]; exists {
+		r.resp <- fmt.Errorf("program %q already exists", r.prog.Name)
+	} else {
+		st.programs[r.prog.Name] = r.prog
+		pnode := programToNode(r.prog.Name, r.prog)
+		st.tree.Programs[r.prog.Name] = pnode
+		var pb patchBuilder
+		pb.Set("/programs/"+r.prog.Name, pnode)
+		st.broadcastTree(&pb)
+		r.resp <- nil
+	}
+}
+
+func (r removeProgramReq) handle(st *eventLoopState) {
+	if _, exists := st.programs[r.name]; !exists {
+		r.resp <- fmt.Errorf("program %q not found", r.name)
+	} else {
+		delete(st.programs, r.name)
+		delete(st.tree.Programs, r.name)
+		var pb patchBuilder
+		pb.Delete("/programs/" + r.name)
+		st.broadcastTree(&pb)
+		r.resp <- nil
+	}
+}
+
+func (r getRegionInfosReq) handle(st *eventLoopState) {
+	if r.session != "" {
+		sess := st.sessions[r.session]
+		if sess == nil {
+			r.resp <- nil
+			return
+		}
+		infos := make([]protocol.RegionInfo, 0, len(sess.regions))
+		for _, reg := range sess.regions {
+			infos = append(infos, protocol.RegionInfo{
+				RegionID:      reg.ID(),
+				Name:          reg.Name(),
+				Cmd:           reg.Cmd(),
+				Pid:           reg.Pid(),
+				Session:       sess.name,
+				Width:         reg.Width(),
+				Height:        reg.Height(),
+				ScrollbackLen: reg.ScrollbackLen(),
+				Native:        reg.IsNative(),
+			})
+		}
+		r.resp <- infos
+		return
+	}
+	infos := make([]protocol.RegionInfo, 0, len(st.regions))
+	for _, reg := range st.regions {
+		infos = append(infos, protocol.RegionInfo{
+			RegionID:      reg.ID(),
+			Name:          reg.Name(),
+			Cmd:           reg.Cmd(),
+			Pid:           reg.Pid(),
+			Session:       reg.Session(),
+			Width:         reg.Width(),
+			Height:        reg.Height(),
+			ScrollbackLen: reg.ScrollbackLen(),
+			Native:        reg.IsNative(),
+		})
+	}
+	r.resp <- infos
+}
+
+func (r getClientInfosReq) handle(st *eventLoopState) {
+	infos := make([]protocol.ClientInfoData, 0, len(st.clients))
+	for _, c := range st.clients {
+		infos = append(infos, protocol.ClientInfoData{
+			ClientID:           c.id,
+			Hostname:           c.GetHostname(),
+			Username:           c.GetUsername(),
+			Pid:                c.GetPid(),
+			Process:            c.GetProcess(),
+			Session:            st.clientSessions[c.id],
+			SubscribedRegionID: st.subscriptions[c.id],
+		})
+	}
+	r.resp <- infos
+}
+
+func (r subscribeReq) handle(st *eventLoopState) {
+	region, exists := st.regions[r.regionID]
+	if !exists {
+		r.resp <- nil
+		return
+	}
+	// Remove from previous subscription if any.
+	if prev, ok := st.subscriptions[r.clientID]; ok && prev != r.regionID {
+		if s := st.regionSubs[prev]; s != nil {
+			delete(s, r.clientID)
+			if len(s) == 0 {
+				delete(st.regionSubs, prev)
+			}
+		}
+	}
+	snap := region.Snapshot()
+	if ov, ok := st.overlays[r.regionID]; ok {
+		snap = compositeSnapshot(snap, ov)
+	}
+	// Enqueue the initial snapshot to the client's writeCh
+	// BEFORE adding the client to the subscriber set. The
+	// watcher goroutine sends terminal_events via SendMessage,
+	// which writes to the same writeCh; pushing the snapshot
+	// first guarantees it lands ahead of any events the
+	// watcher might emit between the next two statements.
+	// Without this ordering, the client could receive
+	// terminal_events before its initial screen_update,
+	// drop them (no local screen yet), and be left with a
+	// stale snapshot.
+	if client, ok := st.clients[r.clientID]; ok {
+		client.SendMessage(newScreenUpdate(region.ID(), snap))
+	}
+	st.subscriptions[r.clientID] = r.regionID
+	if st.regionSubs[r.regionID] == nil {
+		st.regionSubs[r.regionID] = make(map[uint32]struct{})
+	}
+	st.regionSubs[r.regionID][r.clientID] = struct{}{}
+	// Update tree: client subscription changed.
+	cid := strconv.FormatUint(uint64(r.clientID), 10)
+	if cn, ok := st.tree.Clients[cid]; ok {
+		cn.SubscribedRegionID = r.regionID
+		st.tree.Clients[cid] = cn
+		var pb patchBuilder
+		pb.Set("/clients/"+cid, cn)
+		st.broadcastTree(&pb)
+	}
+	r.resp <- &subscribeResult{region: region, snapshot: snap}
+}
+
+func (r unsubscribeReq) handle(st *eventLoopState) {
+	if rid, ok := st.subscriptions[r.clientID]; ok {
+		delete(st.subscriptions, r.clientID)
+		if s := st.regionSubs[rid]; s != nil {
+			delete(s, r.clientID)
+			if len(s) == 0 {
+				delete(st.regionSubs, rid)
+			}
+		}
+	}
+	cid := strconv.FormatUint(uint64(r.clientID), 10)
+	if cn, ok := st.tree.Clients[cid]; ok && cn.SubscribedRegionID != "" {
+		cn.SubscribedRegionID = ""
+		st.tree.Clients[cid] = cn
+		var pb patchBuilder
+		pb.Set("/clients/"+cid, cn)
+		st.broadcastTree(&pb)
+	}
+}
+
+func (r setClientSessionReq) handle(st *eventLoopState) {
+	st.clientSessions[r.clientID] = r.sessionName
+	cid := strconv.FormatUint(uint64(r.clientID), 10)
+	if cn, ok := st.tree.Clients[cid]; ok {
+		cn.Session = r.sessionName
+		st.tree.Clients[cid] = cn
+		var pb patchBuilder
+		pb.Set("/clients/"+cid, cn)
+		st.broadcastTree(&pb)
+	}
+}
+
+func (r getClientSessionReq) handle(st *eventLoopState) {
+	r.resp <- st.clientSessions[r.clientID]
+}
+
+func (r getSessionInfosReq) handle(st *eventLoopState) {
+	infos := make([]protocol.SessionInfo, 0, len(st.sessions))
+	for _, sess := range st.sessions {
+		infos = append(infos, protocol.SessionInfo{
+			Name:       sess.name,
+			NumRegions: len(sess.regions),
+		})
+	}
+	r.resp <- infos
+}
+
+// --- Overlay support ---
+
+func (r overlayRegisterReq) handle(st *eventLoopState) {
+	region, ok := st.regions[r.regionID]
+	if !ok {
+		r.resp <- overlayRegisterResult{err: "region not found"}
+		return
+	}
+	// Save PTY state before the overlay app potentially changes it.
+	region.SaveTermios()
+	st.overlays[r.regionID] = &overlayState{
+		clientID: r.clientID,
+		regionID: r.regionID,
+	}
+	slog.Info("overlay registered", "region_id", r.regionID, "client_id", r.clientID)
+	r.resp <- overlayRegisterResult{width: region.Width(), height: region.Height()}
+}
+
+func (r overlayRenderReq) handle(st *eventLoopState) {
+	ov := st.overlays[r.regionID]
+	if ov == nil || ov.clientID != r.clientID {
+		return
+	}
+	ov.cells = r.cells
+	ov.cursorRow = r.cursorRow
+	ov.cursorCol = r.cursorCol
+	ov.modes = r.modes
+	// Send composited snapshot to subscribers.
+	region := st.regions[r.regionID]
+	if region == nil {
+		return
+	}
+	snap := region.Snapshot()
+	composited := compositeSnapshot(snap, ov)
+	snapMsg := newScreenUpdate(r.regionID, composited)
+	for cid := range st.regionSubs[r.regionID] {
+		if c, ok := st.clients[cid]; ok {
+			c.SendMessage(snapMsg)
+		}
+	}
+}
+
+func (r overlayClearReq) handle(st *eventLoopState) {
+	ov := st.overlays[r.regionID]
+	if ov == nil || ov.clientID != r.clientID {
+		return
+	}
+	delete(st.overlays, r.regionID)
+	// Restore PTY terminal attributes in case the overlay app left raw mode.
+	if region, ok := st.regions[r.regionID]; ok {
+		region.RestoreTermios()
+	}
+	slog.Info("overlay cleared", "region_id", r.regionID, "client_id", r.clientID)
+	// Re-send plain PTY snapshot.
+	if region, ok := st.regions[r.regionID]; ok {
+		snapMsg := newScreenUpdate(r.regionID, region.Snapshot())
+		for cid := range st.regionSubs[r.regionID] {
+			if c, ok := st.clients[cid]; ok {
+				c.SendMessage(snapMsg)
+			}
+		}
+	}
+}
+
+func (r getOverlayReq) handle(st *eventLoopState) {
+	r.resp <- st.overlays[r.regionID]
+}
+
+func (r inputRouteReq) handle(st *eventLoopState) {
+	region, ok := st.regions[r.regionID]
+	if !ok {
+		r.resp <- inputRouteResult{}
+		return
+	}
+	if ov, ok := st.overlays[r.regionID]; ok {
+		if c, ok := st.clients[ov.clientID]; ok {
+			r.resp <- inputRouteResult{overlayClient: c}
+			return
+		}
+	}
+	r.resp <- inputRouteResult{region: region}
 }
