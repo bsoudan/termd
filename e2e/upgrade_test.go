@@ -233,10 +233,27 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	oldPID := cmd.Process.Pid
 	t.Logf("old server PID: %d", oldPID)
 
-	// Type a marker so we can verify the shell survives.
-	nxt.Write([]byte("echo PRE_UPGRADE_OK\r"))
-	nxt.WaitFor("PRE_UPGRADE_OK", 10*time.Second)
+	// Spawn extra regions so we have 3 tabs total. Type a unique marker
+	// in each to verify all shells survive the upgrade.
+	markers := []string{"TAB1_PRE", "TAB2_PRE", "TAB3_PRE"}
+	nxt.Write([]byte("echo " + markers[0] + "\r"))
+	nxt.WaitFor(markers[0], 10*time.Second)
 	nxt.WaitForSilence(200 * time.Millisecond)
+
+	for i := 1; i < 3; i++ {
+		nxt.Write([]byte("\x02c")) // ctrl+b c = new tab
+		// Wait for the inactive tab label to confirm the spawn took effect.
+		nxt.WaitFor(fmt.Sprintf("%d:bash", i), 10*time.Second)
+		nxt.WaitFor("nxterm$", 10*time.Second)
+		nxt.WaitForSilence(200 * time.Millisecond)
+		nxt.Write([]byte("echo " + markers[i] + "\r"))
+		nxt.WaitFor(markers[i], 10*time.Second)
+		nxt.WaitForSilence(200 * time.Millisecond)
+	}
+
+	// Record which tab labels are visible before upgrade.
+	screen := nxt.ScreenLines()
+	t.Logf("tabs before upgrade: %s", strings.TrimSpace(screen[0]))
 
 	// Trigger live upgrade.
 	t.Log("sending SIGUSR2...")
@@ -267,10 +284,29 @@ func TestLiveUpgradeSimple(t *testing.T) {
 	}
 	t.Logf("new server PID: %d", newPID)
 
-	// Verify the shell is still alive.
-	nxt.Write([]byte("echo POST_UPGRADE_OK\r"))
-	nxt.WaitFor("POST_UPGRADE_OK", 15*time.Second)
-	t.Log("shell survived upgrade")
+	// Verify all 3 tabs survived the upgrade.
+	screen = nxt.ScreenLines()
+	tabBar := screen[0]
+	t.Logf("tabs after upgrade: %s", strings.TrimSpace(tabBar))
+
+	// All 3 tabs should be present. The active tab renders as " N ",
+	// inactive tabs as " N:bash ". Check for tab numbers 1, 2, 3.
+	for _, n := range []string{"1", "2", "3"} {
+		if !strings.Contains(tabBar, n) {
+			t.Errorf("tab %s missing from tab bar after upgrade: %q", n, tabBar)
+		}
+	}
+
+	// Switch to each tab and verify the shell is alive.
+	for i, marker := range markers {
+		tabNum := fmt.Sprintf("%d", i+1)
+		nxt.Write([]byte("\x02" + tabNum)) // ctrl+b N = switch to tab N
+		time.Sleep(200 * time.Millisecond)
+		postMarker := fmt.Sprintf("TAB%d_POST", i+1)
+		nxt.Write([]byte("echo " + postMarker + "\r"))
+		nxt.WaitFor(postMarker, 15*time.Second)
+		t.Logf("tab %d: shell alive (had %s, echoed %s)", i+1, marker, postMarker)
+	}
 }
 
 // TestLiveUpgradeStatusBroadcast verifies that the server broadcasts a
