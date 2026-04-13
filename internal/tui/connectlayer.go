@@ -5,11 +5,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // ConnectLayer is an overlay that lets the user type a server address
@@ -39,8 +37,6 @@ func (c *ConnectLayer) Deactivate()       {}
 
 func (c *ConnectLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
-	case RawInputMsg:
-		return c.handleRaw([]byte(msg))
 	case tea.KeyPressMsg:
 		return c.handleKey(msg)
 	case DiscoveredServerMsg:
@@ -64,93 +60,6 @@ func (c *ConnectLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	return nil, nil, false
 }
 
-// handleRaw processes raw input bytes directly, extracting printable
-// characters and control sequences without going through pipeW/bubbletea
-// key parsing. This avoids the interleaving race in focus-mode resend.
-func (c *ConnectLayer) handleRaw(data []byte) (tea.Msg, tea.Cmd, bool) {
-	pos := 0
-	for pos < len(data) {
-		_, _, n, _ := ansi.DecodeSequence(data[pos:], ansi.NormalState, nil)
-		if n == 0 {
-			break
-		}
-		seq := data[pos : pos+n]
-
-		// Single-byte control characters.
-		if n == 1 {
-			switch seq[0] {
-			case 0x1b: // ESC
-				return QuitLayerMsg{}, nil, true
-			case 0x0d, 0x0a: // Enter
-				endpoint, session := c.selectedConnect()
-				if endpoint == "" {
-					return nil, nil, true
-				}
-				c.err = ""
-				return QuitLayerMsg{}, cmdMsg(ConnectToServerMsg{Endpoint: endpoint, Session: session}), true
-			case 0x7f, 0x08: // Backspace / DEL
-				if c.removeSelectedRecent() {
-					pos += n
-					continue
-				}
-				if c.cursor > 0 {
-					c.input = append(c.input[:c.cursor-1], c.input[c.cursor:]...)
-					c.cursor--
-					c.selected = -1
-				}
-				pos += n
-				continue
-			case 0x03: // Ctrl+C
-				return QuitLayerMsg{}, nil, true
-			}
-		}
-
-		// Arrow keys (CSI A/B).
-		if n >= 3 && seq[0] == 0x1b && seq[1] == '[' {
-			switch seq[n-1] {
-			case 'A': // Up
-				c.selected--
-				if c.selected < -1 {
-					c.selected = -1
-				}
-				pos += n
-				continue
-			case 'B': // Down
-				items := c.suggestions()
-				if c.selected < len(items)-1 {
-					c.selected++
-				}
-				pos += n
-				continue
-			case 'C': // Right
-				if c.cursor < len(c.input) {
-					c.cursor++
-				}
-				pos += n
-				continue
-			case 'D': // Left
-				if c.cursor > 0 {
-					c.cursor--
-				}
-				pos += n
-				continue
-			}
-		}
-
-		// Printable characters.
-		r, sz := utf8.DecodeRune(seq)
-		if sz > 0 && unicode.IsPrint(r) {
-			c.input = append(c.input, 0)
-			copy(c.input[c.cursor+1:], c.input[c.cursor:])
-			c.input[c.cursor] = r
-			c.cursor++
-			c.selected = -1
-		}
-
-		pos += n
-	}
-	return nil, nil, true
-}
 
 func (c *ConnectLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
 	switch msg.String() {
@@ -453,7 +362,7 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-func (c *ConnectLayer) WantsKeyboardInput() *KeyboardFilter { return nil }
+func (c *ConnectLayer) WantsKeyboardInput() *KeyboardFilter { return allKeysFilter }
 
 func (c *ConnectLayer) Status(rs *RenderState) (string, lipgloss.Style) {
 	return "connect to server", lipgloss.Style{}

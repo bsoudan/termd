@@ -375,6 +375,10 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 	}
 
 	nxt.Write([]byte("q"))
+	// Wait for scrollback to exit before sending shell commands.
+	nxt.WaitForScreen(func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited", 5*time.Second)
 	nxt.Write([]byte("wait\r"))
 	nxt.WaitFor("nxterm$", 10*time.Second)
 }

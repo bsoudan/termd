@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +12,18 @@ import (
 // socket address, and presses enter. Waits for a shell prompt.
 func connectViaUI(t *testing.T, nxt *nxtest.T, socketPath string) {
 	t.Helper()
-	nxt.Write([]byte("\x02So"))
+	// If the connect overlay isn't already showing, open it.
+	lines := nxt.ScreenLines()
+	alreadyOpen := false
+	for _, line := range lines {
+		if strings.Contains(line, "type a server address") {
+			alreadyOpen = true
+			break
+		}
+	}
+	if !alreadyOpen {
+		nxt.Write([]byte("\x02So"))
+	}
 	nxt.WaitFor("type a server address", 5*time.Second)
 	nxt.WaitForSilence(200 * time.Millisecond)
 	nxt.Write([]byte(socketPath))
