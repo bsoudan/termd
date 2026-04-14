@@ -94,9 +94,15 @@ func (s *SessionLayer) syncFromTree(tree protocol.Tree) {
 		s.programs = append(s.programs, protocol.ProgramInfo{Name: p.Name, Cmd: p.Cmd})
 	}
 
-	// Build set of region IDs in this session.
-	serverIDs := make(map[string]bool, len(sess.RegionIDs))
-	for _, id := range sess.RegionIDs {
+	// Resolve stacks to a flat region order.
+	var regionOrder []string
+	for _, stackID := range sess.StackIDs {
+		if stack, ok := tree.Stacks[stackID]; ok {
+			regionOrder = append(regionOrder, stack.RegionIDs...)
+		}
+	}
+	serverIDs := make(map[string]bool, len(regionOrder))
+	for _, id := range regionOrder {
 		serverIDs[id] = true
 	}
 
@@ -118,7 +124,7 @@ func (s *SessionLayer) syncFromTree(tree protocol.Tree) {
 	s.tabs = s.tabs[:n]
 
 	// Add tabs for new regions in session order.
-	for _, id := range sess.RegionIDs {
+	for _, id := range regionOrder {
 		if s.findTabIndex(id) < 0 {
 			name := ""
 			if r, ok := tree.Regions[id]; ok {

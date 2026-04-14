@@ -104,6 +104,23 @@ func RecvUpgrade(fd int, sshCfg transport.SSHListenerConfig, version string) (*S
 	srv := NewServer(listeners, version, cfg)
 	srv.nextClientID.Store(state.NextClientID)
 
+	// Build regionID→stackID map from upgrade state for stack reconstruction.
+	regionToStack := make(map[string]string)
+	for _, ss := range state.Stacks {
+		for _, rid := range ss.RegionIDs {
+			regionToStack[rid] = ss.ID
+		}
+	}
+	// Backward compatibility: if no stacks in state, create one per region
+	// using the legacy SessionState.RegionIDs.
+	if len(state.Stacks) == 0 {
+		for _, sess := range state.Sessions {
+			for _, rid := range sess.RegionIDs {
+				regionToStack[rid] = generateUUID()
+			}
+		}
+	}
+
 	for _, rs := range state.Regions {
 		ptmxFile, ok := ptyByRegion[rs.ID]
 		if !ok {
@@ -112,7 +129,7 @@ func RecvUpgrade(fd int, sshCfg transport.SSHListenerConfig, version string) (*S
 		}
 		region := RestoreRegion(rs.ID, rs.Name, rs.Cmd, rs.Session, rs.Pid, rs.Width, rs.Height, ptmxFile, rs.Screen, srv.destroyRegion)
 		resp := make(chan struct{})
-		srv.send(restoreRegionReq{region: region, session: rs.Session, resp: resp})
+		srv.send(restoreRegionReq{region: region, session: rs.Session, stackID: regionToStack[rs.ID], resp: resp})
 		<-resp
 	}
 
@@ -134,6 +151,7 @@ func RecvUpgrade(fd int, sshCfg transport.SSHListenerConfig, version string) (*S
 type restoreRegionReq struct {
 	region  Region
 	session string
+	stackID string // stack to add the region to (empty = create new)
 	resp    chan struct{}
 }
 
@@ -141,7 +159,16 @@ func (r restoreRegionReq) handle(st *eventLoopState) {
 	r.region.SetSession(r.session)
 	st.tree.SetRegion(r.region)
 	created := st.tree.EnsureSession(r.session)
-	st.tree.AddRegionToSession(r.session, r.region.ID())
+	stackID := r.stackID
+	if stackID == "" {
+		stackID = generateUUID()
+	}
+	if _, ok := st.tree.StackRegionIDs(stackID); !ok {
+		st.tree.SetStack(stackID, r.session)
+		st.tree.AddStackToSession(r.session, stackID)
+	}
+	st.tree.AddRegionToStack(stackID, r.region.ID())
+	st.tree.SetRegionStackID(r.region.ID(), stackID)
 	r.resp <- struct{}{}
 	if created {
 		st.notifySessionsChanged()

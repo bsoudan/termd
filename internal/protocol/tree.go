@@ -13,6 +13,7 @@ import "encoding/json"
 type Tree struct {
 	Server   ServerNode            `json:"server"`
 	Sessions map[string]SessionNode `json:"sessions"`
+	Stacks   map[string]StackNode   `json:"stacks"`
 	Regions  map[string]RegionNode  `json:"regions"`
 	Programs map[string]ProgramNode `json:"programs"`
 	Clients  map[string]ClientNode  `json:"clients"`
@@ -28,8 +29,14 @@ type ServerNode struct {
 }
 
 type SessionNode struct {
-	Name      string   `json:"name"`
+	Name     string   `json:"name"`
+	StackIDs []string `json:"stack_ids"`
+}
+
+type StackNode struct {
+	ID        string   `json:"id"`
 	RegionIDs []string `json:"region_ids"`
+	Session   string   `json:"session"`
 }
 
 type RegionNode struct {
@@ -38,6 +45,7 @@ type RegionNode struct {
 	Cmd           string `json:"cmd"`
 	Pid           int    `json:"pid"`
 	Session       string `json:"session"`
+	StackID       string `json:"stack_id,omitempty"`
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	Native        bool   `json:"native,omitempty"`

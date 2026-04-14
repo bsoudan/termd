@@ -231,11 +231,18 @@ func buildUpgradeState(s *Server, result upgradeResult, specs []string) *Upgrade
 			Name: p.Name, Cmd: p.Cmd, Args: p.Args, Env: p.Env,
 		}
 	})
-	result.tree.ForEachSession(func(name string, regionIDs []string) {
+	result.tree.ForEachSession(func(name string, _ []string) {
+		stackIDs, _ := result.tree.SessionStackIDs(name)
 		ss := SessionState{Name: name}
-		ss.RegionIDs = append(ss.RegionIDs, regionIDs...)
+		ss.StackIDs = append(ss.StackIDs, stackIDs...)
 		state.Sessions = append(state.Sessions, ss)
 	})
+	for stackID, se := range result.tree.stacks {
+		state.Stacks = append(state.Stacks, StackState{
+			ID:        stackID,
+			RegionIDs: append([]string(nil), se.regionIDs...),
+		})
+	}
 	// Only serialize PTY regions — native regions are killed on upgrade.
 	result.tree.ForEachRegion(func(_ string, r Region) {
 		pr, ok := r.(*PTYRegion)

@@ -18,6 +18,7 @@ import (
 type ServerTree struct {
 	server   protocol.ServerNode
 	regions  map[string]regionEntry
+	stacks   map[string]stackEntry
 	sessions map[string]sessionEntry
 	programs map[string]programEntry
 	clients  map[string]clientEntry
@@ -33,9 +34,14 @@ type regionEntry struct {
 	node   protocol.RegionNode
 }
 
-type sessionEntry struct {
+type stackEntry struct {
 	regionIDs []string
-	node      protocol.SessionNode
+	node      protocol.StackNode
+}
+
+type sessionEntry struct {
+	stackIDs []string
+	node     protocol.SessionNode
 }
 
 type programEntry struct {
@@ -58,6 +64,7 @@ func NewServerTree(version string, hostname string, startTime int64, socketPath 
 			SocketPath: socketPath,
 		},
 		regions:  make(map[string]regionEntry),
+		stacks:   make(map[string]stackEntry),
 		sessions: make(map[string]sessionEntry),
 		programs: make(map[string]programEntry),
 		clients:  make(map[string]clientEntry),
@@ -118,13 +125,76 @@ func (t *ServerTree) SetRegion(r Region) {
 		Session: r.Session(), Width: r.Width(), Height: r.Height(),
 		Native: r.IsNative(), ScrollbackLen: r.ScrollbackLen(),
 	}
+	// Preserve StackID if the entry already exists (set by SetRegionStackID).
+	if existing, ok := t.regions[r.ID()]; ok {
+		node.StackID = existing.node.StackID
+	}
 	t.regions[r.ID()] = regionEntry{region: r, node: node}
 	t.emitSet("/regions/"+r.ID(), node)
+}
+
+func (t *ServerTree) SetRegionStackID(regionID, stackID string) {
+	e, ok := t.regions[regionID]
+	if !ok {
+		return
+	}
+	e.node.StackID = stackID
+	t.regions[regionID] = e
+	t.emitSet("/regions/"+regionID, e.node)
+}
+
+func (t *ServerTree) RegionStackID(regionID string) string {
+	if e, ok := t.regions[regionID]; ok {
+		return e.node.StackID
+	}
+	return ""
 }
 
 func (t *ServerTree) DeleteRegion(id string) {
 	delete(t.regions, id)
 	t.emitDelete("/regions/" + id)
+}
+
+// ── Stack mutations ─────────────────────────────────────────────────────────
+
+func (t *ServerTree) SetStack(id, session string) {
+	node := protocol.StackNode{ID: id, RegionIDs: []string{}, Session: session}
+	t.stacks[id] = stackEntry{node: node}
+	t.emitSet("/stacks/"+id, node)
+}
+
+func (t *ServerTree) DeleteStack(id string) {
+	delete(t.stacks, id)
+	t.emitDelete("/stacks/" + id)
+}
+
+func (t *ServerTree) AddRegionToStack(stackID, regionID string) {
+	e, ok := t.stacks[stackID]
+	if !ok {
+		return
+	}
+	e.regionIDs = append(e.regionIDs, regionID)
+	e.node.RegionIDs = e.regionIDs
+	t.stacks[stackID] = e
+	t.emitAdd("/stacks/"+stackID+"/region_ids", regionID)
+}
+
+func (t *ServerTree) RemoveRegionFromStack(stackID, regionID string) {
+	e, ok := t.stacks[stackID]
+	if !ok {
+		return
+	}
+	e.regionIDs = removeString(e.regionIDs, regionID)
+	e.node.RegionIDs = e.regionIDs
+	t.stacks[stackID] = e
+	t.emitRemove("/stacks/"+stackID+"/region_ids", regionID)
+}
+
+func (t *ServerTree) StackRegionIDs(stackID string) ([]string, bool) {
+	if e, ok := t.stacks[stackID]; ok {
+		return e.regionIDs, true
+	}
+	return nil, false
 }
 
 // ── Session mutations ────────────────────────────────────────────────────────
@@ -134,7 +204,7 @@ func (t *ServerTree) EnsureSession(name string) bool {
 	if _, ok := t.sessions[name]; ok {
 		return false
 	}
-	node := protocol.SessionNode{Name: name, RegionIDs: []string{}}
+	node := protocol.SessionNode{Name: name, StackIDs: []string{}}
 	t.sessions[name] = sessionEntry{node: node}
 	t.emitSet("/sessions/"+name, node)
 	return true
@@ -145,26 +215,48 @@ func (t *ServerTree) DeleteSession(name string) {
 	t.emitDelete("/sessions/" + name)
 }
 
-func (t *ServerTree) AddRegionToSession(session, regionID string) {
+func (t *ServerTree) AddStackToSession(session, stackID string) {
 	e, ok := t.sessions[session]
 	if !ok {
 		return
 	}
-	e.regionIDs = append(e.regionIDs, regionID)
-	e.node.RegionIDs = e.regionIDs
+	e.stackIDs = append(e.stackIDs, stackID)
+	e.node.StackIDs = e.stackIDs
 	t.sessions[session] = e
-	t.emitAdd("/sessions/"+session+"/region_ids", regionID)
+	t.emitAdd("/sessions/"+session+"/stack_ids", stackID)
 }
 
-func (t *ServerTree) RemoveRegionFromSession(session, regionID string) {
+func (t *ServerTree) RemoveStackFromSession(session, stackID string) {
 	e, ok := t.sessions[session]
 	if !ok {
 		return
 	}
-	e.regionIDs = removeString(e.regionIDs, regionID)
-	e.node.RegionIDs = e.regionIDs
+	e.stackIDs = removeString(e.stackIDs, stackID)
+	e.node.StackIDs = e.stackIDs
 	t.sessions[session] = e
-	t.emitRemove("/sessions/"+session+"/region_ids", regionID)
+	t.emitRemove("/sessions/"+session+"/stack_ids", stackID)
+}
+
+// SessionRegionIDs resolves all stacks in a session to a flat list of region IDs.
+func (t *ServerTree) SessionRegionIDs(name string) ([]string, bool) {
+	e, ok := t.sessions[name]
+	if !ok {
+		return nil, false
+	}
+	var ids []string
+	for _, stackID := range e.stackIDs {
+		if se, ok := t.stacks[stackID]; ok {
+			ids = append(ids, se.regionIDs...)
+		}
+	}
+	return ids, true
+}
+
+func (t *ServerTree) SessionStackIDs(name string) ([]string, bool) {
+	if e, ok := t.sessions[name]; ok {
+		return e.stackIDs, true
+	}
+	return nil, false
 }
 
 // ── Program mutations ────────────────────────────────────────────────────────
@@ -261,13 +353,6 @@ func (t *ServerTree) ClientSession(id uint32) string {
 	return ""
 }
 
-func (t *ServerTree) SessionRegionIDs(name string) ([]string, bool) {
-	if e, ok := t.sessions[name]; ok {
-		return e.regionIDs, true
-	}
-	return nil, false
-}
-
 func (t *ServerTree) Program(name string) *config.ProgramConfig {
 	if e, ok := t.programs[name]; ok {
 		cfg := e.config
@@ -302,8 +387,9 @@ func (t *ServerTree) ForEachRegion(fn func(string, Region)) {
 }
 
 func (t *ServerTree) ForEachSession(fn func(string, []string)) {
-	for name, e := range t.sessions {
-		fn(name, e.regionIDs)
+	for name := range t.sessions {
+		ids, _ := t.SessionRegionIDs(name)
+		fn(name, ids)
 	}
 }
 
@@ -330,16 +416,24 @@ func (t *ServerTree) Snapshot() protocol.TreeSnapshot {
 		Server:   t.server,
 		Upgrade:  t.upgrade,
 		Sessions: make(map[string]protocol.SessionNode, len(t.sessions)),
+		Stacks:   make(map[string]protocol.StackNode, len(t.stacks)),
 		Regions:  make(map[string]protocol.RegionNode, len(t.regions)),
 		Programs: make(map[string]protocol.ProgramNode, len(t.programs)),
 		Clients:  make(map[string]protocol.ClientNode, len(t.clients)),
 	}
 	for k, v := range t.sessions {
 		node := v.node
+		ids := make([]string, len(node.StackIDs))
+		copy(ids, node.StackIDs)
+		node.StackIDs = ids
+		tree.Sessions[k] = node
+	}
+	for k, v := range t.stacks {
+		node := v.node
 		ids := make([]string, len(node.RegionIDs))
 		copy(ids, node.RegionIDs)
 		node.RegionIDs = ids
-		tree.Sessions[k] = node
+		tree.Stacks[k] = node
 	}
 	for k, v := range t.regions {
 		tree.Regions[k] = v.node

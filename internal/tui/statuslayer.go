@@ -211,17 +211,23 @@ func (s *StatusLayer) renderServerTree() []string {
 		sess := s.tree.Sessions[name]
 		lines = append(lines, "")
 		lines = append(lines, fmt.Sprintf("session %s:", name))
-		for _, rid := range sess.RegionIDs {
-			r, ok := s.tree.Regions[rid]
+		for _, stackID := range sess.StackIDs {
+			stack, ok := s.tree.Stacks[stackID]
 			if !ok {
-				lines = append(lines, fmt.Sprintf("  %s (unknown)", rid))
 				continue
 			}
-			kind := "pty"
-			if r.Native {
-				kind = "native"
+			for _, rid := range stack.RegionIDs {
+				r, ok := s.tree.Regions[rid]
+				if !ok {
+					lines = append(lines, fmt.Sprintf("  %s (unknown)", rid))
+					continue
+				}
+				kind := "pty"
+				if r.Native {
+					kind = "native"
+				}
+				lines = append(lines, fmt.Sprintf("  %s: %s (%s, %dx%d)", r.Name, r.Cmd, kind, r.Width, r.Height))
 			}
-			lines = append(lines, fmt.Sprintf("  %s: %s (%s, %dx%d)", r.Name, r.Cmd, kind, r.Width, r.Height))
 		}
 	}
 

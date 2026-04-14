@@ -61,6 +61,8 @@ func (ts *TreeStore) applyOp(op protocol.TreeOp) {
 	switch segs[0] {
 	case "regions":
 		ts.applyRegionOp(segs[1:], op)
+	case "stacks":
+		ts.applyStackOp(segs[1:], op)
 	case "sessions":
 		ts.applySessionOp(segs[1:], op)
 	case "programs":
@@ -93,6 +95,51 @@ func (ts *TreeStore) applyRegionOp(segs []string, op protocol.TreeOp) {
 	}
 }
 
+func (ts *TreeStore) applyStackOp(segs []string, op protocol.TreeOp) {
+	if len(segs) == 1 {
+		id := segs[0]
+		switch op.Op {
+		case "set":
+			var node protocol.StackNode
+			if json.Unmarshal(op.Value, &node) == nil {
+				if ts.tree.Stacks == nil {
+					ts.tree.Stacks = make(map[string]protocol.StackNode)
+				}
+				ts.tree.Stacks[id] = node
+			}
+		case "delete":
+			delete(ts.tree.Stacks, id)
+		}
+		return
+	}
+	if len(segs) == 2 && segs[1] == "region_ids" {
+		id := segs[0]
+		snode, ok := ts.tree.Stacks[id]
+		if !ok {
+			return
+		}
+		switch op.Op {
+		case "add":
+			var val string
+			if json.Unmarshal(op.Value, &val) == nil {
+				snode.RegionIDs = append(snode.RegionIDs, val)
+				ts.tree.Stacks[id] = snode
+			}
+		case "remove":
+			var match string
+			if json.Unmarshal(op.Match, &match) == nil {
+				for i, s := range snode.RegionIDs {
+					if s == match {
+						snode.RegionIDs = append(snode.RegionIDs[:i], snode.RegionIDs[i+1:]...)
+						break
+					}
+				}
+				ts.tree.Stacks[id] = snode
+			}
+		}
+	}
+}
+
 func (ts *TreeStore) applySessionOp(segs []string, op protocol.TreeOp) {
 	if len(segs) == 1 {
 		name := segs[0]
@@ -110,7 +157,7 @@ func (ts *TreeStore) applySessionOp(segs []string, op protocol.TreeOp) {
 		}
 		return
 	}
-	if len(segs) == 2 && segs[1] == "region_ids" {
+	if len(segs) == 2 && segs[1] == "stack_ids" {
 		name := segs[0]
 		snode, ok := ts.tree.Sessions[name]
 		if !ok {
@@ -120,15 +167,15 @@ func (ts *TreeStore) applySessionOp(segs []string, op protocol.TreeOp) {
 		case "add":
 			var val string
 			if json.Unmarshal(op.Value, &val) == nil {
-				snode.RegionIDs = append(snode.RegionIDs, val)
+				snode.StackIDs = append(snode.StackIDs, val)
 				ts.tree.Sessions[name] = snode
 			}
 		case "remove":
 			var match string
 			if json.Unmarshal(op.Match, &match) == nil {
-				for i, s := range snode.RegionIDs {
+				for i, s := range snode.StackIDs {
 					if s == match {
-						snode.RegionIDs = append(snode.RegionIDs[:i], snode.RegionIDs[i+1:]...)
+						snode.StackIDs = append(snode.StackIDs[:i], snode.StackIDs[i+1:]...)
 						break
 					}
 				}

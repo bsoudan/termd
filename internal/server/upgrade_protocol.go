@@ -17,6 +17,7 @@ type UpgradeState struct {
 	Version       string                       `json:"version"`
 	ListenerSpecs []string                     `json:"listener_specs"`
 	Sessions      []SessionState               `json:"sessions"`
+	Stacks        []StackState                 `json:"stacks,omitempty"`
 	Regions       []RegionState                `json:"regions"`
 	Programs      map[string]ProgramConfigJSON `json:"programs"`
 	SessionsCfg   SessionsCfgJSON              `json:"sessions_cfg"`
@@ -25,7 +26,16 @@ type UpgradeState struct {
 }
 
 type SessionState struct {
-	Name      string   `json:"name"`
+	Name     string   `json:"name"`
+	StackIDs []string `json:"stack_ids"`
+	// Legacy: RegionIDs is used for backward compatibility with pre-stack
+	// upgrade state. If StackIDs is empty and RegionIDs is non-empty, the
+	// receiver creates one stack per region.
+	RegionIDs []string `json:"region_ids,omitempty"`
+}
+
+type StackState struct {
+	ID        string   `json:"id"`
 	RegionIDs []string `json:"region_ids"`
 }
 

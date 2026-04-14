@@ -296,7 +296,11 @@ func (r spawnRegionReq) handle(st *eventLoopState) {
 	r.region.SetSession(r.sessionName)
 	st.tree.SetRegion(r.region)
 	created := st.tree.EnsureSession(r.sessionName)
-	st.tree.AddRegionToSession(r.sessionName, r.region.ID())
+	stackID := generateUUID()
+	st.tree.SetStack(stackID, r.sessionName)
+	st.tree.AddRegionToStack(stackID, r.region.ID())
+	st.tree.SetRegionStackID(r.region.ID(), stackID)
+	st.tree.AddStackToSession(r.sessionName, stackID)
 	r.resp <- struct{}{}
 	if created {
 		st.notifySessionsChanged()
@@ -310,10 +314,17 @@ func (r destroyRegionReq) handle(st *eventLoopState) {
 		return
 	}
 	sessionName := region.Session()
+	stackID := st.tree.RegionStackID(r.regionID)
 	st.tree.DeleteRegion(r.regionID)
-	st.tree.RemoveRegionFromSession(sessionName, r.regionID)
+	if stackID != "" {
+		st.tree.RemoveRegionFromStack(stackID, r.regionID)
+		if rids, ok := st.tree.StackRegionIDs(stackID); ok && len(rids) == 0 {
+			st.tree.RemoveStackFromSession(sessionName, stackID)
+			st.tree.DeleteStack(stackID)
+		}
+	}
 	sessionRemoved := false
-	if ids, ok := st.tree.SessionRegionIDs(sessionName); ok && len(ids) == 0 {
+	if sids, ok := st.tree.SessionStackIDs(sessionName); ok && len(sids) == 0 {
 		st.tree.DeleteSession(sessionName)
 		sessionRemoved = true
 		slog.Info("removed empty session", "session", sessionName)
