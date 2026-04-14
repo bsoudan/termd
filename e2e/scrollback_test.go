@@ -1218,3 +1218,99 @@ func TestScrollbackScreenUpdateDuringScroll(t *testing.T) {
 		return !strings.Contains(lines[0], "scrollback")
 	}, "scrollback exited", 5*time.Second)
 }
+
+// TestScrollbackConcurrentOutputDesync reproduces the race condition where
+// PTY output triggers a screen_update (mode 2026) while the client is in
+// scrollback mode with sync in progress. The screen_update used to trim
+// the client's history, making ScrollbackLayer.localAtEntry stale and
+// causing duplicate or missing lines after sync completion.
+func TestScrollbackConcurrentOutputDesync(t *testing.T) {
+	t.Parallel()
+	nxt := startFrontendShared(t)
+	defer nxt.Kill()
+
+	nxt.WaitFor("nxterm$", 10*time.Second)
+
+	// Generate substantial initial scrollback so the server sync takes
+	// multiple chunks and gives time for events to interleave.
+	nxt.Write([]byte("for i in $(seq 1 200); do echo \"BASE_$i\"; done\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitForSilence(200 * time.Millisecond)
+
+	// Start a background job that will produce output while we're in
+	// scrollback, including prompt redraws that trigger mode 2026.
+	nxt.Write([]byte("(sleep 0.5; for i in $(seq 1 100); do echo \"LIVE_$i\"; done) &\r"))
+	nxt.WaitFor("nxterm$", 5*time.Second)
+
+	// Enter scrollback immediately. The sync request goes to the server
+	// which has ~200 lines. While chunks stream back, the background job
+	// starts producing output (terminal_events + possible screen_updates).
+	nxt.Write([]byte{0x02, '['})
+	nxt.WaitForScreen(func(lines []string) bool {
+		return strings.Contains(lines[0], "scrollback")
+	}, "scrollback active", 5*time.Second)
+
+	// Wait for the background output to complete and terminal to settle.
+	nxt.WaitFor("LIVE_100", 10*time.Second)
+	nxt.WaitForSilence(500 * time.Millisecond)
+
+	// Navigate to the bottom to see the boundary region.
+	nxt.Write([]byte("G")) // end
+	time.Sleep(200 * time.Millisecond)
+
+	// Scroll up a few lines to see the history/screen boundary.
+	nxt.Write([]byte("k")) // up 1
+	time.Sleep(200 * time.Millisecond)
+
+	screen := nxt.ScreenLines()
+
+	// Collect all numbered lines visible on screen.
+	var visible []string
+	for _, line := range screen[1:] { // skip tab bar
+		trimmed := strings.TrimSpace(line)
+		runes := []rune(trimmed)
+		if len(runes) > 0 {
+			last := runes[len(runes)-1]
+			if last == '·' || last == '█' || last == '▲' || last == '▼' {
+				trimmed = strings.TrimSpace(string(runes[:len(runes)-1]))
+			}
+		}
+		if strings.HasPrefix(trimmed, "BASE_") || strings.HasPrefix(trimmed, "LIVE_") {
+			visible = append(visible, trimmed)
+		}
+	}
+
+	t.Logf("visible lines at offset=1: %v", visible)
+
+	// Check for duplicates.
+	seen := make(map[string]int)
+	for _, v := range visible {
+		seen[v]++
+	}
+	for k, count := range seen {
+		if count > 1 {
+			t.Errorf("duplicate line: %q appears %d times", k, count)
+		}
+	}
+
+	// Verify ordering within the current page: lines should be monotonic
+	// (no shuffled or out-of-order entries within a single view).
+	lastN := 0
+	for _, v := range visible {
+		var n int
+		if _, err := fmt.Sscanf(v, "LIVE_%d", &n); err == nil {
+			if n <= lastN && lastN > 0 {
+				t.Errorf("LIVE lines out of order within page: LIVE_%d after LIVE_%d", n, lastN)
+			}
+			lastN = n
+		}
+	}
+
+	// Exit scrollback and clean up background job.
+	nxt.Write([]byte("q"))
+	nxt.WaitForScreen(func(lines []string) bool {
+		return !strings.Contains(lines[0], "scrollback")
+	}, "scrollback exited", 5*time.Second)
+	nxt.Write([]byte("wait\r"))
+	nxt.WaitFor("nxterm$", 10*time.Second)
+}

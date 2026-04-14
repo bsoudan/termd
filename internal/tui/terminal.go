@@ -164,10 +164,17 @@ func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.Sc
 	// lines into history that are now part of the screen content in the
 	// snapshot. Trim to the server's count to avoid duplicates at the
 	// history/screen boundary.
+	//
+	// Skip the trim while scrollback mode is active: the ScrollbackLayer
+	// captured localAtEntry from the current history size, and trimming
+	// here would make that snapshot stale. The sync completion logic in
+	// ScrollbackLayer.handleSyncChunk handles the boundary correctly
+	// using localAtEntry — trimming would cause duplicate or missing
+	// lines when the gap is computed.
 	var prevHistory [][]te.Cell
 	if t.hscreen != nil {
 		prevHistory = t.hscreen.History()
-		if serverScrollback > 0 && len(prevHistory) > serverScrollback {
+		if !t.inScrollback && serverScrollback > 0 && len(prevHistory) > serverScrollback {
 			prevHistory = prevHistory[:serverScrollback]
 		}
 	}

@@ -114,8 +114,17 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	// than the current Scrollback() count, because terminal events may
 	// have grown the local history during the sync — those new lines are
 	// not in the server's snapshot and must not shrink the gap.
-	gap := len(s.syncBuf) - s.localAtEntry
-	slog.Debug("scrollback sync complete", "server_lines", len(s.syncBuf), "local_at_entry", s.localAtEntry, "local_now", s.term.hscreen.Scrollback(), "gap", gap)
+	//
+	// However, if the current scrollback is LESS than localAtEntry (e.g.,
+	// a screen_update trimmed history despite the inScrollback guard, or
+	// an EraseInDisplay(3) cleared history), clamp to the current count
+	// to avoid prepending lines the client already has.
+	overlap := s.localAtEntry
+	if current := s.term.hscreen.Scrollback(); current < overlap {
+		overlap = current
+	}
+	gap := len(s.syncBuf) - overlap
+	slog.Debug("scrollback sync complete", "server_lines", len(s.syncBuf), "local_at_entry", s.localAtEntry, "overlap", overlap, "local_now", s.term.hscreen.Scrollback(), "gap", gap)
 	if gap > 0 {
 		s.term.hscreen.PrependHistory(s.syncBuf[:gap])
 	}
