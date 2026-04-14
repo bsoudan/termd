@@ -10,11 +10,19 @@ import (
 	"nxtermd/internal/protocol"
 )
 
-// tab represents a single terminal tab backed by a server region.
-type tab struct {
+// regionLayer pairs a region ID with its TerminalLayer for rendering.
+type regionLayer struct {
 	regionID   string
 	regionName string
 	term       *TerminalLayer
+}
+
+// tab represents a single tab backed by a stack of one or more regions.
+// The bottom region (index 0) is the primary terminal; upper regions
+// are composited on top via lipgloss layers.
+type tab struct {
+	stackID  string
+	regions  []regionLayer
 }
 
 // SessionLayer manages one named session's regions and terminals.
@@ -41,32 +49,64 @@ type SessionLayer struct {
 	statusBarMargin int
 }
 
-// activeTerm returns the active tab's TerminalLayer, or nil.
+// activeTerm returns the active tab's primary (bottom) TerminalLayer, or nil.
 func (s *SessionLayer) activeTerm() *TerminalLayer {
-	if len(s.tabs) == 0 {
+	if len(s.tabs) == 0 || len(s.tabs[s.activeTab].regions) == 0 {
 		return nil
 	}
-	return s.tabs[s.activeTab].term
+	return s.tabs[s.activeTab].regions[0].term
 }
 
-// ActiveTerm returns the active tab's TerminalLayer (exported for model).
+// ActiveTerm returns the active tab's primary TerminalLayer (exported for model).
 func (s *SessionLayer) ActiveTerm() *TerminalLayer {
 	return s.activeTerm()
 }
 
-// activeRegionID returns the active tab's region ID, or "".
+// activeRegionID returns the active tab's primary region ID, or "".
 func (s *SessionLayer) activeRegionID() string {
+	if len(s.tabs) == 0 || len(s.tabs[s.activeTab].regions) == 0 {
+		return ""
+	}
+	return s.tabs[s.activeTab].regions[0].regionID
+}
+
+// activeStackID returns the active tab's stack ID, or "".
+func (s *SessionLayer) activeStackID() string {
 	if len(s.tabs) == 0 {
 		return ""
 	}
-	return s.tabs[s.activeTab].regionID
+	return s.tabs[s.activeTab].stackID
 }
 
-// findTabIndex returns the index of the tab with the given region ID, or -1.
+// findTabByStack returns the index of the tab for a stack, or -1.
+func (s *SessionLayer) findTabByStack(stackID string) int {
+	for i, t := range s.tabs {
+		if t.stackID == stackID {
+			return i
+		}
+	}
+	return -1
+}
+
+// findRegionLayer returns the regionLayer for a given region ID, or nil.
+func (s *SessionLayer) findRegionLayer(regionID string) *regionLayer {
+	for i := range s.tabs {
+		for j := range s.tabs[i].regions {
+			if s.tabs[i].regions[j].regionID == regionID {
+				return &s.tabs[i].regions[j]
+			}
+		}
+	}
+	return nil
+}
+
+// findTabIndex returns the index of the tab containing a region, or -1.
 func (s *SessionLayer) findTabIndex(regionID string) int {
 	for i, t := range s.tabs {
-		if t.regionID == regionID {
-			return i
+		for _, rl := range t.regions {
+			if rl.regionID == regionID {
+				return i
+			}
 		}
 	}
 	return -1
@@ -94,50 +134,89 @@ func (s *SessionLayer) syncFromTree(tree protocol.Tree) {
 		s.programs = append(s.programs, protocol.ProgramInfo{Name: p.Name, Cmd: p.Cmd})
 	}
 
-	// Resolve stacks to a flat region order.
-	var regionOrder []string
-	for _, stackID := range sess.StackIDs {
-		if stack, ok := tree.Stacks[stackID]; ok {
-			regionOrder = append(regionOrder, stack.RegionIDs...)
-		}
-	}
-	serverIDs := make(map[string]bool, len(regionOrder))
-	for _, id := range regionOrder {
-		serverIDs[id] = true
+	// Build set of server stack IDs.
+	serverStackIDs := make(map[string]bool, len(sess.StackIDs))
+	for _, sid := range sess.StackIDs {
+		serverStackIDs[sid] = true
 	}
 
-	prevActiveID := s.activeRegionID()
+	prevActiveStackID := s.activeStackID()
 	hadTabs := len(s.tabs) > 0
 
-	// Remove tabs whose regions no longer exist.
+	// Remove tabs whose stacks no longer exist.
 	n := 0
 	for _, t := range s.tabs {
-		if serverIDs[t.regionID] {
-			if r, ok := tree.Regions[t.regionID]; ok {
-				t.regionName = r.Name
-				t.term.regionName = r.Name
-			}
+		if serverStackIDs[t.stackID] {
 			s.tabs[n] = t
 			n++
 		}
 	}
 	s.tabs = s.tabs[:n]
 
-	// Add tabs for new regions in session order.
-	for _, id := range regionOrder {
-		if s.findTabIndex(id) < 0 {
-			name := ""
-			if r, ok := tree.Regions[id]; ok {
-				name = r.Name
+	// Add or update tabs for each stack in session order.
+	for _, stackID := range sess.StackIDs {
+		stack, ok := tree.Stacks[stackID]
+		if !ok || len(stack.RegionIDs) == 0 {
+			continue
+		}
+
+		tabIdx := s.findTabByStack(stackID)
+		if tabIdx < 0 {
+			// New stack — create tab with all its regions.
+			t := tab{stackID: stackID}
+			for _, rid := range stack.RegionIDs {
+				name := ""
+				if r, ok := tree.Regions[rid]; ok {
+					name = r.Name
+				}
+				term := NewTerminalLayer(s.server, rid, name, s.termWidth, s.termHeight, s.statusBarMargin)
+				t.regions = append(t.regions, regionLayer{regionID: rid, regionName: name, term: term})
 			}
-			term := NewTerminalLayer(s.server, id, name, s.termWidth, s.termHeight, s.statusBarMargin)
-			s.tabs = append(s.tabs, tab{regionID: id, regionName: name, term: term})
+			s.tabs = append(s.tabs, t)
+		} else {
+			// Existing stack — sync regions within it.
+			t := &s.tabs[tabIdx]
+			regionSet := make(map[string]bool, len(stack.RegionIDs))
+			for _, rid := range stack.RegionIDs {
+				regionSet[rid] = true
+			}
+			// Remove regions no longer in the stack.
+			rn := 0
+			for _, rl := range t.regions {
+				if regionSet[rl.regionID] {
+					if r, ok := tree.Regions[rl.regionID]; ok {
+						rl.regionName = r.Name
+						rl.term.regionName = r.Name
+					}
+					t.regions[rn] = rl
+					rn++
+				}
+			}
+			t.regions = t.regions[:rn]
+			// Add new regions.
+			for _, rid := range stack.RegionIDs {
+				found := false
+				for _, rl := range t.regions {
+					if rl.regionID == rid {
+						found = true
+						break
+					}
+				}
+				if !found {
+					name := ""
+					if r, ok := tree.Regions[rid]; ok {
+						name = r.Name
+					}
+					term := NewTerminalLayer(s.server, rid, name, s.termWidth, s.termHeight, s.statusBarMargin)
+					t.regions = append(t.regions, regionLayer{regionID: rid, regionName: name, term: term})
+				}
+			}
 		}
 	}
 
 	// Restore active tab.
-	if prevActiveID != "" {
-		if idx := s.findTabIndex(prevActiveID); idx >= 0 {
+	if prevActiveStackID != "" {
+		if idx := s.findTabByStack(prevActiveStackID); idx >= 0 {
 			s.activeTab = idx
 		}
 	}
@@ -150,9 +229,8 @@ func (s *SessionLayer) syncFromTree(tree protocol.Tree) {
 		s.status = "no regions"
 	} else if len(s.tabs) > 0 {
 		s.status = ""
-		// Subscribe if the active region changed or we just got tabs.
-		newActiveID := s.activeRegionID()
-		if newActiveID != prevActiveID || !hadTabs {
+		newActiveStackID := s.activeStackID()
+		if newActiveStackID != prevActiveStackID || !hadTabs {
 			s.Activate()
 		}
 	}
@@ -194,25 +272,41 @@ func (s *SessionLayer) Reconnect() {
 // KillAllRegions sends KillRegionRequest for every region in this session.
 func (s *SessionLayer) KillAllRegions() {
 	for _, t := range s.tabs {
-		s.server.Send(protocol.KillRegionRequest{RegionID: t.regionID})
+		for _, rl := range t.regions {
+			s.server.Send(protocol.KillRegionRequest{RegionID: rl.regionID})
+		}
 	}
 }
 
-// Activate subscribes to the active region. Called when this session
-// becomes the active session (e.g., SessionManagerLayer switches to it).
+// Activate subscribes to all regions in the active stack. Called when
+// this session becomes the active session.
 func (s *SessionLayer) Activate() tea.Cmd {
-	if t := s.activeTerm(); t != nil {
-		s.status = "subscribing..."
-		return t.Activate()
+	if len(s.tabs) == 0 {
+		return nil
 	}
-	return nil
+	t := s.tabs[s.activeTab]
+	if len(t.regions) == 0 {
+		return nil
+	}
+	s.status = "subscribing..."
+	// Activate the primary (bottom) region first; upper regions are
+	// activated after to establish subscriptions for all layers.
+	var cmds []tea.Cmd
+	for _, rl := range t.regions {
+		if cmd := rl.term.Activate(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
-// Deactivate unsubscribes from the active region. Called when this
-// session is no longer the active session.
+// Deactivate unsubscribes from all regions in the active stack.
 func (s *SessionLayer) Deactivate() {
-	if t := s.activeTerm(); t != nil {
-		t.Deactivate()
+	if len(s.tabs) == 0 {
+		return
+	}
+	for _, rl := range s.tabs[s.activeTab].regions {
+		rl.term.Deactivate()
 	}
 }
 
@@ -309,28 +403,25 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 		s.status = ""
 		return nil, nil, true
 
-	// Terminal messages — route to the correct tab by RegionID
+	// Terminal messages — route to the correct region layer by RegionID
 	case protocol.ScreenUpdate:
-		idx := s.findTabIndex(msg.RegionID)
-		if idx < 0 {
-			return nil, nil, true
+		if rl := s.findRegionLayer(msg.RegionID); rl != nil {
+			_, cmd, _ := rl.term.Update(msg)
+			return nil, cmd, true
 		}
-		_, cmd, _ := s.tabs[idx].term.Update(msg)
-		return nil, cmd, true
+		return nil, nil, true
 	case protocol.GetScreenResponse:
-		idx := s.findTabIndex(msg.RegionID)
-		if idx < 0 {
-			return nil, nil, true
+		if rl := s.findRegionLayer(msg.RegionID); rl != nil {
+			_, cmd, _ := rl.term.Update(msg)
+			return nil, cmd, true
 		}
-		_, cmd, _ := s.tabs[idx].term.Update(msg)
-		return nil, cmd, true
+		return nil, nil, true
 	case protocol.TerminalEvents:
-		idx := s.findTabIndex(msg.RegionID)
-		if idx < 0 {
-			return nil, nil, true
+		if rl := s.findRegionLayer(msg.RegionID); rl != nil {
+			_, cmd, _ := rl.term.Update(msg)
+			return nil, cmd, true
 		}
-		_, cmd, _ := s.tabs[idx].term.Update(msg)
-		return nil, cmd, true
+		return nil, nil, true
 	case protocol.GetScrollbackResponse:
 		// Handled by ScrollbackLayer in the layer stack when active.
 		return nil, nil, true
@@ -457,13 +548,17 @@ func (s *SessionLayer) View(width, height int, rs *RenderState) []*lipgloss.Laye
 
 	termY := 1 + s.statusBarMargin
 	contentHeight := max(height-termY, 1)
-	if term := s.activeTerm(); term != nil {
-		term.disconnected = (s.connStatus == "reconnecting")
-		termLayers := term.View(width, contentHeight, rs)
-		for i := range termLayers {
-			termLayers[i] = termLayers[i].Y(termY)
+	activeTab := s.activeTab
+	if activeTab < len(s.tabs) && len(s.tabs[activeTab].regions) > 0 {
+		// Composite all region layers in the stack (bottom-to-top).
+		for z, rl := range s.tabs[activeTab].regions {
+			rl.term.disconnected = (s.connStatus == "reconnecting")
+			termLayers := rl.term.View(width, contentHeight, rs)
+			for i := range termLayers {
+				termLayers[i] = termLayers[i].Y(termY).Z(z)
+			}
+			layers = append(layers, termLayers...)
 		}
-		layers = append(layers, termLayers...)
 	} else {
 		var sb strings.Builder
 		for i := range contentHeight {
@@ -503,7 +598,10 @@ func (s *SessionLayer) renderTabBar(width int) string {
 			label = fmt.Sprintf(" <%d> ", i+1)
 			sb.WriteString(statusActiveTab.Render(label))
 		} else {
-			name := t.term.Title()
+			name := ""
+			if len(t.regions) > 0 {
+				name = t.regions[0].term.Title()
+			}
 			label = fmt.Sprintf(" %d:%s ", i+1, truncateTitle(stripEmoji(name), 30))
 			sb.WriteString(statusFaint.Render(label))
 		}
