@@ -149,7 +149,7 @@ func proxyBase64(conn io.ReadWriteCloser) error {
 // nxtermd socket. If explicit is non-empty it is used verbatim
 // (prefixed with "unix:" if it has no scheme). Otherwise the function
 // reads ~/.config/nxtermd/server.toml and picks the first unix listen
-// entry, falling back to /tmp/nxtermd.sock.
+// entry, falling back to config.DefaultSocket().
 func resolveProxySocket(explicit string) (string, error) {
 	if explicit != "" {
 		if !hasScheme(explicit) {
@@ -170,7 +170,7 @@ func resolveProxySocket(explicit string) (string, error) {
 		}
 	}
 
-	const fallback = "/tmp/nxtermd.sock"
+	fallback := config.DefaultSocket()
 	if _, err := os.Stat(fallback); err == nil {
 		return "unix:" + fallback, nil
 	}

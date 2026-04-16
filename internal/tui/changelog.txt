@@ -1,4 +1,33 @@
-0.14.0-126-g929db44*:  M internal/tui/changelog.txt  M internal/tui/commandlayer.go  M internal/tui/commandpalette.go  M internal/tui/connectlayer.go  M internal/tui/helplayer.go  M internal/tui/layer.go  M internal/tui/mainlayer.go  M internal/tui/model.go  M internal/tui/programlayer.go  M internal/tui/scrollablelayer.go  M internal/tui/scrollback.go  M internal/tui/secret_input_layer.go  M internal/tui/session.go  M internal/tui/sessionname.go  M internal/tui/sessionpicker.go  M internal/tui/statuslayer.go  M internal/tui/task.go  M internal/tui/terminal.go  M internal/tui/toast.go ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter ?? examples/native_scratchpad/native_scratchpad ?? examples_bin/ ?? logos ?? nxtree.md ?? profile001.callgraph.out ?? todo ?? ttui.tape ?? x 
+v0.1-beta-1-g564dee8*:  M TODO.md  M cmd/nxtermctl/main.go  M cmd/nxtermctl/proxy.go  M doc/example-frontend.toml  M doc/example-server.toml  M internal/config/config.go  M internal/server/main.go  M internal/transport/transport.go  M internal/tui/changelog.txt  M internal/tui/platform_unix.go  M nix/home-manager.nix ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter 
+v0.1-beta-1-g564dee8: add home-manager module for nxtermd systemd user service
+        v0.1-beta: add claude files
+0.14.0-153-gb8a5d0f: refactor: publish upgrade status via tree instead of broadcast messages
+0.14.0-152-g9e9a270: refactor: remove status_request protocol, derive status from server tree
+0.14.0-151-g62c6835: refactor: extract protocol handlers from Client into standalone functions
+0.14.0-150-g19ab4cd: refactor: convert execCmdSync to iterative trampoline
+0.14.0-149-g8763da2: refactor: group NxtermModel constructor params into AppContext
+0.14.0-148-g8e1e55f: refactor: remove dead fields from SessionLayer and SessionManagerLayer
+0.14.0-147-gdc89d44: refactor: simplify addClientReq to use normal tx pattern
+0.14.0-146-g31899f5: refactor: replace shadow tree with transactional ServerTree
+0.14.0-145-gd9e6ab3: refactor: replace PTYRegion mutex with actor goroutine
+0.14.0-144-g951e0b1: refactor: rename MainLayer to NxtermModel, merge teaModel
+0.14.0-143-gc3d09ae: refactor: extract SessionManagerLayer from MainLayer
+0.14.0-142-g0762f45: refactor: split command types by handler layer
+0.14.0-141-g4f99502: refactor: create TerminalLayer eagerly when tabs are added
+0.14.0-140-gad08043: refactor: move ScrollbackLayer into the main layer stack
+0.14.0-139-g8bd2503: refactor: unify TUI request/response through task system
+0.14.0-138-ga9e90c5: refactor: typed request interface for server event loop
+0.14.0-137-g289055e: docs: add config validation TODO
+0.14.0-136-g565fd66: refactor: replace protocol and client dispatch switches with registry maps
+0.14.0-135-g085fa5d: test: verify all regions survive live upgrade
+0.14.0-134-g22c78a1: fix: propagate quit via error returns instead of quitRequested flag
+0.14.0-133-g47605d3: fix: page down at bottom of scrollback exits scrollback mode
+0.14.0-132-g3435ef2: fix: process focus buffer in drainUntil so connect layer receives input
+0.14.0-131-g53c314e: fix: remove duplicate tab creation on spawn
+0.14.0-130-g671f75a: fix: trim scrollback history on screen_update to prevent duplicates
+0.14.0-129-g7d787a9: fix: send scrollback chunks newest-first for faster initial render
+0.14.0-128-gc07eb5f: fix: scrollback wheel clamp, sync gap race, and post-sync phantom gap
+0.14.0-127-g8fb683c: refactor: prioritize non-raw channels in main loop, one key at a time in focus mode
 0.14.0-126-g929db44: fix: ConnectLayer focus routing and scrollback exit race
 0.14.0-125-g2add6f2: fix: drain bubbletea queue after each pipeW write
 0.14.0-124-g77d4507: fix: synchronous pipeW write+drain to avoid ordering issues
@@ -70,32 +99,3 @@
 0.14.0-58-g3e23f7a: feat: add --pprof flag and config option for runtime profiling
 0.14.0-57-gba95089: feat: add native app protocol with fd 3 negotiation, tests, and scratchpad example
 0.14.0-56-g6eaf317: fix: stream scrollback in chunks and add region data to status panel
-0.14.0-55-gb9edf4e: fix: use FreeConsole to detach old process during Windows upgrade
-0.14.0-54-gd5d7763: fix: don't close pipeW in PreUpgradeCleanup on Windows
-0.14.0-53-g011d6cb: feat: use cyan for overlay borders and help text
-0.14.0-52-g196268a: feat: dim terminal and add clear margin when overlay is active
-0.14.0-51-gb98239f: fix: unblock console read before starting new process on Windows
-0.14.0-50-g37f96de: fix: disconnect old process during Windows frontend upgrade
-0.14.0-49-gb22536c: fix: filter bubbletea capability responses from raw input
-0.14.0-48-gc31ccfa: fix: polish scrollback scrollbar rendering
-0.14.0-47-gea38f0d: feat: add scrollbar to scrollback view
-0.14.0-46-g8d7def6: feat: add key filter mechanism to WantsKeyboardInput for PageUp/PageDown scrollback
-0.14.0-45-g8a9a29c: fix: close duplicated stdin handle during Windows frontend upgrade
-0.14.0-44-g090c124: refactor: replace scrollback mode with ScrollbackLayer
-0.14.0-43-g536a442: refactor: extract reusable TUI core into pkg/tui
-0.14.0-42-g4239ddc: fix: prevent stdin split after Windows frontend upgrade
-0.14.0-41-g8e78f93: feat: add RPM packaging and Nix build derivation
-0.14.0-40-g00e58eb: fix: verify server acceptance before declaring reconnect success
-0.14.0-39-g5272e40: docs: document task system in CLAUDE.md
-0.14.0-38-g5818ee4: feat: add synchronous task abstraction for bubbletea UI
-0.14.0-37-gd7cb06b: refactor: split monolithic e2e_test.go into focused test files
-0.14.0-36-g3abdd50: fix: propagate terminal dimensions to new session on reconnect
-0.14.0-35-gab0d65f: fix: kill upgrade test server process groups to prevent orphaned processes
-0.14.0-34-gbb2ac4a: feat: show upgrade availability in status overlay
-0.14.0-33-g694a175: fix: fresh upgrade check on ctrl+b u and Windows cross-drive rename
-0.14.0-32-g919ec4f: fix: show version below logo in startup hint overlay
-0.14.0-31-g5564c71: docs: update TODO with upgrade ack and paginated scrollback ideas
-0.14.0-30-g69a4110: fix: reload config file on live upgrade instead of inheriting stale state
-0.14.0-29-g1325ca6: fix: reduce live upgrade state serialization size
-0.14.0-28-g60b0c15: fix: client upgrade broken for Windows and cross-platform binaries
-0.14.0-27-g0e43911: docs: update CLAUDE.md with full project architecture and build instructions

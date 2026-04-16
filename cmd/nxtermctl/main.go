@@ -33,7 +33,7 @@ func main() {
 			&cli.StringFlag{
 				Name:    "socket",
 				Aliases: []string{"s"},
-				Value:   "/tmp/nxtermd.sock",
+				Value:   config.DefaultSocket(),
 				Usage:   "server address (unix path or transport spec)",
 				Sources: cli.EnvVars("NXTERMD_SOCKET"),
 			},

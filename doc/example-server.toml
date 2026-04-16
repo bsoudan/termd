@@ -2,8 +2,8 @@
 # Place at ~/.config/nxtermd/server.toml
 
 # Listen addresses (same as --listen flag, repeatable)
-# listen = ["unix:/tmp/nxtermd.sock"]
-# listen = ["unix:/tmp/nxtermd.sock", "tcp:0.0.0.0:9090"]
+# Default: unix:$XDG_RUNTIME_DIR/nxtermd.sock (or /tmp/nxtermd.sock)
+# listen = ["unix:/run/user/1000/nxtermd.sock", "tcp:0.0.0.0:9090"]
 
 # Enable debug logging
 # debug = false
@@ -56,7 +56,7 @@
 
 [termctl]
 # Default server address for nxtermctl commands
-# connect = "unix:/tmp/nxtermd.sock"
+# connect = "unix:/run/user/1000/nxtermd.sock"
 
 # Enable debug logging for nxtermctl
 # debug = false

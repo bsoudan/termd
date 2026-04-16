@@ -220,6 +220,16 @@ func ResolveKeybindConfigPath() string {
 	return findConfig("nxterm", "keybindings.toml")
 }
 
+// DefaultSocket returns the default Unix socket path for nxtermd.
+// It uses $XDG_RUNTIME_DIR/nxtermd.sock when available (the standard
+// location for per-user runtime files), falling back to /tmp/nxtermd.sock.
+func DefaultSocket() string {
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		return filepath.Join(dir, "nxtermd.sock")
+	}
+	return "/tmp/nxtermd.sock"
+}
+
 // findConfig returns the path to a config file if it exists, checking
 // XDG_CONFIG_HOME first, then ~/.config.
 func findConfig(appDir, filename string) string {

@@ -1,7 +1,7 @@
 // Package transport provides multi-transport listener and dialer for nxtermd.
 // Address specs have the form "scheme:address":
 //
-//	unix:/tmp/nxtermd.sock         Unix domain socket
+//	unix:/run/user/1000/nxtermd.sock   Unix domain socket
 //	tcp:127.0.0.1:9090             TCP
 //	ws://host:port/path            WebSocket
 //	wss://host:port/path           WebSocket over TLS

@@ -32,7 +32,7 @@ func Main(v string) {
   ws://host:port         WebSocket
   dssh://host:port       Direct SSH (requires --ssh-host-key)
 
-  Default: unix:/tmp/nxtermd.sock`,
+  Default: unix:$XDG_RUNTIME_DIR/nxtermd.sock (or /tmp/nxtermd.sock)`,
 		Version: version,
 		CustomRootCommandHelpTemplate: `NAME:
    {{template "helpNameTemplate" .}}
@@ -154,7 +154,7 @@ func listenSpecs(cmd *cli.Command, cfg config.ServerConfig) ([]string, error) {
 	} else if len(cfg.Listen) > 0 {
 		specs = cfg.Listen
 	} else {
-		return []string{"unix:/tmp/nxtermd.sock"}, nil
+		return []string{"unix:" + config.DefaultSocket()}, nil
 	}
 	for _, s := range specs {
 		if !strings.Contains(s, ":") {

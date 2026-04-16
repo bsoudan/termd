@@ -5,7 +5,7 @@
 # address from ~/.config/nxtermd/server.toml (if present).
 
 # Server address (same as --socket flag)
-# connect = "unix:/tmp/nxtermd.sock"
+# connect = "unix:/run/user/1000/nxtermd.sock"
 # connect = "tcp:myserver:9090"
 # connect = "ssh://user@myserver"             # spawns the system ssh binary
 # connect = "ssh://user@myserver/run/user/1000/nxtermd.sock"  # explicit remote socket

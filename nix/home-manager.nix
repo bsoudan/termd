@@ -20,10 +20,10 @@ in
     listen = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
-      example = [ "unix:/tmp/nxtermd.sock" "tcp://localhost:9100" ];
+      example = [ "unix:\${XDG_RUNTIME_DIR}/nxtermd.sock" "tcp://localhost:9100" ];
       description = ''
         Listen specs for the server. If empty, the server uses its
-        config file default (unix:/tmp/nxtermd.sock).
+        config file default (unix:$XDG_RUNTIME_DIR/nxtermd.sock).
       '';
     };
 

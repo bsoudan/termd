@@ -2,7 +2,9 @@
 
 package tui
 
-const defaultSocket = "/tmp/nxtermd.sock"
+import "nxtermd/internal/config"
+
+var defaultSocket = config.DefaultSocket()
 
 // inferEndpoint returns the endpoint as-is on Unix. The transport
 // package's parseSpec handles bare paths (defaulting to unix:).
