@@ -439,8 +439,11 @@ func TestLiveUpgradeNoDataLoss(t *testing.T) {
 	// new process and show up as a gap in the counter sequence.
 	nxt.Write([]byte(`awk 'BEGIN { for (i=1; i<=20000; i++) printf "i=%d ", i; printf "\nDONE\n" }'` + "\r"))
 
-	// Wait until output is actively flowing.
-	nxt.WaitFor("i=10", 10*time.Second)
+	// Wait until output is actively flowing. "i=" matches any counter
+	// token, so we don't race the loop past a specific value — the loop
+	// can run extremely fast and "i=10" could scroll off the visible
+	// screen before the test thread catches it.
+	nxt.WaitFor("i=", 10*time.Second)
 
 	// Trigger live upgrade mid-stream.
 	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGUSR2); err != nil {
