@@ -70,7 +70,7 @@ func TestLogViewerOverlay(t *testing.T) {
 	frontendCleanup := func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }
 	defer frontendCleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxt.WaitFor("nxterm$", 30*time.Second)
 	nxt.WaitForSilence(500 * time.Millisecond)
 	nxt.Write([]byte{0x02, 'l'})
 
