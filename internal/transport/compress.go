@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -24,6 +25,14 @@ type compressedConn struct {
 	net.Conn
 	r *zstd.Decoder
 	w *zstd.Encoder
+
+	// zstd's Decoder is not safe to Close concurrently with an in-flight
+	// Read (it mutates internal state and a shared channel). Likewise for
+	// Encoder. We track in-flight Read/Write calls and Close waits for
+	// them to return before closing the codecs.
+	mu     sync.Mutex
+	closed bool
+	inUse  sync.WaitGroup
 }
 
 func wrapZstd(conn net.Conn) net.Conn {
@@ -104,6 +113,14 @@ func MaybeWrapCompression(conn net.Conn, endpoint string) net.Conn {
 }
 
 func (c *compressedConn) Read(p []byte) (n int, err error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return 0, io.EOF
+	}
+	c.inUse.Add(1)
+	c.mu.Unlock()
+	defer c.inUse.Done()
 	// The zstd decoder can panic with a nil blockDec dereference when the
 	// underlying connection closes mid-frame. Recover and return EOF so
 	// the server's client ReadLoop treats it as a normal disconnect.
@@ -116,6 +133,14 @@ func (c *compressedConn) Read(p []byte) (n int, err error) {
 }
 
 func (c *compressedConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
+	c.inUse.Add(1)
+	c.mu.Unlock()
+	defer c.inUse.Done()
 	n, err := c.w.Write(p)
 	if err != nil {
 		return n, err
@@ -124,9 +149,20 @@ func (c *compressedConn) Write(p []byte) (int, error) {
 }
 
 func (c *compressedConn) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.mu.Unlock()
 	// Close the underlying conn first. This unblocks any pending
-	// reads/writes in the zstd encoder/decoder goroutines.
+	// reads/writes in the zstd encoder/decoder.
 	err := c.Conn.Close()
+	// Wait for in-flight Read/Write to return before closing the codecs:
+	// zstd's Decoder.Close/Encoder.Close are not safe to call concurrently
+	// with an active Read/Write on the same codec.
+	c.inUse.Wait()
 	safeClose := func(fn func()) {
 		defer func() { recover() }()
 		fn()

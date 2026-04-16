@@ -1,4 +1,4 @@
-.PHONY: all build-server changelog build-tui build-termctl build-nxtest build-mousehelper build-nativeapp build-upgrade-test-binaries check-windows test test-e2e test-upgrade test-stress test-stress-long rpm version clean
+.PHONY: all build-server changelog build-tui build-termctl build-nxtest build-mousehelper build-nativeapp build-upgrade-test-binaries check-windows test test-e2e test-race test-upgrade test-stress test-stress-long rpm version clean
 
 # Binary names
 SERVER_BIN   := nxtermd
@@ -14,6 +14,13 @@ ifndef RELEASE
   GCFLAGS := -gcflags "all=-N -l"
 endif
 
+# Set RACE=1 (or invoke the test-race target) to build binaries and run tests
+# with the Go race detector enabled. Race-instrumented binaries are ~5-10x
+# slower and use ~2x memory, so timeouts need to be looser.
+ifdef RACE
+  RACEFLAG := -race
+endif
+
 all: build-server build-tui build-termctl build-mousehelper build-nativeapp
 
 # Host binaries are built with their full <name>-<os>-<arch> filename so
@@ -21,7 +28,7 @@ all: build-server build-tui build-termctl build-mousehelper build-nativeapp
 # upgrade binary the server hands out to clients. Short names are
 # symlinked to the full name for convenience.
 build-server:
-	go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(SERVER_BIN)-$(HOST_OS_ARCH) ./cmd/nxtermd
+	go build $(RACEFLAG) $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(SERVER_BIN)-$(HOST_OS_ARCH) ./cmd/nxtermd
 	ln -sf $(SERVER_BIN)-$(HOST_OS_ARCH) .local/bin/$(SERVER_BIN)
 
 changelog:
@@ -36,7 +43,7 @@ changelog:
 	mv "$$tmp" internal/tui/changelog.txt
 
 build-tui: changelog
-	go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(TUI_BIN)-$(HOST_OS_ARCH) ./cmd/nxterm
+	go build $(RACEFLAG) $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(TUI_BIN)-$(HOST_OS_ARCH) ./cmd/nxterm
 	ln -sf $(TUI_BIN)-$(HOST_OS_ARCH) .local/bin/$(TUI_BIN)
 	GOOS=windows GOARCH=amd64 go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(TUI_BIN)-windows-amd64.exe ./cmd/nxterm
 	ln -sf $(TUI_BIN)-windows-amd64.exe .local/bin/$(TUI_BIN).exe
@@ -48,7 +55,7 @@ build-nativeapp:
 	cd e2e/testdata/nativeapp && go build -o ../../../.local/bin/nativeapp .
 
 build-termctl:
-	go build $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(CTL_BIN) ./cmd/nxtermctl
+	go build $(RACEFLAG) $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(CTL_BIN) ./cmd/nxtermctl
 
 build-nxtest:
 	go build $(GCFLAGS) -o .local/bin/nxtest ./cmd/nxtest
@@ -58,8 +65,8 @@ UPGRADE_TEST_VERSION := upgrade-test-v2
 
 build-upgrade-test-binaries: changelog
 	@mkdir -p $(UPGRADE_TEST_DIR)
-	go build $(GCFLAGS) -ldflags "-X main.version=$(UPGRADE_TEST_VERSION)" -o $(UPGRADE_TEST_DIR)/$(SERVER_BIN)-$$(go env GOOS)-$$(go env GOARCH) ./cmd/nxtermd
-	go build $(GCFLAGS) -ldflags "-X main.version=$(UPGRADE_TEST_VERSION)" -o $(UPGRADE_TEST_DIR)/$(TUI_BIN)-$$(go env GOOS)-$$(go env GOARCH) ./cmd/nxterm
+	go build $(RACEFLAG) $(GCFLAGS) -ldflags "-X main.version=$(UPGRADE_TEST_VERSION)" -o $(UPGRADE_TEST_DIR)/$(SERVER_BIN)-$$(go env GOOS)-$$(go env GOARCH) ./cmd/nxtermd
+	go build $(RACEFLAG) $(GCFLAGS) -ldflags "-X main.version=$(UPGRADE_TEST_VERSION)" -o $(UPGRADE_TEST_DIR)/$(TUI_BIN)-$$(go env GOOS)-$$(go env GOARCH) ./cmd/nxterm
 
 check-windows:
 	GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/nxterm
@@ -68,7 +75,16 @@ check-windows:
 test: test-e2e
 
 test-e2e: all build-upgrade-test-binaries
-	PATH="$(CURDIR)/.local/bin:$(PATH)" UPGRADE_BINARIES_DIR="$(CURDIR)/$(UPGRADE_TEST_DIR)" go test -v -timeout 30s -parallel 8 ./e2e
+	PATH="$(CURDIR)/.local/bin:$(PATH)" UPGRADE_BINARIES_DIR="$(CURDIR)/$(UPGRADE_TEST_DIR)" go test $(RACEFLAG) -v -timeout 30s -parallel 8 ./e2e
+
+# Build race-instrumented host binaries and run the full test suite under the
+# Go race detector. Race detection slows execution ~5-10x and roughly doubles
+# memory, so timeouts are looser and parallelism is reduced. Unit-style
+# packages run first (fast feedback) before the e2e suite.
+test-race: RACEFLAG := -race
+test-race: all build-upgrade-test-binaries
+	go test -race -v -timeout 120s ./pkg/... ./internal/...
+	PATH="$(CURDIR)/.local/bin:$(PATH)" UPGRADE_BINARIES_DIR="$(CURDIR)/$(UPGRADE_TEST_DIR)" go test -race -v -timeout 300s -parallel 4 ./e2e
 
 test-upgrade: all build-upgrade-test-binaries
 	PATH="$(CURDIR)/.local/bin:$(PATH)" UPGRADE_BINARIES_DIR="$(CURDIR)/$(UPGRADE_TEST_DIR)" go test -v -timeout 30s -parallel 8 -run 'TestLiveUpgrade|TestTUIUpgradeE2E|TestUpgradeCheck|TestClientBinaryDownload' ./e2e

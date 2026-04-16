@@ -48,6 +48,11 @@ type SessionManagerLayer struct {
 	treeStore *TreeStore
 	tasks     *layer.TaskRunner[RenderState]
 
+	// program is set once by NxtermModel.Run after bubbletea starts.
+	// Task goroutines use program.Send to post state updates back to the
+	// main (bubbletea) goroutine instead of mutating fields directly.
+	program *tea.Program
+
 	upgradeServerAvail bool
 	upgradeServerVer   string
 	upgradeClientAvail bool
@@ -55,6 +60,23 @@ type SessionManagerLayer struct {
 
 	termWidth  int
 	termHeight int
+}
+
+// upgradeInfoMsg is posted by upgrade-check task goroutines. The main
+// (bubbletea) goroutine handles it in Update and writes the fields, so
+// Status() can read them without a mutex.
+type upgradeInfoMsg struct {
+	ServerAvailable bool
+	ServerVersion   string
+	ClientAvailable bool
+	ClientVersion   string
+}
+
+// SetProgram wires the bubbletea program reference so task goroutines
+// can post messages back to the main event loop. Called once, from
+// NxtermModel.Run.
+func (sm *SessionManagerLayer) SetProgram(p *tea.Program) {
+	sm.program = p
 }
 
 func NewSessionManagerLayer(
@@ -138,6 +160,13 @@ func (sm *SessionManagerLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case SetSessionsMsg:
 		sm.sessions = msg.Sessions
 		sm.activeSession = 0
+		return nil, nil, true
+
+	case upgradeInfoMsg:
+		sm.upgradeServerAvail = msg.ServerAvailable
+		sm.upgradeServerVer = msg.ServerVersion
+		sm.upgradeClientAvail = msg.ClientAvailable
+		sm.upgradeClientVer = msg.ClientVersion
 		return nil, nil, true
 
 	case ConnectToServerMsg:
@@ -431,10 +460,12 @@ func (sm *SessionManagerLayer) CheckForUpgrades() {
 			return
 		}
 		if ucr, ok := resp.(protocol.UpgradeCheckResponse); ok && !ucr.Error {
-			sm.upgradeServerAvail = ucr.ServerAvailable
-			sm.upgradeServerVer = ucr.ServerVersion
-			sm.upgradeClientAvail = ucr.ClientAvailable
-			sm.upgradeClientVer = ucr.ClientVersion
+			sm.program.Send(upgradeInfoMsg{
+				ServerAvailable: ucr.ServerAvailable,
+				ServerVersion:   ucr.ServerVersion,
+				ClientAvailable: ucr.ClientAvailable,
+				ClientVersion:   ucr.ClientVersion,
+			})
 		}
 	})
 }

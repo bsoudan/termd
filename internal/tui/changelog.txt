@@ -1,4 +1,17 @@
-v0.1-beta-1-g564dee8*:  M TODO.md  M cmd/nxtermctl/main.go  M cmd/nxtermctl/proxy.go  M doc/example-frontend.toml  M doc/example-server.toml  M internal/config/config.go  M internal/server/main.go  M internal/transport/transport.go  M internal/tui/changelog.txt  M internal/tui/platform_unix.go  M nix/home-manager.nix ?? claude ?? doc/nxterm-app-spec.md ?? doc/server-concurrency.md ?? enter 
+v0.1-beta-14-g52256d2*:  M Makefile  M TODO.md  M internal/transport/compress.go  M internal/tui/changelog.txt  M internal/tui/mainlayer.go  M internal/tui/sessionmanager.go  M pkg/layer/task_test.go ?? claude ?? doc/reliability-audit.md ?? enter 
+v0.1-beta-14-g52256d2: refactor(server): reuse protocol tree nodes in upgrade state
+v0.1-beta-13-ga3db9dd: refactor(server): transfer full ServerConfig across live upgrade
+v0.1-beta-12-g1753ca4: test(e2e): extend TestLogViewerOverlay prompt timeout under load
+v0.1-beta-11-gaefcc4f: allow writes to .cache directory
+v0.1-beta-10-ge6f63d9: test(e2e): loosen duplicate-line heuristic in scroll test
+v0.1-beta-9-g756f217: test(e2e): ignore truncated last token in NoDataLoss counter walk
+v0.1-beta-8-g655125b: test(e2e): extend ssh-exec prompt timeout to tolerate load
+v0.1-beta-7-g068c943: test(e2e): wait for scrollback offset to advance between page-downs
+v0.1-beta-6-gf080c57: fix: switch to new region when SpawnResponse beats the tree event
+v0.1-beta-5-ge90167f: test(e2e): make TestLiveUpgradeNoDataLoss readiness check resilient
+v0.1-beta-4-ge67ab46: fix: forward SSH flags to the new process during live upgrade
+v0.1-beta-3-g2778ea6: fix: wire ConnectToServerMsg / ConnectedMsg through NxtermModel
+v0.1-beta-2-gb424cde: use $XDG_RUNTIME_DIR/nxtermd.sock at default unix socket
 v0.1-beta-1-g564dee8: add home-manager module for nxtermd systemd user service
         v0.1-beta: add claude files
 0.14.0-153-gb8a5d0f: refactor: publish upgrade status via tree instead of broadcast messages
@@ -86,16 +99,3 @@ v0.1-beta-1-g564dee8: add home-manager module for nxtermd systemd user service
 0.14.0-71-g505c5cf: feat: --show-config and --show-keybindings introspection
 0.14.0-70-gbffc6c6: vendor urfave/cli v3.8.0 into pkg/ for local patching
 0.14.0-69-g8c4b066: fix: correct NXNXTERMD_VERSION typo in systemd unit template
-0.14.0-68-g66ad3a2: feat: generic render state through layer stack, command mode cursor
-0.14.0-67-g58a1fad: ui: refresh overlay styling and status bar layout
-0.14.0-66-g5ba4cbd: rename termd → nxtermd, termd-tui → nxterm, termctl → nxtermctl
-0.14.0-65-ga768b8f: feat: route input to overlay client via overlay_input messages
-0.14.0-64-ge206c9c: fix: TUI freeze on wide characters (ultraviolet infinite loop)
-0.14.0-63-gfdce57a: vendor ultraviolet into pkg/ for local patching
-0.14.0-62-g88f986e: fix: only dim terminal when an overlay has keyboard focus
-0.14.0-61-g1ce52c4: fix: include modes in get_screen_response so overlays survive refresh
-0.14.0-60-ga777d3d: feat: replace NativeRegion with socket-based overlay system
-0.14.0-59-g4e89079: feat: replace CommandLayer with synchronous command mode in MainLayer
-0.14.0-58-g3e23f7a: feat: add --pprof flag and config option for runtime profiling
-0.14.0-57-gba95089: feat: add native app protocol with fd 3 negotiation, tests, and scratchpad example
-0.14.0-56-g6eaf317: fix: stream scrollback in chunks and add region data to status panel

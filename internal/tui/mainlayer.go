@@ -232,10 +232,12 @@ func (m *NxtermModel) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 			if !ok || ucr.Error {
 				return
 			}
-			m.sm.upgradeServerAvail = ucr.ServerAvailable
-			m.sm.upgradeServerVer = ucr.ServerVersion
-			m.sm.upgradeClientAvail = ucr.ClientAvailable
-			m.sm.upgradeClientVer = ucr.ClientVersion
+			m.program.Send(upgradeInfoMsg{
+				ServerAvailable: ucr.ServerAvailable,
+				ServerVersion:   ucr.ServerVersion,
+				ClientAvailable: ucr.ClientAvailable,
+				ClientVersion:   ucr.ClientVersion,
+			})
 
 			if !ucr.ServerAvailable && !ucr.ClientAvailable {
 				toast := &ToastLayer{id: nextToastID + 1, text: "Already up to date"}
@@ -265,6 +267,7 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 	}
 
 	m.program = p
+	m.sm.SetProgram(p)
 	m.rawCh = rawCh
 
 	if connected {

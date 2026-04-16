@@ -21,7 +21,7 @@ func (l *taskTestLayer) View(int, int, *testRS) []*lipgloss.Layer { return nil }
 
 func TestWaitForDelivers(t *testing.T) {
 	r := NewTaskRunner[testRS]()
-	var got any
+	gotCh := make(chan any, 1)
 
 	r.Run(func(h *Handle[testRS]) {
 		msg, err := h.WaitFor(func(msg any) (bool, bool) {
@@ -32,7 +32,7 @@ func TestWaitForDelivers(t *testing.T) {
 			t.Errorf("WaitFor error: %v", err)
 			return
 		}
-		got = msg
+		gotCh <- msg
 	})
 
 	// Drive the WaitFor registration.
@@ -44,11 +44,13 @@ func TestWaitForDelivers(t *testing.T) {
 		t.Fatal("expected handled=true")
 	}
 
-	// Give the task goroutine time to receive.
-	time.Sleep(10 * time.Millisecond)
-
-	if got != testMsg("hello") {
-		t.Fatalf("expected testMsg(hello), got %v", got)
+	select {
+	case got := <-gotCh:
+		if got != testMsg("hello") {
+			t.Fatalf("expected testMsg(hello), got %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task to receive message")
 	}
 }
 
@@ -148,23 +150,26 @@ func TestPopLayerProducesMsg(t *testing.T) {
 
 func TestCancelStopsTask(t *testing.T) {
 	r := NewTaskRunner[testRS]()
-	var waitErr error
+	errCh := make(chan error, 1)
 
 	id := r.Run(func(h *Handle[testRS]) {
-		_, waitErr = h.WaitFor(func(msg any) (bool, bool) {
+		_, err := h.WaitFor(func(msg any) (bool, bool) {
 			return true, true
 		})
+		errCh <- err
 	})
 
 	r.DriveOne() // process WaitFor registration
 
 	r.Cancel(id)
 
-	// Give the task goroutine time to notice cancellation.
-	time.Sleep(10 * time.Millisecond)
-
-	if waitErr == nil {
-		t.Fatal("expected error from WaitFor after cancel")
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error from WaitFor after cancel")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task to notice cancellation")
 	}
 }
 
