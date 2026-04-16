@@ -219,8 +219,10 @@ eval "$1"
 
 	// The active tab no longer renders the program name (commit
 	// 98da964) so the historical WaitFor("bash") here can't be used;
-	// wait for the bash prompt directly.
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	// wait for the bash prompt directly. The ssh wrapper + bash
+	// startup chain adds enough overhead under concurrent load that
+	// 10s occasionally isn't enough — bump the budget accordingly.
+	nxt.WaitFor("nxterm$", 30*time.Second)
 
 	nxt.Write([]byte("echo ssh_exec_works\r"))
 	nxt.WaitFor("ssh_exec_works", 10*time.Second)
