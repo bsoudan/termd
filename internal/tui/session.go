@@ -36,6 +36,11 @@ type SessionLayer struct {
 	endpoint    string
 	sessionName string
 
+	// pendingActiveRegionID is set when a SpawnResponse arrives before
+	// the tree event that creates the new tab; syncFromTree consumes it
+	// to switch to the newly created tab.
+	pendingActiveRegionID string
+
 	termWidth       int
 	termHeight      int
 	statusBarMargin int
@@ -129,8 +134,15 @@ func (s *SessionLayer) syncFromTree(tree protocol.Tree) {
 		}
 	}
 
-	// Restore active tab.
-	if prevActiveID != "" {
+	// Restore active tab. If SpawnResponse named a region that didn't
+	// yet exist, switching to that region takes priority over restoring
+	// the previous active tab.
+	if s.pendingActiveRegionID != "" {
+		if idx := s.findTabIndex(s.pendingActiveRegionID); idx >= 0 {
+			s.activeTab = idx
+			s.pendingActiveRegionID = ""
+		}
+	} else if prevActiveID != "" {
 		if idx := s.findTabIndex(prevActiveID); idx >= 0 {
 			s.activeTab = idx
 		}
@@ -284,11 +296,15 @@ func (s *SessionLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 			s.status = ""
 			return nil, nil, true
 		}
-		// The tab is created by syncFromTree when the tree event arrives
-		// (which the server broadcasts before sending this response).
-		// Just switch to it if it already exists.
+		// The tab is created by syncFromTree from the tree event that
+		// the server emits alongside the spawn. That event and this
+		// response race — if the tab already exists, switch to it now;
+		// otherwise remember the region ID so syncFromTree can switch
+		// to it when the tab appears.
 		if idx := s.findTabIndex(msg.RegionID); idx >= 0 {
 			s.switchToTab(idx)
+		} else {
+			s.pendingActiveRegionID = msg.RegionID
 		}
 		return nil, nil, true
 
