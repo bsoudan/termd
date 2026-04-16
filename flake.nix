@@ -7,6 +7,9 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    {
+      homeManagerModules.default = import ./nix/home-manager.nix { nxterm = self; };
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
