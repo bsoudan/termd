@@ -126,6 +126,7 @@
               exec bwrap \
                 --ro-bind / / \
                 --bind "$PWD" "$PWD" \
+                --bind "$HOME/.cache" "$HOME/.cache" \
                 --bind "/tmp" "/tmp" \
                 --dev-bind /dev /dev \
                 --proc /proc \
