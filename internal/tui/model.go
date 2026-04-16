@@ -78,6 +78,21 @@ func (m *NxtermModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return reconnectTickMsg{} })
 		}
 		return m, nil
+	case ConnectToServerMsg:
+		// Let SessionManagerLayer tear down its current session first,
+		// then dial the new endpoint via connectFn.
+		m.stack.Update(msg)
+		if m.connectFn != nil {
+			m.connectFn(msg.Endpoint, msg.Session)
+		}
+		return m, nil
+	case ConnectedMsg:
+		// Update the top-level server reference so the main event loop
+		// reads from the new connection's channels; then let the stack
+		// process the rest (SessionManagerLayer creates the new session).
+		m.server = msg.Server
+		cmd := m.stack.Update(msg)
+		return m, cmd
 	case ServerErrorMsg:
 		m.sm.err = msg.Context + ": " + msg.Message
 		_, cmd := m.quit()

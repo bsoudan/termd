@@ -9,7 +9,8 @@ import (
 )
 
 // connectViaUI sends ctrl+b S o to open the connect overlay, types the
-// socket address, and presses enter. Waits for a shell prompt.
+// socket address, and presses enter. Waits for a shell prompt after
+// the overlay has closed.
 func connectViaUI(t *testing.T, nxt *nxtest.T, socketPath string) {
 	t.Helper()
 	// If the connect overlay isn't already showing, open it.
@@ -45,8 +46,17 @@ func TestNewSession(t *testing.T) {
 
 	connectViaUI(t, nxt, socketPath)
 
-	nxt.Write([]byte("echo RECONNECTED\r"))
-	nxt.WaitFor("RECONNECTED", 10*time.Second)
+	// The ConnectToServerMsg flow briefly leaves the client session-less
+	// while it dials the new endpoint, so raw input written during that
+	// window is dropped. Retry the echo until the new session receives it.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		nxt.Write([]byte("echo RECONNECTED\r"))
+		if _, err := nxt.PtyIO.WaitFor("RECONNECTED", 500*time.Millisecond); err == nil {
+			return
+		}
+	}
+	t.Fatal("timed out waiting for echo RECONNECTED to appear after reconnect")
 }
 
 func TestKillSession(t *testing.T) {
