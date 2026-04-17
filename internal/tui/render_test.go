@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	te "nxtermd/pkg/te"
 )
@@ -180,5 +182,39 @@ func TestSgrTransition(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOverlayCompositesAtCellOffsetAcrossEmoji(t *testing.T) {
+	base := lipgloss.NewLayer("a🙂bcdef")
+	overlay := lipgloss.NewLayer("XY").X(4)
+
+	rendered := lipgloss.NewCompositor(base, overlay).Render()
+
+	scr := uv.NewScreenBuffer(7, 1)
+	scr.Method = ansi.GraphemeWidth
+	uv.NewStyledString(rendered).Draw(scr, scr.Bounds())
+
+	tests := []struct {
+		x    int
+		want string
+	}{
+		{0, "a"},
+		{1, "🙂"},
+		{2, ""},
+		{3, "b"},
+		{4, "X"},
+		{5, "Y"},
+		{6, "e"},
+	}
+
+	for _, tc := range tests {
+		cell := scr.CellAt(tc.x, 0)
+		if cell == nil {
+			t.Fatalf("cell %d is nil", tc.x)
+		}
+		if got := cell.Content; got != tc.want {
+			t.Fatalf("cell %d = %q, want %q; rendered=%q", tc.x, got, tc.want, rendered)
+		}
 	}
 }

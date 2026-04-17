@@ -789,6 +789,17 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 	oldLine := s.curbuf.Line(y)
 	newLine := newbuf.Line(y)
 
+	// Wide-cell lines are tricky to patch in place because the diff spans can
+	// intersect continuation cells. Rewriting the full line avoids cursor drift
+	// when overlays land on rows that contain emoji or other double-width
+	// graphemes.
+	if lineHasWideCells(oldLine) || lineHasWideCells(newLine) {
+		s.move(newbuf, 0, y)
+		s.emitRange(newbuf, newLine, newbuf.Width())
+		copy(oldLine, newLine)
+		return
+	}
+
 	// Find the first changed cell in the line
 	blank := newLine.At(0)
 
@@ -975,6 +986,15 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 	} else {
 		copy(oldLine, newLine)
 	}
+}
+
+func lineHasWideCells(line Line) bool {
+	for i := range line {
+		if line[i].Width != 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // deleteCells deletes the count cells at the current cursor position and moves
