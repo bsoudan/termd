@@ -1,12 +1,10 @@
 package e2e
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
 	"nxtermd/internal/nxtest"
 )
 
@@ -68,13 +66,10 @@ func TestMousePassthrough(t *testing.T) {
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
-	// Run mousehelper which enables mouse tracking and prints mouse events
-	nxt.Write([]byte("mousehelper\r"))
-	// Wait for mouse mode to be enabled — the helper prints nothing until
-	// it receives a mouse event, but we need to give it time to start
-	time.Sleep(500 * time.Millisecond)
+	// Run mousehelper which enables mouse tracking and prints mouse events.
+	startMouseHelper(t, nxt)
 
 	// waitForMouse checks the screen for a specific MOUSE line.
 	waitForMouse := func(expected string) {
@@ -94,44 +89,44 @@ func TestMousePassthrough(t *testing.T) {
 	// before forwarding to the child. mousehelper prints what it receives.
 
 	// Left click at col 5, row 3 → child sees row 2
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;5;3M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseLeft, 5, 3)
 	waitForMouse("MOUSE press 0 5 2")
 
 	// Left release
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;5;3m", ansi.ESC)))
+	nxt.MouseRelease(nxtest.MouseLeft, 5, 3)
 	waitForMouse("MOUSE release 0 5 2")
 
 	// Right click (button 2) at row 4 → child sees row 3
-	nxt.Write([]byte(fmt.Sprintf("%c[<2;10;4M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseRight, 10, 4)
 	waitForMouse("MOUSE press 2 10 3")
 
 	// Middle click (button 1) at row 6 → child sees row 5
-	nxt.Write([]byte(fmt.Sprintf("%c[<1;8;6M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseMiddle, 8, 6)
 	waitForMouse("MOUSE press 1 8 5")
 
 	// Scroll wheel up at row 3 → child sees row 2
-	nxt.Write([]byte(fmt.Sprintf("%c[<64;5;3M", ansi.ESC)))
+	nxt.MouseWheelUp(5, 3)
 	waitForMouse("MOUSE wheelup 64 5 2")
 
 	// Scroll wheel down at row 3 → child sees row 2
-	nxt.Write([]byte(fmt.Sprintf("%c[<65;5;3M", ansi.ESC)))
+	nxt.MouseWheelDown(5, 3)
 	waitForMouse("MOUSE wheeldown 65 5 2")
 
 	// Motion event (button 32 = motion + left held) at row 7 → child sees row 6
-	nxt.Write([]byte(fmt.Sprintf("%c[<32;12;7M", ansi.ESC)))
+	nxt.MouseDrag(nxtest.MouseLeft, 12, 7)
 	waitForMouse("MOUSE press 32 12 6")
 
 	// Click on the tab bar (row 1) → clamped to child row 1
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;5;1M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseLeft, 5, 1)
 	waitForMouse("MOUSE press 0 5 1")
 
 	// Click on content row 1 (row 2 in outer) → child sees row 1
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;20;2M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseLeft, 20, 2)
 	waitForMouse("MOUSE press 0 20 1")
 
 	// Quit the helper
 	nxt.Write([]byte("q"))
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 }
 
 func TestMouseAfterTabSwitch(t *testing.T) {
@@ -142,11 +137,10 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Run mousehelper in tab 1
-	nxt.Write([]byte("mousehelper\r"))
-	time.Sleep(500 * time.Millisecond)
+	startMouseHelper(t, nxt)
 
 	// Verify mouse works initially
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;5;3M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseLeft, 5, 3)
 	nxt.WaitFor("MOUSE press 0 5 2", 5*time.Second)
 
 	// Spawn tab 2 (switches to it automatically). Tab 1 becomes
@@ -161,7 +155,7 @@ func TestMouseAfterTabSwitch(t *testing.T) {
 	nxt.Sync("render settle")
 
 	// Mouse should still work after switching back
-	nxt.Write([]byte(fmt.Sprintf("%c[<0;10;4M", ansi.ESC)))
+	nxt.MousePress(nxtest.MouseLeft, 10, 4)
 	nxt.WaitFor("MOUSE press 0 10 3", 5*time.Second)
 
 	// Quit the helper

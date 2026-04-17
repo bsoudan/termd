@@ -20,8 +20,11 @@ func main() {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Enable SGR mouse mode (1002 + 1006)
+	// Enable SGR mouse mode (1002 + 1006). Print a READY marker so
+	// tests can synchronize on startup without relying on probe-clicks
+	// or sleeps to tell when mouse mode is live.
 	fmt.Print("\x1b[?1002h\x1b[?1006h")
+	fmt.Print("READY\r\n")
 	defer fmt.Print("\x1b[?1002l\x1b[?1006l")
 
 	// SGR mouse pattern: ESC [ < btn ; col ; row M/m

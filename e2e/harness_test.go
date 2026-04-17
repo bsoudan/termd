@@ -242,3 +242,14 @@ func spawnRegion(t *testing.T, socketPath string, programName string) string {
 	t.Helper()
 	return nxtest.SpawnRegion(t, socketPath, testEnv(t), programName)
 }
+
+// startMouseHelper runs mousehelper in the active region and blocks
+// until it has enabled SGR mouse mode. mousehelper prints "READY" once
+// the mode is live; waiting for that marker avoids timing races where
+// early clicks reach the TUI before the child has toggled mouse mode
+// on the server and the TUI would drop them.
+func startMouseHelper(t *testing.T, nxt *nxtest.T) {
+	t.Helper()
+	nxt.Write([]byte("mousehelper\r"))
+	nxt.WaitFor("READY", 10*time.Second)
+}

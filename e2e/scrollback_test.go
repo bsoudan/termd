@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
 	"nxtermd/internal/nxtest"
 )
 
@@ -175,10 +174,8 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	}
 	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	wheelUp := fmt.Appendf(nil, "%c[<64;5;5M", ansi.ESC)
-
 	// Scroll wheel up activates scrollback with data loaded.
-	nxterm.Write(wheelUp).Sync("wheel up to enter scrollback")
+	nxterm.MouseWheelUp(5, 5).Sync("wheel up to enter scrollback")
 	nxterm.RequireTabBarContains("scrollback")
 
 	// Scroll wheel up to reach early numbers. Each event scrolls ~3 lines;
@@ -187,17 +184,16 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	// RawInputMsg (focus-input renders once per sequence).
 	for range 7 {
 		for range 10 {
-			nxterm.Write(wheelUp)
+			nxterm.MouseWheelUp(5, 5)
 		}
 		nxterm.Sync("batch of 10 wheelups")
 	}
 	requireEarlyNumbersVisible(t, nxterm)
 
 	// Scroll wheel down past offset 0 to auto-exit scrollback.
-	wheelDown := fmt.Appendf(nil, "%c[<65;5;5M", ansi.ESC)
 	for range 8 {
 		for range 10 {
-			nxterm.Write(wheelDown)
+			nxterm.MouseWheelDown(5, 5)
 		}
 		nxterm.Sync("batch of 10 wheeldowns")
 	}
@@ -480,11 +476,10 @@ func TestScrollbackWheelAltScreen(t *testing.T) {
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Run mousehelper (enables mouse tracking).
-	nxt.Write([]byte("mousehelper\r"))
-	time.Sleep(500 * time.Millisecond)
+	startMouseHelper(t, nxt)
 
 	// Scroll wheel up — should be forwarded to mousehelper, not enter scrollback.
-	nxt.Write([]byte(fmt.Sprintf("%c[<64;5;5M", ansi.ESC)))
+	nxt.MouseWheelUp(5, 5)
 	nxt.WaitForScreen(func(lines []string) bool {
 		for _, line := range lines {
 			if strings.Contains(line, "MOUSE wheelup") {
@@ -663,11 +658,10 @@ func TestScrollbackWheelClamp(t *testing.T) {
 	// bundled msg advances only one wheel step instead of 200. Send
 	// in small batches with a sync between them so each batch is
 	// its own RawInputMsg.
-	wheelUp := fmt.Appendf(nil, "%c[<64;5;5M", ansi.ESC)
-	nxterm.Write(wheelUp).Sync("wheel up to enter")
+	nxterm.MouseWheelUp(5, 5).Sync("wheel up to enter")
 	for range 20 {
 		for range 10 {
-			nxterm.Write(wheelUp)
+			nxterm.MouseWheelUp(5, 5)
 		}
 		nxterm.Sync("batch of 10 wheelups")
 	}
@@ -675,8 +669,7 @@ func TestScrollbackWheelClamp(t *testing.T) {
 
 	// Single wheel down from the top should move the view immediately
 	// (no phantom distance to burn through).
-	wheelDown := fmt.Appendf(nil, "%c[<65;5;5M", ansi.ESC)
-	nxterm.Write(wheelDown).Sync("wheel down from clamped top")
+	nxterm.MouseWheelDown(5, 5).Sync("wheel down from clamped top")
 	requireOffsetBelowTotal(t, nxterm)
 
 	nxterm.Write([]byte("q")).Sync("exit scrollback")
