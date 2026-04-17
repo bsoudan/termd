@@ -215,6 +215,31 @@ func (s *Server) SpawnRegion(sessionName, cmd string, args []string, env map[str
 	return region, nil
 }
 
+// SpawnNativeRegion creates a new native region driven by the given client.
+// The region is placed in sessionName (creating it if needed). width/height
+// seed the initial screen size; pass 0 to use the default (80x24).
+func (s *Server) SpawnNativeRegion(driver *Client, sessionName, name string, width, height uint16) (*NativeRegion, error) {
+	if width == 0 {
+		width = 80
+	}
+	if height == 0 {
+		height = 24
+	}
+	region := NewNativeRegion(driver, name, int(width), int(height), s.destroyRegion)
+
+	resp := make(chan struct{}, 1)
+	if !s.send(spawnRegionReq{region: region, sessionName: sessionName, resp: resp}) {
+		region.Close()
+		return nil, fmt.Errorf("server shutting down")
+	}
+	<-resp
+
+	slog.Info("spawned native region", "region_id", region.ID(), "name", name,
+		"session", sessionName, "driver_client_id", driver.id)
+
+	return region, nil
+}
+
 func (s *Server) destroyRegion(regionID string) {
 	resp := make(chan destroyResult, 1)
 	if !s.send(destroyRegionReq{regionID: regionID, resp: resp}) {

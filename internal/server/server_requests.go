@@ -288,8 +288,20 @@ func (r removeClientReq) handle(st *eventLoopState) {
 		delete(st.clientOverlays, r.clientID)
 		delete(st.regionOverlays, rid)
 	}
+	// Destroy any native regions owned by this client (driver). Each
+	// region's DriverDisconnected pushes childExitedMsg onto the actor,
+	// which triggers destroyRegion via the normal path.
+	var orphaned []*NativeRegion
+	st.tree.ForEachRegion(func(_ string, region Region) {
+		if nr, ok := region.(*NativeRegion); ok && nr.Driver().id == r.clientID {
+			orphaned = append(orphaned, nr)
+		}
+	})
 	st.tree.DeleteClient(r.clientID)
-	slog.Debug("client disconnected", "id", r.clientID)
+	slog.Debug("client disconnected", "id", r.clientID, "native_regions_owned", len(orphaned))
+	for _, nr := range orphaned {
+		nr.DriverDisconnected()
+	}
 }
 
 func (r spawnRegionReq) handle(st *eventLoopState) {

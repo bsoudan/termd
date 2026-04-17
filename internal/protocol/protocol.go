@@ -416,6 +416,47 @@ type OverlayInput struct {
 	Data     string `json:"data"`
 }
 
+// ── Native region protocol ──────────────────────────────────────────────────
+//
+// A native region is a Region whose backend is a connected protocol client
+// (the "driver") rather than a PTY + child process. The driver spawns the
+// region, streams output via NativeRegionOutput, and receives subscriber
+// input as NativeInput messages. When the driver disconnects, the server
+// destroys its native regions.
+
+type NativeRegionSpawnRequest struct {
+	Type    string `json:"type,omitempty"`
+	Session string `json:"session"`
+	Name    string `json:"name"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+}
+
+type NativeRegionSpawnResponse struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Error    bool   `json:"error"`
+	Message  string `json:"message"`
+}
+
+// NativeRegionOutput carries bytes from the driver into the region's VT
+// parser. Fire-and-forget; ordering with other driver messages is preserved
+// by the connection's FIFO.
+type NativeRegionOutput struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+	Data     string `json:"data"` // base64
+}
+
+// NativeInput delivers subscriber input bytes to the driver. Server → driver.
+type NativeInput struct {
+	Type     string `json:"type,omitempty"`
+	RegionID string `json:"region_id"`
+	Data     string `json:"data"` // base64
+}
+
 // ── Parsing ─────────────────────────────────────────────────────────────────
 
 type envelope struct {
@@ -471,8 +512,12 @@ var payloadParsers = map[string]func([]byte) (any, error){
 	"server_upgrade_response":   parseAs[ServerUpgradeResponse],
 	"client_binary_chunk":       parseAs[ClientBinaryChunk],
 	"client_binary_response":    parseAs[ClientBinaryResponse],
-	"overlay_register_response": parseAs[OverlayRegisterResponse],
-	"overlay_input":             parseAs[OverlayInput],
+	"overlay_register_response":    parseAs[OverlayRegisterResponse],
+	"overlay_input":                parseAs[OverlayInput],
+	"native_region_spawn_request":  parseAs[NativeRegionSpawnRequest],
+	"native_region_spawn_response": parseAs[NativeRegionSpawnResponse],
+	"native_region_output":         parseAs[NativeRegionOutput],
+	"native_input":                 parseAs[NativeInput],
 	"tree_snapshot":             parseAs[TreeSnapshot],
 	"tree_events":               parseAs[TreeEvents],
 	"tree_resync_request":       parseAs[TreeResyncRequest],
@@ -566,9 +611,11 @@ var typeTagMap = map[reflect.Type]string{
 	reflect.TypeOf(ServerUpgradeRequest{}):   "server_upgrade_request",
 	reflect.TypeOf(ClientBinaryRequest{}):    "client_binary_request",
 	reflect.TypeOf(Disconnect{}):             "disconnect",
-	reflect.TypeOf(OverlayRegisterRequest{}): "overlay_register",
-	reflect.TypeOf(OverlayRender{}):          "overlay_render",
-	reflect.TypeOf(OverlayClear{}):           "overlay_clear",
+	reflect.TypeOf(OverlayRegisterRequest{}):   "overlay_register",
+	reflect.TypeOf(OverlayRender{}):            "overlay_render",
+	reflect.TypeOf(OverlayClear{}):             "overlay_clear",
+	reflect.TypeOf(NativeRegionSpawnRequest{}): "native_region_spawn_request",
+	reflect.TypeOf(NativeRegionOutput{}):       "native_region_output",
 	reflect.TypeOf(TreeSnapshot{}):           "tree_snapshot",
 	reflect.TypeOf(TreeEvents{}):             "tree_events",
 	reflect.TypeOf(TreeResyncRequest{}):      "tree_resync_request",

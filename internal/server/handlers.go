@@ -78,6 +78,8 @@ var messageHandlers = map[string]msgHandler{
 	"overlay_register":        withMsg(handleOverlayRegister),
 	"overlay_render":          withMsgOnly(handleOverlayRender),
 	"overlay_clear":           withMsgOnly(handleOverlayClear),
+	"native_region_spawn_request": withMsg(handleNativeRegionSpawn),
+	"native_region_output":        withMsgOnly(handleNativeRegionOutput),
 	"tree_resync_request": func(s *Server, c *Client, _ []byte, _ func(any)) {
 		s.send(treeSnapshotReq{clientID: c.id})
 	},
@@ -126,6 +128,58 @@ func handleIdentify(s *Server, c *Client, msg protocol.Identify) {
 	slog.Debug("client identified", "client_id", c.id,
 		"hostname", msg.Hostname, "username", msg.Username,
 		"pid", msg.Pid, "process", msg.Process)
+}
+
+func handleNativeRegionSpawn(s *Server, c *Client, msg protocol.NativeRegionSpawnRequest, reply func(any)) {
+	if msg.Session == "" || msg.Name == "" {
+		reply(protocol.NativeRegionSpawnResponse{
+			Type:    "native_region_spawn_response",
+			Error:   true,
+			Message: "session and name are required",
+		})
+		return
+	}
+
+	width := uint16(msg.Width)
+	height := uint16(msg.Height)
+	region, err := s.SpawnNativeRegion(c, msg.Session, msg.Name, width, height)
+	if err != nil {
+		reply(protocol.NativeRegionSpawnResponse{
+			Type:    "native_region_spawn_response",
+			Error:   true,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	reply(protocol.NativeRegionSpawnResponse{
+		Type:     "native_region_spawn_response",
+		RegionID: region.ID(),
+		Width:    region.Width(),
+		Height:   region.Height(),
+	})
+}
+
+func handleNativeRegionOutput(s *Server, c *Client, msg protocol.NativeRegionOutput) {
+	region := s.FindRegion(msg.RegionID)
+	if region == nil {
+		return
+	}
+	nr, ok := region.(*NativeRegion)
+	if !ok {
+		slog.Debug("native_region_output for non-native region", "region_id", msg.RegionID)
+		return
+	}
+	if nr.Driver() != c {
+		slog.Debug("native_region_output from non-owner client",
+			"region_id", msg.RegionID, "client_id", c.id)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(msg.Data)
+	if err != nil {
+		return
+	}
+	nr.Feed(data)
 }
 
 func handleSpawn(s *Server, c *Client, msg protocol.SpawnRequest, reply func(any)) {
