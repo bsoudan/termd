@@ -40,7 +40,7 @@ changelog:
 		ver=$$(git describe --tags --always $$hash 2>/dev/null); \
 		printf '%18s %s\n' "$$ver:" "$$rest"; \
 	done >> "$$tmp"; \
-	mv "$$tmp" internal/tui/changelog.txt
+	mv "$$tmp" dist/changelog.txt
 
 build-tui: changelog
 	go build $(RACEFLAG) $(GCFLAGS) -ldflags "$(LDFLAGS)" -o .local/bin/$(TUI_BIN)-$(HOST_OS_ARCH) ./cmd/nxterm

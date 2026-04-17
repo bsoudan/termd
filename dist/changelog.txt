@@ -1,4 +1,18 @@
-v0.1-beta-14-g52256d2*:  M Makefile  M TODO.md  M internal/transport/compress.go  M internal/tui/changelog.txt  M internal/tui/mainlayer.go  M internal/tui/sessionmanager.go  M pkg/layer/task_test.go ?? claude ?? doc/reliability-audit.md ?? enter 
+v0.1-beta-28-gb5122d4*:  M Makefile  M TODO.md RM internal/tui/changelog.txt -> dist/changelog.txt  M flake.nix  M internal/tui/main.go ?? claude ?? dist/changelog.go ?? enter 
+v0.1-beta-28-gb5122d4: test(e2e): batch wheel/pgup events with syncs to avoid InputParser coalescing
+v0.1-beta-27-g156a6dc: test(e2e): replace ad-hoc time.Sleep in scrollback tests
+v0.1-beta-26-g1f2e63e: test(e2e): replace remaining WaitForSilence in scrollback/session tests
+v0.1-beta-25-g130760c: test(e2e): replace WaitForSilence with Sync across the suite
+v0.1-beta-24-g4a779be: test(e2e): replace more sleeps with sync barriers
+v0.1-beta-23-g29e1c4c: test(e2e): migrate overlay tests to native regions
+v0.1-beta-22-ga8be5f8: test(e2e): migrate scrollback tests to native regions
+v0.1-beta-21-gf02cdd5: feat(e2e): pilot scrollback test + nxtest sync API + OSC docs
+v0.1-beta-20-gcb3b845: test(e2e): startFrontendForSession helper
+v0.1-beta-19-ga3d9c4b: feat(nxtest): driver wrapper and sync helpers
+v0.1-beta-18-g732748a: feat: sync markers end-to-end
+v0.1-beta-17-gd6c7e43: feat(server): native region protocol and backend
+v0.1-beta-16-gb75b05e: refactor(server): extract regionBackend interface
+v0.1-beta-15-g694ba2c: fix: data races surfaced by the Go race detector
 v0.1-beta-14-g52256d2: refactor(server): reuse protocol tree nodes in upgrade state
 v0.1-beta-13-ga3db9dd: refactor(server): transfer full ServerConfig across live upgrade
 v0.1-beta-12-g1753ca4: test(e2e): extend TestLogViewerOverlay prompt timeout under load
@@ -85,17 +99,3 @@ v0.1-beta-1-g564dee8: add home-manager module for nxtermd systemd user service
 0.14.0-85-g98da964: style: show only tab number in bold for active tab
 0.14.0-84-g5a973e8: refactor: rename ssh transport scheme to dssh
 0.14.0-83-gfbdd6ad: style: separate region title and server with bullet in window title
-0.14.0-82-g4f4ec51: feat: broadcast upgrade phases so client dialog tracks real handoff
-0.14.0-81-g31dc4dc: feat: surface region titles in tab bar and outer terminal title
-0.14.0-80-gf013621: chore: add vhs and ubuntu-classic to dev shell
-0.14.0-79-ga51afe5: fix: stop PTY readLoop before snapshot during live upgrade
-0.14.0-78-g8c8fd2a: fix(windows): use unique .old.<nanos> slot per chained live upgrade
-0.14.0-77-g9a7571e: fix: honor DECTCEM cursor visibility and show modes in status dialog
-0.14.0-76-g560ba45: fix: handle private CSI prefixes and wire region terminal replies
-0.14.0-75-g02282f9: feat: support SGR faint attribute end-to-end
-0.14.0-74-g0c5d999: feat: size regions from client viewport on session connect
-0.14.0-73-g69c49b2: chore: add dev-session.sh for isolated local sessions
-0.14.0-72-gef48b15: feat: session-aware discovery, unified upgrade binaries, recent removal
-0.14.0-71-g505c5cf: feat: --show-config and --show-keybindings introspection
-0.14.0-70-gbffc6c6: vendor urfave/cli v3.8.0 into pkg/ for local patching
-0.14.0-69-g8c4b066: fix: correct NXNXTERMD_VERSION typo in systemd unit template

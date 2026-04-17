@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/urfave/cli/v3"
+	"nxtermd/dist"
 	"nxtermd/internal/config"
 	"nxtermd/internal/nxlog"
 	"nxtermd/internal/transport"
@@ -21,8 +21,7 @@ import (
 
 var version string
 
-//go:embed changelog.txt
-var changelog string
+var changelog = dist.Changelog
 
 // Main is the entry point for the nxterm TUI binary.
 func Main(v string) {

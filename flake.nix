@@ -27,20 +27,14 @@
           pname = "nxtermd";
           inherit version;
           src = ./.;
-          vendorHash = "sha256-e/h3yweXasAeuNuVhIOGUXkuSySvohc+lbjIrNA7O8A=";
-          subPackages = [ "server" "frontend" "termctl" ];
+          vendorHash = "sha256-JuH/77R/QWuGGy1Q602EAQ9TAfn35ZGaJ58LIOrb730=";
+          subPackages = [ "cmd/nxtermd" "cmd/nxterm" "cmd/nxtermctl" ];
           env.CGO_ENABLED = 0;
           ldflags = [ "-s" "-w" "-X main.version=${version}" ];
 
-          # The frontend embeds changelog.txt at compile time.
+          # The TUI embeds dist/changelog.txt at compile time.
           preBuild = ''
-            echo "${version}: nix build" > frontend/changelog.txt
-          '';
-
-          postInstall = ''
-            mv $out/bin/server $out/bin/nxtermd
-            mv $out/bin/frontend $out/bin/nxterm
-            mv $out/bin/termctl $out/bin/nxtermctl
+            echo "${version}: nix build" > dist/changelog.txt
           '';
         };
 
