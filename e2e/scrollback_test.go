@@ -393,8 +393,7 @@ func TestScrollbackAfterReconnectLarge(t *testing.T) {
 	t.Logf("scrollback after sync: %s", strings.TrimSpace(screen[0]))
 
 	// Scroll to the very top. Use 'g' (home key) for instant jump.
-	nxt.Write([]byte("g"))
-	time.Sleep(200 * time.Millisecond)
+	nxt.Write([]byte("g")).Sync("jump to top")
 
 	// Early numbers (single digits) should be visible near the top.
 	nxt.WaitForScreen(func(lines []string) bool {
@@ -843,8 +842,7 @@ func TestScrollbackNoGapAfterSync(t *testing.T) {
 	}, "sync complete", 10*time.Second)
 
 	// Scroll to the top.
-	nxt.Write([]byte("g"))
-	time.Sleep(300 * time.Millisecond)
+	nxt.Write([]byte("g")).Sync("jump to top")
 
 	// Verify no x-markers on screen (which indicate a phantom gap).
 	screen := nxt.ScreenLines()
