@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nxtermd/internal/nxtest"
 )
 
 func TestTermctlStatus(t *testing.T) {
@@ -30,12 +32,12 @@ func TestTermctlRegionSpawnAndList(t *testing.T) {
 
 	id := spawnRegion(t, socketPath, "shell")
 
-	out := runNxtermctl(t, socketPath, "region", "list")
-	if !strings.Contains(out, id) {
-		t.Fatalf("region list missing spawned region %s:\n%s", id, out)
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t))
+	if _, ok := nxtest.FindRegion(regions, func(r nxtest.RegionInfo) bool { return r.ID == id }); !ok {
+		t.Fatalf("region list missing spawned region %s:\n%v", id, regions)
 	}
-	if !strings.Contains(out, "bash") {
-		t.Fatalf("region list missing 'bash' name:\n%s", out)
+	if _, ok := nxtest.FindRegion(regions, func(r nxtest.RegionInfo) bool { return r.Name == "bash" }); !ok {
+		t.Fatalf("region list missing 'bash' name:\n%v", regions)
 	}
 }
 
@@ -67,8 +69,7 @@ func TestTermctlRegionKill(t *testing.T) {
 	// Give the server a moment to process the death
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		out = runNxtermctl(t, socketPath, "region", "list")
-		if strings.Contains(out, "no regions") {
+		if len(nxtest.ListRegions(t, socketPath, testEnv(t))) == 0 {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -95,18 +96,11 @@ func TestTermctlClientList(t *testing.T) {
 	defer nxt.Kill()
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
+	clients := nxtest.ListClients(t, socketPath, testEnv(t))
+	if _, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool { return cl.Process == "nxterm" }); !ok {
+		t.Fatalf("client list missing 'nxterm':\n%v", clients)
+	}
 	out := runNxtermctl(t, socketPath, "client", "list")
-	hasNxterm := false
-	for _, line := range strings.Split(out, "\n") {
-		for _, f := range strings.Fields(line) {
-			if f == "nxterm" {
-				hasNxterm = true
-			}
-		}
-	}
-	if !hasNxterm {
-		t.Fatalf("client list missing 'nxterm':\n%s", out)
-	}
 	if !strings.Contains(out, "nxtermctl") {
 		t.Fatalf("client list missing 'nxtermctl':\n%s", out)
 	}
@@ -123,37 +117,21 @@ func TestTermctlClientKill(t *testing.T) {
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Find the frontend's client ID
-	out := runNxtermctl(t, socketPath, "client", "list")
-	var frontendClientID string
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		for _, f := range fields {
-			if f == "nxterm" {
-				frontendClientID = fields[0]
-				break
-			}
-		}
-		if frontendClientID != "" {
-			break
-		}
-	}
-	if frontendClientID == "" {
-		t.Fatalf("could not find frontend client ID in:\n%s", out)
+	clients := nxtest.ListClients(t, socketPath, testEnv(t))
+	frontendClient, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool { return cl.Process == "nxterm" })
+	if !ok {
+		t.Fatalf("could not find frontend client ID in:\n%v", clients)
 	}
 
 	// Kill the frontend client
-	out = runNxtermctl(t, socketPath, "client", "kill", frontendClientID)
+	out := runNxtermctl(t, socketPath, "client", "kill", nxtest.FormatClientID(frontendClient.ID))
 	if !strings.Contains(out, "killed") {
 		t.Fatalf("expected 'killed', got: %s", out)
 	}
 
 	// The killed client should be gone immediately on the next list.
-	out = runNxtermctl(t, socketPath, "client", "list")
-	for _, line := range strings.Split(out, "\n") {
-		for _, f := range strings.Fields(line) {
-			if f == "nxterm" {
-				t.Fatalf("frontend client still listed after kill:\n%s", out)
-			}
-		}
+	clients = nxtest.ListClients(t, socketPath, testEnv(t))
+	if _, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool { return cl.ID == frontendClient.ID }); ok {
+		t.Fatalf("frontend client still listed after kill:\n%v", clients)
 	}
 }

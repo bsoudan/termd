@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -183,11 +182,7 @@ func startFrontend(t *testing.T, socketPath string) *nxtest.T {
 // driver-created native region, without spawning a shell.
 func startFrontendForSession(t *testing.T, socketPath, sessionName string) *nxtest.T {
 	t.Helper()
-	fe, err := nxtest.StartFrontend(socketPath, testEnv(t), 80, 24, "--session", sessionName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return nxtest.NewFromFrontend(t, fe)
+	return nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 24, "--session", sessionName)
 }
 
 // startFrontendShared starts a frontend connected to the shared server
@@ -195,34 +190,18 @@ func startFrontendForSession(t *testing.T, socketPath, sessionName string) *nxte
 func startFrontendShared(t *testing.T) *nxtest.T {
 	t.Helper()
 	socketPath := sharedServer(t)
-	env := testEnv(t)
-	fe, err := nxtest.StartFrontend(socketPath, env, 80, 24, "--session", uniqueSession())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return nxtest.NewFromFrontend(t, fe)
+	return nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 24, "--session", uniqueSession())
 }
 
 func startFrontendWithEnv(t *testing.T, socketPath string, env []string) *nxtest.T {
 	t.Helper()
-	fe, err := nxtest.StartFrontend(socketPath, env, 80, 24)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return nxtest.NewFromFrontend(t, fe)
+	return nxtest.MustStartFrontend(t, socketPath, env, 80, 24)
 }
 
 // runNxtermctl runs the nxtermctl binary with the given args and returns stdout.
 func runNxtermctl(t *testing.T, socketPath string, args ...string) string {
 	t.Helper()
-	fullArgs := append([]string{"--socket", socketPath}, args...)
-	cmd := exec.Command("nxtermctl", fullArgs...)
-	cmd.Env = testEnv(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("termctl %v failed: %v\n%s", args, err, out)
-	}
-	return string(out)
+	return nxtest.RunNxtermctl(t, socketPath, testEnv(t), args...)
 }
 
 // waitForRegionPrompt polls region view until a shell prompt ("$")
@@ -261,10 +240,5 @@ func regionSendAndWait(t *testing.T, socketPath, regionID, input, marker string)
 // and returns the region ID.
 func spawnRegion(t *testing.T, socketPath string, programName string) string {
 	t.Helper()
-	out := runNxtermctl(t, socketPath, "region", "spawn", programName)
-	id := strings.TrimSpace(out)
-	if len(id) != 36 {
-		t.Fatalf("expected 36-char region ID, got %q", id)
-	}
-	return id
+	return nxtest.SpawnRegion(t, socketPath, testEnv(t), programName)
 }

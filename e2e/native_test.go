@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"nxtermd/internal/nxtest"
 )
 
 func TestNativeOverlayRender(t *testing.T) {
@@ -49,12 +50,11 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Get the region ID.
-	out := runNxtermctl(t, socketPath, "region", "list")
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected region in list, got: %s", out)
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t))
+	if len(regions) == 0 {
+		t.Fatal("expected region in list, got none")
 	}
-	regionID := strings.Fields(lines[1])[0]
+	regionID := regions[0].ID
 
 	// Run the overlay app.
 	nxt.Write([]byte("nativeapp\r"))
@@ -68,12 +68,13 @@ func TestNativeOverlayGetScreen(t *testing.T) {
 	// nxtermctl region view uses get_screen_request — overlay must be included.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		out = runNxtermctl(t, socketPath, "region", "view", regionID)
+		out := runNxtermctl(t, socketPath, "region", "view", regionID)
 		if strings.Contains(out, "NATIVE") {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	out := runNxtermctl(t, socketPath, "region", "view", regionID)
 	if !strings.Contains(out, "NATIVE") {
 		t.Fatal("get_screen_request did not include overlay (expected 'NATIVE')")
 	}

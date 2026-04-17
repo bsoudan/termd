@@ -1,11 +1,9 @@
 package e2e
 
 import (
-	"os/exec"
 	"testing"
 	"time"
 
-	"github.com/creack/pty"
 	"nxtermd/internal/nxtest"
 )
 
@@ -48,14 +46,8 @@ func TestReconnectTCP(t *testing.T) {
 	defer serverCleanup()
 
 	// Connect frontend via TCP
-	cmd := exec.Command("nxterm", "--socket", "tcp:"+tcpAddr)
-	cmd.Env = append(testEnv(t), "TERM=dumb")
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend via TCP: %v", err)
-	}
-	nxt := nxtest.New(t, nxtest.NewPtyIO(ptmx, 80, 24))
-	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+	nxt := nxtest.MustStartFrontend(t, "tcp:"+tcpAddr, testEnv(t), 80, 24)
+	defer nxt.Kill()
 
 	nxt.WaitFor("nxterm$", 10*time.Second)
 

@@ -23,15 +23,8 @@ func TestTCPTransport(t *testing.T) {
 	_ = runNxtermctl(t, socketPath, "region", "spawn", "shell")
 
 	// Connect frontend via TCP
-	cmd := exec.Command("nxterm", "--socket", "tcp:"+tcpAddr)
-	cmd.Env = append(testEnv(t), "TERM=dumb")
-
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend via TCP: %v", err)
-	}
-	nxt := nxtest.New(t, nxtest.NewPtyIO(ptmx, 80, 24))
-	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+	nxt := nxtest.MustStartFrontend(t, "tcp:"+tcpAddr, testEnv(t), 80, 24)
+	defer nxt.Kill()
 
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
@@ -64,14 +57,8 @@ func TestWebSocketTransport(t *testing.T) {
 	_ = runNxtermctl(t, socketPath, "region", "spawn", "shell")
 
 	// Connect frontend via WebSocket
-	cmd := exec.Command("nxterm", "--socket", "ws://"+wsAddr)
-	cmd.Env = append(testEnv(t), "TERM=dumb")
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend via WS: %v", err)
-	}
-	nxt := nxtest.New(t, nxtest.NewPtyIO(ptmx, 80, 24))
-	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+	nxt := nxtest.MustStartFrontend(t, "ws://"+wsAddr, testEnv(t), 80, 24)
+	defer nxt.Kill()
 
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
@@ -210,12 +197,8 @@ eval "$1"
 	cmd := exec.Command("nxterm", "--socket", "ssh://anyhost"+socketPath)
 	cmd.Env = envWithFakeSSH
 
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend via ssh-exec: %v", err)
-	}
-	nxt := nxtest.New(t, nxtest.NewPtyIO(ptmx, 80, 24))
-	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+	nxt := nxtest.MustStartFrontend(t, "ssh://anyhost"+socketPath, envWithFakeSSH, 80, 24)
+	defer nxt.Kill()
 
 	// The active tab no longer renders the program name (commit
 	// 98da964) so the historical WaitFor("bash") here can't be used;
@@ -244,14 +227,8 @@ func TestMultiTransportSharedRegion(t *testing.T) {
 	nxt1.WaitFor("multi_transport_marker", 10*time.Second)
 
 	// Start frontend 2 via TCP (subscribes to the same region)
-	cmd := exec.Command("nxterm", "--socket", "tcp:"+tcpAddr)
-	cmd.Env = append(testEnv(t), "TERM=dumb")
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend 2 via TCP: %v", err)
-	}
-	nxt2 := nxtest.New(t, nxtest.NewPtyIO(ptmx, 80, 24))
-	defer func() { cmd.Process.Kill(); cmd.Wait(); ptmx.Close() }()
+	nxt2 := nxtest.MustStartFrontend(t, "tcp:"+tcpAddr, testEnv(t), 80, 24)
+	defer nxt2.Kill()
 
 	// Frontend 2 should see the marker (it gets the screen snapshot on subscribe)
 	nxt2.WaitFor("multi_transport_marker", 10*time.Second)
@@ -265,14 +242,9 @@ func TestMultiTransportSharedRegion(t *testing.T) {
 // findFrontendClientID returns the client ID of the nxterm process.
 func findFrontendClientID(t *testing.T, socketPath string) string {
 	t.Helper()
-	out := runNxtermctl(t, socketPath, "client", "list")
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		for _, f := range fields {
-			if f == "nxterm" && len(fields) > 0 {
-				return fields[0]
-			}
-		}
+	clients := nxtest.ListClients(t, socketPath, testEnv(t))
+	if cl, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool { return cl.Process == "nxterm" }); ok {
+		return nxtest.FormatClientID(cl.ID)
 	}
 	t.Fatal("could not find nxterm client ID")
 	return ""

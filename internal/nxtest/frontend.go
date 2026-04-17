@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"testing"
 	"time"
 
 	"github.com/creack/pty"
@@ -34,6 +35,18 @@ func StartFrontend(socketPath string, env []string, cols, rows uint16, extraArgs
 		Cmd:   cmd,
 		Ptmx:  ptmx,
 	}, nil
+}
+
+// MustStartFrontend starts nxterm and wraps it in a T, failing the test
+// immediately on error. Useful for e2e tests that don't need to thread
+// error handling or PTY setup through each call site.
+func MustStartFrontend(t *testing.T, socketPath string, env []string, cols, rows uint16, extraArgs ...string) *T {
+	t.Helper()
+	fe, err := StartFrontend(socketPath, env, cols, rows, extraArgs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewFromFrontend(t, fe)
 }
 
 // Kill forcibly terminates the frontend process.

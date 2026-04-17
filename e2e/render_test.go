@@ -52,19 +52,11 @@ func TestCursorPosition(t *testing.T) {
 	t.Logf("'xy' at content row %d, col %d", row, col)
 
 	// Verify the server also has "xy" via termctl
-	out := runNxtermctl(t, socketPath, "region", "list")
-	var regionID string
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && len(fields[0]) == 36 {
-			regionID = fields[0]
-			break
-		}
-	}
-	if regionID == "" {
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t))
+	if len(regions) == 0 {
 		t.Fatal("could not find region ID")
 	}
-	view := runNxtermctl(t, socketPath, "region", "view", regionID)
+	view := runNxtermctl(t, socketPath, "region", "view", regions[0].ID)
 	viewRow, viewCol := nxtest.FindOnScreen(strings.Split(view, "\n"), "xy")
 	t.Logf("server view: 'xy' at row %d, col %d", viewRow, viewCol)
 	if viewRow < 0 {
@@ -82,10 +74,10 @@ func TestCursorMovementAfterProgram(t *testing.T) {
 	// Type several lines so there's content on screen
 	nxt.Write([]byte("echo line_a\r"))
 	nxt.WaitFor("line_a", 10*time.Second)
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 	nxt.Write([]byte("echo line_b\r"))
 	nxt.WaitFor("line_b", 10*time.Second)
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Run a command that writes to many rows (like top does).
 	// Use seq to fill several lines, then echo a unique marker so
@@ -133,7 +125,7 @@ func TestColorRendering(t *testing.T) {
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Produce colored output via printf using ansi constants converted to shell notation.
 	nxt.Write([]byte("printf '" +
@@ -672,7 +664,7 @@ func TestResizeMidSession(t *testing.T) {
 	nxt := startFrontendShared(t)
 	defer nxt.Kill()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Verify initial 80 columns
 	nxt.Write([]byte("tput cols\r"))
@@ -685,7 +677,7 @@ func TestResizeMidSession(t *testing.T) {
 		return false
 	}, "'80' at col 0 on a content row", 10*time.Second)
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Resize to 120x40
 	nxt.Resize(120, 40)
@@ -770,7 +762,7 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	nxt := startFrontend(t, socketPath)
 	defer nxt.Kill()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 
 	// Run top, wait for it to render, then quit
 	nxt.Write([]byte("top\r"))
@@ -785,7 +777,7 @@ func TestScreenSyncAfterTop(t *testing.T) {
 	nxt.Write([]byte("q"))
 
 	// Wait for prompt to reappear
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxt.WaitFor("nxterm$", 10*time.Second)
 	nxt.Sync("render settle 500ms")
 
 	// Get server screen via termctl

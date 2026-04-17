@@ -1,37 +1,21 @@
 package e2e
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/creack/pty"
 	"nxtermd/internal/nxtest"
 )
 
 // startFrontendWithSession starts an nxterm with the given --session flag.
 func startFrontendWithSession(t *testing.T, socketPath, session string) *nxtest.T {
 	t.Helper()
-
-	args := []string{"--socket", socketPath}
-	if session != "" {
-		args = append(args, "--session", session)
+	if session == "" {
+		return nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 24)
 	}
-	cmd := exec.Command("nxterm", args...)
-	cmd.Env = append(testEnv(t), "TERM=dumb")
-
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("start frontend in pty: %v", err)
-	}
-
-	return nxtest.NewFromFrontend(t, &nxtest.Frontend{
-		PtyIO: nxtest.NewPtyIO(ptmx, 80, 24),
-		Cmd:   cmd,
-		Ptmx:  ptmx,
-	})
+	return nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 24, "--session", session)
 }
 
 func TestSessionConnectDefault(t *testing.T) {
@@ -45,15 +29,15 @@ func TestSessionConnectDefault(t *testing.T) {
 	nxt.WaitFor("$", 10*time.Second)
 
 	// Verify session was created
-	out := runNxtermctl(t, socketPath, "session", "list")
-	if !strings.Contains(out, "main") {
-		t.Fatalf("session list missing 'main':\n%s", out)
+	sessions := nxtest.ListSessions(t, socketPath, testEnv(t))
+	if _, ok := findSession(sessions, "main"); !ok {
+		t.Fatalf("session list missing 'main':\n%v", sessions)
 	}
 
 	// Verify client shows session
-	out = runNxtermctl(t, socketPath, "client", "list")
-	if !strings.Contains(out, "main") {
-		t.Fatalf("client list missing session 'main':\n%s", out)
+	clients := nxtest.ListClients(t, socketPath, testEnv(t))
+	if _, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool { return cl.Session == "main" }); !ok {
+		t.Fatalf("client list missing session 'main':\n%v", clients)
 	}
 }
 
@@ -67,18 +51,18 @@ func TestSessionConnectNamed(t *testing.T) {
 
 	nxt.WaitFor("$", 10*time.Second)
 
-	out := runNxtermctl(t, socketPath, "session", "list")
-	if !strings.Contains(out, "work") {
-		t.Fatalf("session list missing 'work':\n%s", out)
+	sessions := nxtest.ListSessions(t, socketPath, testEnv(t))
+	if _, ok := findSession(sessions, "work"); !ok {
+		t.Fatalf("session list missing 'work':\n%v", sessions)
 	}
 
 	// Verify region belongs to "work" session
-	out = runNxtermctl(t, socketPath, "region", "list", "--session", "work")
-	if strings.Contains(out, "no regions") {
-		t.Fatalf("expected regions in 'work' session, got:\n%s", out)
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "work")
+	if len(regions) == 0 {
+		t.Fatal("expected regions in 'work' session, got none")
 	}
-	if !strings.Contains(out, "work") {
-		t.Fatalf("region list missing session 'work':\n%s", out)
+	if _, ok := nxtest.FindRegion(regions, func(r nxtest.RegionInfo) bool { return r.Session == "work" }); !ok {
+		t.Fatalf("region list missing session 'work':\n%v", regions)
 	}
 }
 
@@ -96,34 +80,31 @@ func TestSessionMultiple(t *testing.T) {
 	nxt2.WaitFor("$", 10*time.Second)
 
 	// Both sessions exist
-	out := runNxtermctl(t, socketPath, "session", "list")
-	if !strings.Contains(out, "main") {
-		t.Fatalf("session list missing 'main':\n%s", out)
+	sessions := nxtest.ListSessions(t, socketPath, testEnv(t))
+	if _, ok := findSession(sessions, "main"); !ok {
+		t.Fatalf("session list missing 'main':\n%v", sessions)
 	}
-	if !strings.Contains(out, "dev") {
-		t.Fatalf("session list missing 'dev':\n%s", out)
+	if _, ok := findSession(sessions, "dev"); !ok {
+		t.Fatalf("session list missing 'dev':\n%v", sessions)
 	}
 
 	// Filter by session
-	outMain := runNxtermctl(t, socketPath, "region", "list", "--session", "main")
-	outDev := runNxtermctl(t, socketPath, "region", "list", "--session", "dev")
-	outAll := runNxtermctl(t, socketPath, "region", "list")
+	mainRegions := nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "main")
+	devRegions := nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "dev")
+	allRegions := nxtest.ListRegions(t, socketPath, testEnv(t))
 
 	// Each filtered list should have regions
-	if strings.Contains(outMain, "no regions") {
-		t.Fatalf("expected regions in 'main', got:\n%s", outMain)
+	if len(mainRegions) == 0 {
+		t.Fatal("expected regions in 'main', got none")
 	}
-	if strings.Contains(outDev, "no regions") {
-		t.Fatalf("expected regions in 'dev', got:\n%s", outDev)
+	if len(devRegions) == 0 {
+		t.Fatal("expected regions in 'dev', got none")
 	}
 
 	// All list should have both
-	mainRegionCount := strings.Count(outMain, "\n") - 1 // minus header
-	devRegionCount := strings.Count(outDev, "\n") - 1
-	allRegionCount := strings.Count(outAll, "\n") - 1
-	if allRegionCount != mainRegionCount+devRegionCount {
-		t.Fatalf("total regions (%d) != main (%d) + dev (%d)\nall:\n%s",
-			allRegionCount, mainRegionCount, devRegionCount, outAll)
+	if len(allRegions) != len(mainRegions)+len(devRegions) {
+		t.Fatalf("total regions (%d) != main (%d) + dev (%d)\nall:\n%v",
+			len(allRegions), len(mainRegions), len(devRegions), allRegions)
 	}
 }
 
@@ -138,23 +119,19 @@ func TestSessionReconnect(t *testing.T) {
 	nxt.WaitFor("$", 10*time.Second)
 
 	// Get the region ID
-	out := runNxtermctl(t, socketPath, "region", "list", "--session", "persist")
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 1 region, got:\n%s", out)
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "persist")
+	if len(regions) == 0 {
+		t.Fatal("expected at least 1 region in persist session")
 	}
-	regionID := strings.Fields(lines[1])[0]
-	if len(regionID) != 36 {
-		t.Fatalf("expected 36-char region ID, got %q", regionID)
-	}
+	regionID := regions[0].ID
 
 	// Kill the frontend
 	nxt.Kill()
 
 	// Session and region should still exist
-	out = runNxtermctl(t, socketPath, "session", "list")
-	if !strings.Contains(out, "persist") {
-		t.Fatalf("session 'persist' disappeared after frontend disconnect:\n%s", out)
+	sessions := nxtest.ListSessions(t, socketPath, testEnv(t))
+	if _, ok := findSession(sessions, "persist"); !ok {
+		t.Fatalf("session 'persist' disappeared after frontend disconnect:\n%v", sessions)
 	}
 
 	// Reconnect with same session name — should resume
@@ -164,18 +141,12 @@ func TestSessionReconnect(t *testing.T) {
 	nxt2.WaitFor("$", 10*time.Second)
 
 	// Verify no additional regions were spawned
-	out = runNxtermctl(t, socketPath, "region", "list", "--session", "persist")
-	regionLines := 0
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.Contains(line, regionID) {
-			regionLines++
-		}
+	regions = nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "persist")
+	if len(regions) != 1 {
+		t.Fatalf("expected 1 region after reconnect, got %d:\n%v", len(regions), regions)
 	}
-	// Count total non-header lines
-	totalLines := strings.Split(strings.TrimSpace(out), "\n")
-	nonHeaderCount := len(totalLines) - 1
-	if nonHeaderCount != 1 {
-		t.Fatalf("expected 1 region after reconnect, got %d:\n%s", nonHeaderCount, out)
+	if regions[0].ID != regionID {
+		t.Fatalf("expected region %s after reconnect, got %v", regionID, regions)
 	}
 }
 
@@ -189,9 +160,9 @@ func TestSessionCleanup(t *testing.T) {
 	id = strings.TrimSpace(id)
 
 	// Verify session exists
-	out := runNxtermctl(t, socketPath, "session", "list")
-	if !strings.Contains(out, "temp") {
-		t.Fatalf("session 'temp' not created:\n%s", out)
+	sessions := nxtest.ListSessions(t, socketPath, testEnv(t))
+	if _, ok := findSession(sessions, "temp"); !ok {
+		t.Fatalf("session 'temp' not created:\n%v", sessions)
 	}
 
 	// Kill the region
@@ -200,13 +171,13 @@ func TestSessionCleanup(t *testing.T) {
 	// Wait for session to disappear
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		out = runNxtermctl(t, socketPath, "session", "list")
-		if !strings.Contains(out, "temp") {
+		sessions = nxtest.ListSessions(t, socketPath, testEnv(t))
+		if _, ok := findSession(sessions, "temp"); !ok {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("session 'temp' still exists after killing its only region:\n%s", out)
+	t.Fatalf("session 'temp' still exists after killing its only region:\n%v", sessions)
 }
 
 func TestSessionSpawnIntoSession(t *testing.T) {
@@ -223,15 +194,14 @@ func TestSessionSpawnIntoSession(t *testing.T) {
 	id = strings.TrimSpace(id)
 
 	// Verify it's in "main"
-	out := runNxtermctl(t, socketPath, "region", "list", "--session", "main")
-	if !strings.Contains(out, id) {
-		t.Fatalf("spawned region %s not in 'main' session:\n%s", id, out)
+	regions := nxtest.ListRegions(t, socketPath, testEnv(t), "--session", "main")
+	if _, ok := nxtest.FindRegion(regions, func(r nxtest.RegionInfo) bool { return r.ID == id }); !ok {
+		t.Fatalf("spawned region %s not in 'main' session:\n%v", id, regions)
 	}
 
 	// Should be 2 regions now
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines)-1 != 2 {
-		t.Fatalf("expected 2 regions in 'main', got %d:\n%s", len(lines)-1, out)
+	if len(regions) != 2 {
+		t.Fatalf("expected 2 regions in 'main', got %d:\n%v", len(regions), regions)
 	}
 }
 
@@ -244,28 +214,21 @@ func TestSessionClientListShowsSession(t *testing.T) {
 	defer nxt.Kill()
 	nxt.WaitFor("$", 10*time.Second)
 
-	out := runNxtermctl(t, socketPath, "client", "list")
-
-	// Header should have SESSION
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 1 {
-		t.Fatal("empty client list")
+	clients := nxtest.ListClients(t, socketPath, testEnv(t))
+	if _, ok := nxtest.FindClient(clients, func(cl nxtest.ClientInfo) bool {
+		return cl.Process == "nxterm" && cl.Session == "visible"
+	}); !ok {
+		t.Fatalf("client list missing session 'visible' for nxterm:\n%v", clients)
 	}
-	if !strings.Contains(lines[0], "SESSION") {
-		t.Fatalf("client list header missing SESSION column:\n%s", out)
-	}
+}
 
-	// Frontend client row should show "visible"
-	found := false
-	for _, line := range lines[1:] {
-		if strings.Contains(line, "nxterm") && strings.Contains(line, "visible") {
-			found = true
-			break
+func findSession(sessions []nxtest.SessionInfo, name string) (nxtest.SessionInfo, bool) {
+	for _, s := range sessions {
+		if s.Name == name {
+			return s, true
 		}
 	}
-	if !found {
-		t.Fatalf("client list missing session 'visible' for nxterm:\n%s", out)
-	}
+	return nxtest.SessionInfo{}, false
 }
 
 func TestSessionPersistence(t *testing.T) {
