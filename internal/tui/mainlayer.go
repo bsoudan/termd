@@ -65,10 +65,11 @@ type NxtermModel struct {
 	// processing when a focus-routing layer is active.
 	focusBuf []byte
 
-	// pendingAcks holds sync marker ids whose ack should ride the
-	// next View. Filled from stdin-side (RawInputMsg) and server-side
-	// (TerminalEvent Op="sync") paths; drained by View.
-	pendingAcks []string
+	// pendingSyncAcks holds sync marker ids stripped from input that
+	// need their ack emitted after the next render. Emitting to stderr
+	// before render causes the test harness to see the ack before the
+	// rendered frame, yielding stale ScreenLines() on assertion.
+	pendingSyncAcks []string
 }
 
 // AppContext holds application-level metadata and services shared
@@ -110,6 +111,24 @@ func NewNxtermModel(
 
 	m.stack = layer.NewStack[RenderState](sm)
 	return m
+}
+
+// flushPendingSyncAcks writes any queued sync ack markers to the
+// program's output stream. Forces a synchronous renderer flush first
+// so the ack arrives in the PTY after the frame it's acknowledging.
+// Skipped while the focus buffer has pending input — acks must only
+// fire after all prior input has been fully processed.
+func (m *NxtermModel) flushPendingSyncAcks() {
+	if len(m.pendingSyncAcks) == 0 || len(m.focusBuf) > 0 {
+		return
+	}
+	if err := m.program.Flush(); err != nil {
+		return
+	}
+	for _, id := range m.pendingSyncAcks {
+		_, _ = m.program.Write([]byte(FormatSyncAck(id)))
+	}
+	m.pendingSyncAcks = nil
 }
 
 // enterCommandMode is called when the prefix key is detected.
@@ -297,6 +316,7 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 		case msg := <-srv.Inbound:
 			m.processServerMsg(msg)
 			p.Render()
+			m.flushPendingSyncAcks()
 			continue
 		case msg := <-srv.Lifecycle:
 			switch msg := msg.(type) {
@@ -317,6 +337,9 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 				return nil
 			}
 			p.Render()
+			// flushPendingSyncAcks no-ops while focusBuf is non-empty;
+			// the ack only goes out once the buffer fully drains.
+			m.flushPendingSyncAcks()
 			continue
 		}
 
@@ -339,10 +362,12 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 				return nil
 			}
 			p.Render()
+			m.flushPendingSyncAcks()
 
 		case msg := <-srv.Inbound:
 			m.processServerMsg(msg)
 			p.Render()
+			m.flushPendingSyncAcks()
 
 		case msg := <-srv.Lifecycle:
 			switch msg := msg.(type) {
@@ -400,6 +425,22 @@ func (m *NxtermModel) stepFocusSequence() error {
 // that needs further processing. Callers pass the returned cmd to
 // execCmdSync (or the trampoline queue).
 func (m *NxtermModel) processRawInput(raw RawInputMsg) (tea.Cmd, error) {
+	// Strip OSC 2459 sync markers — they are test-only signals, not
+	// terminal input. Queue acks to be emitted after the next render;
+	// emitting inline would beat the render to the PTY and tests would
+	// see the ack before the frame it's meant to signal. Surviving
+	// bytes (if any) proceed through the normal raw-input path. This
+	// runs here rather than at the rawCh select site because multiple
+	// code paths read from rawCh (drainUntil and the main Run loop),
+	// and sync support must work from all of them.
+	remaining, ids := ExtractSyncMarkers([]byte(raw))
+	if len(ids) > 0 {
+		m.pendingSyncAcks = append(m.pendingSyncAcks, ids...)
+		if len(remaining) == 0 {
+			return nil, nil
+		}
+		raw = RawInputMsg(remaining)
+	}
 	if m.commandMode {
 		return m.handleCommandInput([]byte(raw)), nil
 	}
@@ -455,6 +496,8 @@ func (m *NxtermModel) execCmdSync(cmd tea.Cmd) error {
 			if next != nil {
 				queue = append(queue, next)
 			}
+		case SyncMsg:
+			m.pendingSyncAcks = append(m.pendingSyncAcks, msg.ID)
 		default:
 			if next := m.stack.Update(msg); next != nil {
 				queue = append(queue, next)
@@ -497,7 +540,10 @@ func (m *NxtermModel) processServerMsg(msg protocol.Message) {
 		return
 	}
 
-	m.stack.Update(msg.Payload)
+	cmd := m.stack.Update(msg.Payload)
+	if cmd != nil {
+		_ = m.execCmdSync(cmd)
+	}
 }
 
 func (m *NxtermModel) drainUntil(match func(source string, msg any) bool) (any, error) {
@@ -529,6 +575,7 @@ func (m *NxtermModel) drainUntil(match func(source string, msg any) bool) (any, 
 				return nil, err
 			}
 			m.program.Render()
+			m.flushPendingSyncAcks()
 			if match("raw", raw) {
 				return raw, nil
 			}
@@ -536,6 +583,7 @@ func (m *NxtermModel) drainUntil(match func(source string, msg any) bool) (any, 
 		case msg := <-m.server.Inbound:
 			m.processServerMsg(msg)
 			m.program.Render()
+			m.flushPendingSyncAcks()
 			if match("server", msg) {
 				return msg, nil
 			}

@@ -334,6 +334,21 @@ type addSubscriberMsg struct {
 func (m addSubscriberMsg) handleRegion(a *regionActor) {
 	snap := a.compositedSnapshot()
 	m.client.SendMessage(newScreenUpdate(a.id, snap))
+	// Deliver the region's accumulated sync marker history so the new
+	// subscriber can catch up on markers emitted before it joined. Sent
+	// as a terminal_events follow-up ordered behind the screen_update
+	// so the client's TerminalLayer sees them in order.
+	if syncs := a.proxy.AllSyncs(); len(syncs) > 0 {
+		events := make([]protocol.TerminalEvent, len(syncs))
+		for i, id := range syncs {
+			events[i] = protocol.TerminalEvent{Op: "sync", Data: id}
+		}
+		m.client.SendMessage(protocol.TerminalEvents{
+			Type:     "terminal_events",
+			RegionID: a.id,
+			Events:   events,
+		})
+	}
 	a.subscribers[m.client.id] = m.client
 	m.resp <- snap
 }

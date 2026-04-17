@@ -142,15 +142,52 @@ func (r *NativeRegion) Width() int { return r.width }
 // Height returns the region's height in rows.
 func (r *NativeRegion) Height() int { return r.height }
 
-// Output sends bytes into the region's VT parser server-side.
-// Fire-and-forget — pair with WriteSync + nxtest.T.WaitSync to know
-// when the bytes have been rendered on a subscribed TUI.
-func (r *NativeRegion) Output(data []byte) {
+// Output sends bytes into the region's VT parser server-side. Returns
+// a RegionWriteHandle whose Sync(nxt) method blocks until the bytes
+// have been broadcast to the TUI and rendered there.
+func (r *NativeRegion) Output(data []byte) *RegionWriteHandle {
 	if err := r.driver.c.Send(protocol.NativeRegionOutput{
 		Type: "native_region_output", RegionID: r.id,
 		Data: base64.StdEncoding.EncodeToString(data),
 	}); err != nil {
 		r.driver.t.Fatalf("NativeRegion.Output: %v", err)
+	}
+	return &RegionWriteHandle{region: r}
+}
+
+// RegionWriteHandle is returned by NativeRegion.Output. Its Sync
+// method emits a sync marker via the driver and waits for the TUI to
+// ack it on stdout, ensuring all prior region output has been
+// broadcast, parsed, and rendered.
+type RegionWriteHandle struct {
+	region *NativeRegion
+}
+
+// Sync emits an auto-id sync marker into the region's event stream
+// and blocks until the TUI acks it — confirming the server has
+// processed all prior driver output and the TUI has rendered through
+// it. Syncs issued before any TUI subscribes are delivered via the
+// subscriber's initial snapshot, so this safely doubles as a
+// "subscribed + rendered" barrier. desc is included in the failure
+// message on timeout.
+func (h *RegionWriteHandle) Sync(nxt *T, desc string) {
+	nxt.Helper()
+	id := nextSyncID()
+	h.region.WriteSync(id)
+	if err := nxt.PtyIO.WaitSync(id, 10*time.Second); err != nil {
+		nxt.Fatalf("region sync %q: %v", desc, err)
+	}
+}
+
+// Sync emits a sync marker without prior output and waits for its
+// ack. Useful as an initial "is the TUI up and receiving?" barrier.
+// desc is included in the failure message on timeout.
+func (r *NativeRegion) Sync(nxt *T, desc string) {
+	nxt.Helper()
+	id := nextSyncID()
+	r.WriteSync(id)
+	if err := nxt.PtyIO.WaitSync(id, 10*time.Second); err != nil {
+		nxt.Fatalf("region sync %q: %v", desc, err)
 	}
 }
 

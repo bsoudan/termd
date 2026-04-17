@@ -5,9 +5,43 @@
 package nxtest
 
 import (
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// syncCounter is a shared auto-incrementing counter used by WriteHandle
+// and RegionWriteHandle to generate unique sync ids without test code
+// having to pick them. Shared across all test instances in the process.
+var syncCounter atomic.Uint64
+
+// nextSyncID returns a unique sync id.
+func nextSyncID() string {
+	return fmt.Sprintf("auto-%d", syncCounter.Add(1))
+}
+
+// WriteHandle is returned by T.Write. Its Sync method writes a sync
+// marker to the TUI's stdin and blocks until the matching ack is
+// observed on stdout — a convenient "process my writes and catch up"
+// barrier without the test having to pick ids.
+type WriteHandle struct {
+	t *T
+}
+
+// Sync writes an auto-id sync marker onto the TUI's stdin and waits
+// for the ack, ensuring all bytes queued before this Sync have been
+// processed (and rendered) by the TUI before returning. desc is
+// included in the failure message on timeout.
+func (w *WriteHandle) Sync(desc string) {
+	w.t.Helper()
+	id := nextSyncID()
+	w.t.PtyIO.WriteSync(id)
+	if err := w.t.PtyIO.WaitSync(id, 10*time.Second); err != nil {
+		w.t.Fatalf("sync %q: %v", desc, err)
+	}
+}
 
 // T wraps a testing.T and a PtyIO (and optionally a Frontend) so that
 // test code can use a single object for all interactions:
@@ -60,6 +94,16 @@ func (t *T) FindOnScreen(needle string) (row, col int) {
 	return FindOnScreen(t.ScreenLines(), needle)
 }
 
+// Write writes raw bytes to the TUI's stdin and returns a WriteHandle
+// whose Sync method blocks until the TUI has processed them and
+// rendered the result. Shadows the embedded PtyIO.Write so existing
+// test code that discards the return value works unchanged.
+func (t *T) Write(data []byte) *WriteHandle {
+	t.Helper()
+	t.PtyIO.Write(data)
+	return &WriteHandle{t: t}
+}
+
 // WriteSync injects an OSC 2459;nx;sync;<id> marker into the TUI's
 // stdin. The rawio path strips it and emits a SyncMsg in the TUI,
 // FIFO-ordered with any other keystrokes sent before it.
@@ -83,6 +127,30 @@ func (t *T) WaitSyncWithTimeout(id string, timeout time.Duration) {
 	t.Helper()
 	if err := t.PtyIO.WaitSync(id, timeout); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// RequireTabBarContains asserts that the tab bar (row 0) contains
+// want, failing the test otherwise.
+func (t *T) RequireTabBarContains(want string) {
+	t.Helper()
+	screen := t.ScreenLines()
+	if len(screen) == 0 || !strings.Contains(screen[0], want) {
+		got := ""
+		if len(screen) > 0 {
+			got = screen[0]
+		}
+		t.Fatalf("expected tab bar to contain %q, got %q", want, got)
+	}
+}
+
+// RequireTabBarDoesNotContain asserts that the tab bar does not contain
+// unwanted, failing the test otherwise.
+func (t *T) RequireTabBarDoesNotContain(unwanted string) {
+	t.Helper()
+	screen := t.ScreenLines()
+	if len(screen) > 0 && strings.Contains(screen[0], unwanted) {
+		t.Fatalf("expected tab bar to not contain %q, got %q", unwanted, screen[0])
 	}
 }
 

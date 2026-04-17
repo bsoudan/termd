@@ -12,21 +12,41 @@ type EventProxy struct {
 	syncMode     bool // true when synchronized output mode (2026) is active
 	syncEndIndex int  // index in batch where sync mode ended (-1 = no sync completed)
 
-	// pendingSyncs holds sync marker ids awaiting emission. Tracked
-	// separately from batch so they survive batch discard on mode-2026
-	// snapshot flush, and stay held while syncMode is active.
+	// pendingSyncs holds sync marker ids awaiting emission in the next
+	// Flush. Tracked separately from batch so they survive batch discard
+	// on mode-2026 snapshot flush, and stay held while syncMode is active.
 	pendingSyncs []string
+
+	// allSyncs is the full history of sync markers emitted against this
+	// region. Delivered to every new subscriber alongside the initial
+	// snapshot so subscribers can catch up on markers emitted before
+	// they joined. Grows with the region's lifetime; bounded in practice
+	// because tests emit a small number.
+	allSyncs []string
 }
 
 func NewEventProxy(screen te.EventHandler) *EventProxy {
 	return &EventProxy{screen: screen, syncEndIndex: -1}
 }
 
-// EmitSyncMarker queues a sync marker for the next Flush. During mode
-// 2026 the marker is held along with the rest of the batch and flushed
-// only after the terminating sequence.
+// EmitSyncMarker queues a sync marker for the next Flush and appends it
+// to the region's permanent sync history. During mode 2026 the marker
+// is held along with the rest of the batch and flushed only after the
+// terminating sequence.
 func (p *EventProxy) EmitSyncMarker(id string) {
 	p.pendingSyncs = append(p.pendingSyncs, id)
+	p.allSyncs = append(p.allSyncs, id)
+}
+
+// AllSyncs returns the full sync marker history for this region. Used
+// by AddSubscriber to deliver backlog along with the initial snapshot.
+func (p *EventProxy) AllSyncs() []string {
+	if len(p.allSyncs) == 0 {
+		return nil
+	}
+	out := make([]string, len(p.allSyncs))
+	copy(out, p.allSyncs)
+	return out
 }
 
 // Flush returns accumulated events, whether a snapshot is needed, and

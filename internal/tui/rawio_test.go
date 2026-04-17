@@ -4,7 +4,45 @@ import (
 	"bytes"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
+
+func TestSplitCompleteOSC2459(t *testing.T) {
+	input := []byte("\x1b]2459;nx;sync;boot\x07")
+	n := splitComplete(input)
+	if n != len(input) {
+		t.Errorf("splitComplete for OSC2459: got %d, want %d", n, len(input))
+	}
+}
+
+func TestDecodeOSC2459(t *testing.T) {
+	input := []byte("\x1b]2459;nx;sync;boot\x07")
+	_, _, n, state := ansi.DecodeSequence(input, ansi.NormalState, nil)
+	t.Logf("decoded n=%d state=%v len=%d", n, state, len(input))
+	if n != len(input) {
+		t.Errorf("DecodeSequence: consumed %d of %d", n, len(input))
+	}
+	if state != ansi.NormalState {
+		t.Errorf("DecodeSequence: state %v, want NormalState", state)
+	}
+}
+
+func TestIsCapabilityResponseOSC2459(t *testing.T) {
+	seq := []byte("\x1b]2459;nx;sync;boot\x07")
+	if isCapabilityResponse(seq) {
+		t.Error("OSC 2459 should NOT be a capability response")
+	}
+}
+
+func TestFilterCapabilityResponsesOSC2459(t *testing.T) {
+	input := []byte("\x1b]2459;nx;sync;boot\x07")
+	var cap bytes.Buffer
+	rest := filterCapabilityResponses(input, &cap)
+	if !bytes.Equal(rest, input) {
+		t.Errorf("filter ate OSC 2459: got rest=%q cap=%q", rest, cap.Bytes())
+	}
+}
 
 // ── isCapabilityResponse ────────────────────────────────────────────────────
 

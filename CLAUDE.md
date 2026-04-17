@@ -96,6 +96,8 @@ TOML configuration. Server: `~/.config/nxtermd/server.toml`. Frontend: `~/.confi
 
 * Check for existing standards before inventing wire formats.
 
+* When adding, removing, or updating an nxterm OSC sequence (OSC 2459 under the `nx` namespace), update `doc/nxterm-osc.md` in the same commit. Include the subcommand name, wire format, parser rules, and a changelog entry.
+
 * Do not commit without allowing the user to review.
 
 * Don't comment code just to describe what it's doing — use descriptive naming. Save comments for intent, purpose, and non-obvious design decisions.

@@ -1258,6 +1258,29 @@ func (p *Program) flush() error {
 	return nil
 }
 
+// Flush synchronously flushes the renderer and output buffer to the
+// program output. Callers that need to write raw bytes after the most
+// recent Render() can use this to guarantee the rendered frame has
+// reached the output before their write.
+func (p *Program) Flush() error {
+	if p.renderer != nil {
+		if err := p.renderer.flush(false); err != nil {
+			return err
+		}
+	}
+	return p.flush()
+}
+
+// Write writes raw bytes directly to the program output, bypassing the
+// renderer. Intended for control sequences (like OSC sync markers)
+// that must appear in the output stream without being parsed as screen
+// content by the renderer.
+func (p *Program) Write(data []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.output.Write(data)
+}
+
 // shutdown performs operations to free up resources and restore the terminal
 // to its original state.
 func (p *Program) shutdown(kill bool) {

@@ -460,7 +460,10 @@ type NativeInput struct {
 // NativeRegionSync tells the server to emit a sync marker into the
 // terminal_events stream for this region, ordered behind any pending
 // output the driver has already sent. Subscribers see the sync marker
-// as a TerminalEvent with Op="sync" and Data=<id>.
+// as a TerminalEvent with Op="sync" and Data=<id>. Markers emitted
+// before any subscriber joins are delivered to each new subscriber
+// along with the initial snapshot, so drivers can sync without having
+// to wait for subscription.
 type NativeRegionSync struct {
 	Type     string `json:"type,omitempty"`
 	RegionID string `json:"region_id"`

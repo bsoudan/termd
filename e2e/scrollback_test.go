@@ -1,12 +1,14 @@
 package e2e
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"nxtermd/internal/nxtest"
 )
 
 func TestScrollbackBuffer(t *testing.T) {
@@ -69,58 +71,59 @@ func TestScrollbackBuffer(t *testing.T) {
 	}
 }
 
+// TestScrollbackNavigation drives scrollback entry, paging, and exit
+// against a native region — no shell, no prompt heuristic, all
+// synchronization via sync markers. Every assertion runs after a
+// Sync() so the TUI is known caught-up; no polling or sleeps.
 func TestScrollbackNavigation(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbnav", "r1", 80, 24)
 
-	// Generate enough output to fill scrollback
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbnav")
+	defer nxterm.Kill()
 
-	// Enter scrollback mode with ctrl+b [
-	nxt.Write([]byte{0x02, '['})
+	// Boot sync: queued before subscribe, delivered to the TUI with
+	// the initial snapshot. Proves the TUI has connected, subscribed,
+	// received the snapshot, and processed it — subsequent output
+	// events will flow as live terminal events and populate the
+	// TUI's scrollback buffer.
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Tab bar should show "scrollback"
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback indicator in tab bar", 5*time.Second)
-
-	// Page up several times to reach early numbers
-	for range 20 {
-		nxt.Write([]byte{0x15}) // ctrl+u = page up
+	// Feed 200 lines — server parses, broadcasts, TUI renders.
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
 	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	// Verify early numbers appear on screen.
-	// Use Fields[0] to ignore the scrollbar column at the right edge.
-	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] { // skip tab bar
-			if fields := strings.Fields(line); len(fields) > 0 {
-				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
-					return true
-				}
+	// Enter scrollback via ctrl+b [
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+
+	// Jump to top of scrollback (g). Early numbers should be visible.
+	nxterm.Write([]byte("g")).Sync("jump to top")
+	requireEarlyNumbersVisible(t, nxterm)
+
+	// Exit scrollback with q.
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
+}
+
+func requireEarlyNumbersVisible(t *testing.T, nxterm *nxtest.T) {
+	t.Helper()
+	screen := nxterm.ScreenLines()
+	for _, line := range screen[1:] {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
+				return
 			}
 		}
-		return false
-	}, "early numbers (1/2/3) visible on screen", 5*time.Second)
-
-	// Exit scrollback with q
-	nxt.Write([]byte("q"))
-
-	// Tab bar should no longer show "scrollback" and prompt should be visible
-	nxt.WaitForScreen(func(lines []string) bool {
-		if strings.Contains(lines[0], "scrollback") {
-			return false
-		}
-		for _, line := range lines {
-			if strings.Contains(line, "nxterm$") {
-				return true
-			}
-		}
-		return false
-	}, "prompt visible, scrollback gone from tab bar", 5*time.Second)
+	}
+	t.Fatalf("expected early numbers (1/2/3) visible, got:\n%s", strings.Join(screen, "\n"))
 }
 
 // TestScrollbackPageUpDown verifies that PageUp and PageDown keys activate

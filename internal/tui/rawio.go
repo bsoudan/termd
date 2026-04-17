@@ -140,7 +140,15 @@ func isCapabilityResponse(seq []byte) bool {
 		return false
 	}
 	switch seq[1] {
-	case 'P', ']': // DCS, OSC — always terminal-generated on input
+	case 'P': // DCS — always terminal-generated on input
+		return true
+	case ']': // OSC — normally terminal-generated, but OSC 2459 is our
+		// test-only sync marker injected by the harness, not a capability
+		// response. Let it flow through to NxtermModel.Update where it
+		// gets stripped from RawInputMsg and converted to SyncMsg.
+		if bytes.HasPrefix(seq[2:], []byte("2459;")) {
+			return false
+		}
 		return true
 	case '[': // CSI — check for private-mode response markers
 		if len(seq) < 4 {

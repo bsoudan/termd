@@ -10,8 +10,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
-	te "nxtermd/pkg/te"
 	"nxtermd/internal/protocol"
+	te "nxtermd/pkg/te"
 )
 
 // modeAltScreenLegacy is the original xterm alternate screen mode (DEC private 47).
@@ -211,7 +211,10 @@ func (t *TerminalLayer) handleTerminalEvents(events []protocol.TerminalEvent) te
 	if t.hscreen == nil {
 		return nil
 	}
-	// Extract sync markers; they are signals, not screen operations.
+	// Extract sync markers: they are test signals, not screen operations.
+	// Each sync is returned as a SyncMsg so the main event loop can
+	// queue the ack and emit it after the next render (before-render
+	// emission loses the ordering against the rendered frame bytes).
 	var syncIDs []string
 	filtered := events[:0]
 	for _, ev := range events {
