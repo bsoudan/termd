@@ -13,60 +13,42 @@ import (
 
 func TestScrollbackBuffer(t *testing.T) {
 	t.Parallel()
-	socketPath, serverCleanup := startServer(t)
-	defer serverCleanup()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	// Spawn a region and generate enough output to fill scrollback
-	regionID := spawnRegion(t, socketPath, "shell")
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbbuf", "r1", 80, 24)
 
-	// Wait for shell prompt
-	nxt := startFrontend(t, socketPath)
-	defer nxt.Kill()
-	nxt.WaitFor("nxterm$",10*time.Second)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbbuf")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Output 200 lines — in a 24-row terminal, early lines scroll off
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$",10*time.Second)
+	// Output 200 lines — in a 24-row terminal, early lines scroll into
+	// the server's scrollback buffer.
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	// Poll scrollback via nxtermctl until early numbers are present.
-	// The server's terminal emulator may still be processing output
-	// even after the frontend shows the prompt.
+	// Now that the sync proves server and client have processed all
+	// output, the scrollback response must contain the expected lines
+	// without polling.
+	out := runNxtermctl(t, socketPath, "region", "scrollback", region.ID())
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	want := []string{"1", "2", "3", "10", "50"}
-	deadline := time.After(10 * time.Second)
-	for {
-		out := runNxtermctl(t, socketPath, "region", "scrollback", regionID)
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-
-		found := make(map[string]bool)
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			for _, w := range want {
-				if trimmed == w {
-					found[w] = true
-				}
-			}
-		}
-		allFound := true
+	found := make(map[string]bool)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
 		for _, w := range want {
-			if !found[w] {
-				allFound = false
-				break
+			if trimmed == w {
+				found[w] = true
 			}
 		}
-		if allFound {
-			return
-		}
-
-		select {
-		case <-deadline:
-			for _, w := range want {
-				if !found[w] {
-					t.Errorf("scrollback missing line %q (got %d lines total)", w, len(lines))
-				}
-			}
-			return
-		default:
-			time.Sleep(50 * time.Millisecond)
+	}
+	for _, w := range want {
+		if !found[w] {
+			t.Errorf("scrollback missing line %q (got %d lines total)", w, len(lines))
 		}
 	}
 }
@@ -130,147 +112,87 @@ func requireEarlyNumbersVisible(t *testing.T, nxterm *nxtest.T) {
 // scrollback mode directly from the terminal (without the prefix key).
 func TestScrollbackPageUpDown(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbpud", "r1", 80, 24)
 
-	// Generate enough output to fill scrollback
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbpud")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Send PageUp (\x1b[5~) — should activate scrollback
-	nxt.Write([]byte("\x1b[5~"))
-
-	// Tab bar should show "scrollback"
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback activated by PageUp", 5*time.Second)
-
-	// Send more PageUp keys to scroll further back.
-	// Small delay so InputParser emits them as separate messages
-	// rather than one large chunk (which costs one render cycle
-	// per sequence in handleFocusInput).
-	for range 20 {
-		nxt.Write([]byte("\x1b[5~"))
-		time.Sleep(5 * time.Millisecond)
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
 	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	// Verify early numbers appear on screen.
-	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] {
-			if fields := strings.Fields(line); len(fields) > 0 {
-				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
-					return true
-				}
-			}
-		}
-		return false
-	}, "early numbers visible via PageUp", 5*time.Second)
+	// PageUp (\x1b[5~) activates scrollback.
+	nxterm.Write([]byte("\x1b[5~")).Sync("pageup to enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
 
-	// Exit scrollback with q
-	nxt.Write([]byte("q"))
+	// More PageUps to reach early numbers.
+	for range 20 {
+		nxterm.Write([]byte("\x1b[5~"))
+	}
+	nxterm.Sync("20x pageup to top")
+	requireEarlyNumbersVisible(t, nxterm)
 
-	nxt.WaitForScreen(func(lines []string) bool {
-		if strings.Contains(lines[0], "scrollback") {
-			return false
-		}
-		for _, line := range lines {
-			if strings.Contains(line, "nxterm$") {
-				return true
-			}
-		}
-		return false
-	}, "prompt visible after scrollback exit", 5*time.Second)
+	// Exit with q.
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 
 	// PageDown should NOT enter scrollback (only scroll-up does).
-	nxt.Write([]byte("\x1b[6~"))
-	time.Sleep(300 * time.Millisecond)
+	nxterm.Write([]byte("\x1b[6~")).Sync("pagedown from live (no-op)")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback not activated by PageDown", 3*time.Second)
-
-	// Re-enter scrollback and verify that paging down to the bottom exits.
-	nxt.Write([]byte("\x1b[5~")) // PageUp to enter
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback re-entered via PageUp", 5*time.Second)
-
-	// Page down past offset 0 — should auto-exit scrollback.
-	nxt.Write([]byte("\x1b[6~")) // PageDown
-	time.Sleep(100 * time.Millisecond)
-
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited by PageDown at bottom", 5*time.Second)
+	// PageUp to re-enter; PageDown past offset 0 should auto-exit.
+	nxterm.Write([]byte("\x1b[5~")).Sync("pageup re-enter")
+	nxterm.RequireTabBarContains("scrollback")
+	nxterm.Write([]byte("\x1b[6~")).Sync("pagedown to auto-exit")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
 func TestScrollbackScrollWheel(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$",10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbwhl", "r1", 80, 24)
 
-	// Generate output that scrolls off screen
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$",10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbwhl")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Send a scroll wheel up event to activate scrollback
-	nxt.Write([]byte(fmt.Sprintf("%c[<64;5;5M", ansi.ESC)))
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	// Wait for scrollback data to arrive (not just mode activation)
-	nxt.WaitForScreen(func(lines []string) bool {
-		// Tab bar should show scrollback with non-zero total
-		return strings.Contains(lines[0], "scrollback") &&
-			!strings.Contains(lines[0], "/0]")
-	}, "scrollback data loaded", 5*time.Second)
+	wheelUp := fmt.Appendf(nil, "%c[<64;5;5M", ansi.ESC)
+
+	// Scroll wheel up activates scrollback with data loaded.
+	nxterm.Write(wheelUp).Sync("wheel up to enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
 
 	// Scroll wheel up to reach early numbers. Each event scrolls ~3 lines;
 	// ~200 lines of scrollback / 3 ≈ 67 events needed.
-	wheelUp := fmt.Sprintf("%c[<64;5;5M", ansi.ESC)
 	for range 70 {
-		nxt.Write([]byte(wheelUp))
-		time.Sleep(5 * time.Millisecond)
+		nxterm.Write(wheelUp)
 	}
-
-	// Verify early numbers appear on screen.
-	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] {
-			if fields := strings.Fields(line); len(fields) > 0 {
-				if fields[0] == "1" || fields[0] == "2" || fields[0] == "3" {
-					return true
-				}
-			}
-		}
-		return false
-	}, "early numbers visible via scroll wheel", 5*time.Second)
+	nxterm.Sync("70x wheel up to top")
+	requireEarlyNumbersVisible(t, nxterm)
 
 	// Scroll wheel down past offset 0 to auto-exit scrollback.
-	// Small delay so InputParser doesn't bundle all events into
-	// one RawInputMsg (which costs one render cycle per sequence
-	// in handleFocusInput).
-	wheelDown := fmt.Sprintf("%c[<65;5;5M", ansi.ESC)
+	wheelDown := fmt.Appendf(nil, "%c[<65;5;5M", ansi.ESC)
 	for range 80 {
-		nxt.Write([]byte(wheelDown))
-		time.Sleep(5 * time.Millisecond)
+		nxterm.Write(wheelDown)
 	}
-
-	// Verify scrollback exited and prompt is visible
-	nxt.WaitForScreen(func(lines []string) bool {
-		if strings.Contains(lines[0], "scrollback") {
-			return false
-		}
-		for _, line := range lines {
-			if strings.Contains(line, "nxterm$") {
-				return true
-			}
-		}
-		return false
-	}, "prompt visible after scroll down exit", 5*time.Second)
+	nxterm.Sync("80x wheel down to auto-exit")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
 // TestScrollbackLiveUpdate verifies that the client's scrollback view
@@ -282,53 +204,45 @@ func TestScrollbackScrollWheel(t *testing.T) {
 // HistoryScreen, new lines should appear automatically.
 func TestScrollbackLiveUpdate(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sblu", "r1", 80, 24)
 
-	// Generate initial output.
-	nxt.Write([]byte("for i in $(seq 1 50); do echo \"FIRST_$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sblu")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Start a delayed background job.
-	nxt.Write([]byte("(sleep 1; for i in $(seq 1 50); do echo \"SECOND_$i\"; done) &\r"))
-	nxt.WaitFor("nxterm$", 5*time.Second)
+	// Initial output: FIRST_1..FIRST_50.
+	var buf bytes.Buffer
+	for i := 1; i <= 50; i++ {
+		fmt.Fprintf(&buf, "FIRST_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed FIRST_1..50")
 
 	// Enter scrollback.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
 
-	screen := nxt.ScreenLines()
-	t.Logf("initial: %s", strings.TrimSpace(screen[0]))
+	// Feed SECOND_1..SECOND_50 while in scrollback — live updates should
+	// land in the client's HistoryScreen.
+	buf.Reset()
+	for i := 1; i <= 50; i++ {
+		fmt.Fprintf(&buf, "SECOND_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed SECOND_1..50 during scrollback")
 
-	// Wait for the SECOND_ output to arrive (background job).
-	nxt.WaitFor("SECOND_50", 10*time.Second)
+	// Go to bottom (offset=0), then scroll up 1 line to view the
+	// scrollback/live boundary.
+	nxterm.Write([]byte("G")).Sync("go to bottom")
+	nxterm.Write([]byte("k")).Sync("up 1 line")
 
-	// While still in scrollback, go to the bottom (offset=0).
-	// In a correct implementation, SECOND_ lines should be visible.
-	nxt.Write([]byte("G")) // end = go to bottom
-	time.Sleep(200 * time.Millisecond)
-
-	screen = nxt.ScreenLines()
-
-	// At offset=0 the screen portion shows the live terminal which has
-	// SECOND_ lines. But scroll up 1 step — now we should see the
-	// transition from scrollback to screen. If the client's snapshot
-	// is stale, there will be a gap or duplicate at the boundary.
-	nxt.Write([]byte("k")) // up 1 line
-	time.Sleep(200 * time.Millisecond)
-
-	screen = nxt.ScreenLines()
-
-	// Collect all visible numbered lines (FIRST_N or SECOND_N).
+	// Collect all visible numbered lines.
+	screen := nxterm.ScreenLines()
 	var visible []string
 	for _, line := range screen[1:] { // skip tab bar
 		trimmed := strings.TrimSpace(line)
-		// Strip scrollbar character from right edge.
 		runes := []rune(trimmed)
 		if len(runes) > 0 {
 			last := runes[len(runes)-1]
@@ -340,13 +254,9 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 			visible = append(visible, trimmed)
 		}
 	}
-
-	// Check for duplicates or non-sequential ordering at the boundary.
-	// In a correct view, the lines should be monotonically ordered with
-	// no repeats. In the buggy view, lines from the stale scrollback
-	// overlap or leave a gap with the live screen content.
 	t.Logf("visible lines at offset=1: %v", visible)
 
+	// No duplicates at the boundary.
 	seen := make(map[string]int)
 	for _, v := range visible {
 		seen[v]++
@@ -358,21 +268,16 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 			hasDuplicate = true
 		}
 	}
-
 	if hasDuplicate {
 		t.Error("scrollback/screen boundary has duplicates — client snapshot is stale")
 	}
 
-	// Also check for gaps: if we see FIRST_N followed by SECOND_M,
-	// there's a missing range of FIRST_ lines between N and 50.
-	lastFirst := 0
-	firstSecond := 0
+	// No gap across the FIRST_→SECOND_ boundary.
+	lastFirst, firstSecond := 0, 0
 	for _, v := range visible {
 		var n int
-		if _, err := fmt.Sscanf(v, "FIRST_%d", &n); err == nil {
-			if n > lastFirst {
-				lastFirst = n
-			}
+		if _, err := fmt.Sscanf(v, "FIRST_%d", &n); err == nil && n > lastFirst {
+			lastFirst = n
 		}
 		if firstSecond == 0 {
 			if _, err := fmt.Sscanf(v, "SECOND_%d", &n); err == nil {
@@ -382,16 +287,10 @@ func TestScrollbackLiveUpdate(t *testing.T) {
 	}
 	if lastFirst > 0 && lastFirst < 50 && firstSecond > 0 {
 		t.Errorf("gap at scrollback/screen boundary: FIRST_ ends at %d (should go to 50), SECOND_ starts at %d", lastFirst, firstSecond)
-		t.Error("client snapshot is stale — lines between FIRST_ and SECOND_ are missing")
 	}
 
-	nxt.Write([]byte("q"))
-	// Wait for scrollback to exit before sending shell commands.
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 5*time.Second)
-	nxt.Write([]byte("wait\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
 // TestScrollbackAfterReconnect verifies that scrollback history from before
@@ -602,28 +501,28 @@ func TestScrollbackWheelAltScreen(t *testing.T) {
 // on the key binding, not the command).
 func TestScrollbackCommandPalette(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbcmd", "r1", 80, 24)
 
-	// Generate scrollback.
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbcmd")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Open command palette (ctrl+b :).
-	nxt.Write([]byte{0x02, ':'})
-	nxt.WaitFor("scroll-up", 5*time.Second)
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
-	// Select scroll-up.
-	nxt.Write([]byte("scroll-up\r"))
-
-	// Scrollback should be active.
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback activated via command palette", 5*time.Second)
-
-	nxt.Write([]byte("q"))
+	// Open command palette (ctrl+b :), type scroll-up, execute.
+	nxterm.Write([]byte{0x02, ':'}).Sync("open command palette")
+	nxterm.WaitFor("scroll-up", 5*time.Second)
+	nxterm.Write([]byte("scroll-up\r")).Sync("execute scroll-up")
+	nxterm.RequireTabBarContains("scrollback")
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
 }
 
 // TestScrollbackDesync verifies that the client's scrollback view stays
@@ -636,105 +535,90 @@ func TestScrollbackCommandPalette(t *testing.T) {
 // scrollback/screen boundary to be wrong.
 func TestScrollbackDesync(t *testing.T) {
 	t.Parallel()
-	socketPath, serverCleanup := startServer(t)
-	defer serverCleanup()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	regionID := spawnRegion(t, socketPath, "shell")
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbdsy", "r1", 80, 24)
 
-	nxt := startFrontend(t, socketPath)
-	defer nxt.Kill()
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbdsy")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	// Initial batch: LINE_1..LINE_100.
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "LINE_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed LINE_1..100")
 
-	// Generate initial output so there's scrollback.
-	nxt.Write([]byte("for i in $(seq 1 100); do echo \"LINE_$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
-
-	// Record server scrollback before.
-	beforeLines := strings.Split(strings.TrimSpace(
-		runNxtermctl(t, socketPath, "region", "scrollback", regionID)), "\n")
-	beforeCount := len(beforeLines)
+	beforeCount := len(strings.Split(strings.TrimSpace(
+		runNxtermctl(t, socketPath, "region", "scrollback", region.ID())), "\n"))
 	t.Logf("server scrollback before: %d lines", beforeCount)
 
-	// Enter scrollback (this fetches the snapshot).
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
+	// Enter then exit scrollback (snapshot taken and discarded).
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 
-	// Exit scrollback — the snapshot is now taken and discarded.
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 3*time.Second)
+	// Second batch: LATE_200..LATE_300 (via driver, while live view).
+	buf.Reset()
+	for i := 200; i <= 300; i++ {
+		fmt.Fprintf(&buf, "LATE_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed LATE_200..300")
 
-	// Generate more output.
-	nxt.Write([]byte("for i in $(seq 200 300); do echo \"LATE_$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
-
-	// Record server scrollback after.
-	afterLines := strings.Split(strings.TrimSpace(
-		runNxtermctl(t, socketPath, "region", "scrollback", regionID)), "\n")
-	afterCount := len(afterLines)
+	afterCount := len(strings.Split(strings.TrimSpace(
+		runNxtermctl(t, socketPath, "region", "scrollback", region.ID())), "\n"))
 	t.Logf("server scrollback after: %d lines", afterCount)
-
-	growth := afterCount - beforeCount
-	if growth <= 0 {
-		t.Fatal("server scrollback did not grow")
+	if afterCount <= beforeCount {
+		t.Fatalf("server scrollback did not grow (before=%d after=%d)", beforeCount, afterCount)
 	}
-	t.Logf("server scrollback grew by %d lines", growth)
 
-	// Re-enter scrollback. A correct implementation would have the
-	// client's local history already containing the new lines (from
-	// replaying terminal_events onto a HistoryScreen). The client
-	// would only need to fetch the gap between its history and the
-	// server's for lines from before the client connected.
-	//
-	// With the current implementation, the client fetches a fresh
-	// snapshot each time — so re-entering works, but while IN
-	// scrollback, the view is frozen. This test verifies the
-	// re-entered view is correct.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback re-entered", 5*time.Second)
-
-	// Scroll up a few pages — LATE_ lines should be near the bottom
-	// of scrollback (they're the most recent output).
+	// Re-enter scrollback; page up some; LATE_ should be visible.
+	nxterm.Write([]byte{0x02, '['}).Sync("re-enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
 	for range 5 {
-		nxt.Write([]byte{0x15}) // ctrl+u
+		nxterm.Write([]byte{0x15}) // ctrl+u
 	}
+	nxterm.Sync("5x page up")
+	requireAnyLineContains(t, nxterm, "LATE_")
 
-	// LATE_ lines should be in the scrollback.
-	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] {
-			if strings.Contains(line, "LATE_") {
-				return true
-			}
-		}
-		return false
-	}, "LATE_ lines in scrollback", 5*time.Second)
-
-	// Scroll all the way to the top to find LINE_1.
+	// Scroll to top; LINE_1 should be visible on screen.
 	for range 30 {
-		nxt.Write([]byte{0x15})
+		nxterm.Write([]byte{0x15})
 	}
+	nxterm.Sync("30x page up to top")
+	requireAnyFieldZeroEquals(t, nxterm, "LINE_1")
 
-	// LINE_1 should be at the top.
-	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "LINE_1" || strings.HasPrefix(trimmed, "LINE_1 ") {
-				return true
-			}
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+}
+
+func requireAnyLineContains(t *testing.T, nxterm *nxtest.T, needle string) {
+	t.Helper()
+	screen := nxterm.ScreenLines()
+	for _, line := range screen[1:] {
+		if strings.Contains(line, needle) {
+			return
 		}
-		return false
-	}, "LINE_1 at top of scrollback", 5*time.Second)
+	}
+	t.Fatalf("expected %q on screen, got:\n%s", needle, strings.Join(screen, "\n"))
+}
 
-	nxt.Write([]byte("q"))
-	nxt.WaitFor("nxterm$", 5*time.Second)
+// requireAnyFieldZeroEquals matches any row whose first whitespace-
+// delimited field equals want. In scrollback mode the top row can
+// interleave content and the status bar, so the tab-bar row (index 0)
+// is included in the scan.
+func requireAnyFieldZeroEquals(t *testing.T, nxterm *nxtest.T, want string) {
+	t.Helper()
+	screen := nxterm.ScreenLines()
+	for _, line := range screen {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == want {
+			return
+		}
+	}
+	t.Fatalf("expected a row with first field %q, got:\n%s", want, strings.Join(screen, "\n"))
 }
 
 // TestScrollbackWheelClamp verifies that scrolling up with the mouse wheel
@@ -743,165 +627,174 @@ func TestScrollbackDesync(t *testing.T) {
 // through a "phantom" distance before the view starts moving.
 func TestScrollbackWheelClamp(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbclmp", "r1", 80, 24)
 
-	// Generate ~100 lines of scrollback.
-	nxt.Write([]byte("seq 1 100\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbclmp")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Enter scrollback via wheel up.
-	wheelUp := fmt.Sprintf("%c[<64;5;5M", ansi.ESC)
-	nxt.Write([]byte(wheelUp))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
-
-	// Scroll up way more than the scrollback contains (~100 lines,
-	// but we send 200 wheel events * 3 lines = 600 lines of scroll).
-	for range 200 {
-		nxt.Write([]byte(wheelUp))
-		time.Sleep(2 * time.Millisecond)
+	// ~100 lines of scrollback.
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
 	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 100 lines")
 
-	// The status bar shows "scrollback [offset/total]". The offset
-	// should be clamped to the total, not inflated past it.
-	nxt.WaitForScreen(func(lines []string) bool {
-		status := lines[0]
-		if !strings.Contains(status, "scrollback") {
-			return false
-		}
-		// Parse "scrollback [N/M]" and verify N <= M.
-		var offset, total int
-		for _, part := range strings.Fields(status) {
-			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-				fmt.Sscanf(part, "[%d/%d]", &offset, &total)
-			}
-		}
-		return total > 0 && offset <= total
-	}, "offset clamped to total", 5*time.Second)
+	// Enter scrollback via wheel up, then scroll way past the top.
+	wheelUp := fmt.Appendf(nil, "%c[<64;5;5M", ansi.ESC)
+	nxterm.Write(wheelUp).Sync("wheel up to enter")
+	for range 200 {
+		nxterm.Write(wheelUp)
+	}
+	nxterm.Sync("200x wheel up (past top)")
+	requireOffsetClampedToTotal(t, nxterm)
 
-	// Now scroll down once — the view should start moving immediately
+	// Single wheel down from the top should move the view immediately
 	// (no phantom distance to burn through).
-	wheelDown := fmt.Sprintf("%c[<65;5;5M", ansi.ESC)
-	nxt.Write([]byte(wheelDown))
-	time.Sleep(100 * time.Millisecond)
+	wheelDown := fmt.Appendf(nil, "%c[<65;5;5M", ansi.ESC)
+	nxterm.Write(wheelDown).Sync("wheel down from clamped top")
+	requireOffsetBelowTotal(t, nxterm)
 
-	// We should still be in scrollback (not auto-exited) since we were
-	// at the top and only scrolled down 3 lines.
-	nxt.WaitForScreen(func(lines []string) bool {
-		status := lines[0]
-		if !strings.Contains(status, "scrollback") {
-			return false
-		}
-		var offset, total int
-		for _, part := range strings.Fields(status) {
-			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-				fmt.Sscanf(part, "[%d/%d]", &offset, &total)
-			}
-		}
-		// After one wheel-down (3 lines) from the top, offset should
-		// be total-3, not still at total.
-		return total > 0 && offset < total
-	}, "offset decreased after one wheel down from top", 5*time.Second)
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
+}
 
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 5*time.Second)
+func parseScrollbackStatus(tabBar string) (offset, total int, ok bool) {
+	if !strings.Contains(tabBar, "scrollback") {
+		return 0, 0, false
+	}
+	for _, part := range strings.Fields(tabBar) {
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			fmt.Sscanf(part, "[%d/%d]", &offset, &total)
+			return offset, total, true
+		}
+	}
+	return 0, 0, false
+}
+
+func requireOffsetClampedToTotal(t *testing.T, nxterm *nxtest.T) {
+	t.Helper()
+	screen := nxterm.ScreenLines()
+	offset, total, ok := parseScrollbackStatus(screen[0])
+	if !ok || total == 0 || offset > total {
+		t.Fatalf("expected offset clamped to total, got tab bar %q (offset=%d total=%d)",
+			screen[0], offset, total)
+	}
+}
+
+func requireOffsetBelowTotal(t *testing.T, nxterm *nxtest.T) {
+	t.Helper()
+	screen := nxterm.ScreenLines()
+	offset, total, ok := parseScrollbackStatus(screen[0])
+	if !ok || total == 0 || offset >= total {
+		t.Fatalf("expected offset < total, got tab bar %q (offset=%d total=%d)",
+			screen[0], offset, total)
+	}
 }
 
 // TestScrollbackRapidEntryExit verifies that rapidly entering and exiting
 // scrollback doesn't cause crashes or leave stale state.
 func TestScrollbackRapidEntryExit(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbrpd", "r1", 80, 24)
 
-	// Generate scrollback.
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbrpd")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
+
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
 	// Rapidly enter and exit scrollback 10 times.
 	for i := range 10 {
-		// Enter with ctrl+b [
-		nxt.Write([]byte{0x02, '['})
-		nxt.WaitForScreen(func(lines []string) bool {
-			return strings.Contains(lines[0], "scrollback")
-		}, fmt.Sprintf("scrollback active (iter %d)", i), 5*time.Second)
-
-		// Scroll up a bit.
-		nxt.Write([]byte{0x15}) // ctrl+u
-		time.Sleep(50 * time.Millisecond)
-
-		// Exit with q.
-		nxt.Write([]byte("q"))
-		nxt.WaitForScreen(func(lines []string) bool {
-			return !strings.Contains(lines[0], "scrollback")
-		}, fmt.Sprintf("scrollback exited (iter %d)", i), 5*time.Second)
+		nxterm.Write([]byte{0x02, '['}).Sync(fmt.Sprintf("enter %d", i))
+		nxterm.RequireTabBarContains("scrollback")
+		nxterm.Write([]byte{0x15}).Sync(fmt.Sprintf("page up %d", i)) // ctrl+u
+		nxterm.Write([]byte("q")).Sync(fmt.Sprintf("exit %d", i))
+		nxterm.RequireTabBarDoesNotContain("scrollback")
 	}
 
-	// After all cycles, verify the terminal is still responsive.
-	nxt.Write([]byte("echo ALIVE\r"))
-	nxt.WaitFor("ALIVE", 5*time.Second)
+	// Verify the terminal is still responsive by feeding more output.
+	region.Output([]byte("ALIVE\r\n")).Sync(nxterm, "post-cycle output")
+	// Region is at the top of live screen; last non-blank row contains ALIVE.
+	screen := nxterm.ScreenLines()
+	foundAlive := false
+	for _, line := range screen[1:] {
+		if strings.Contains(line, "ALIVE") {
+			foundAlive = true
+			break
+		}
+	}
+	if !foundAlive {
+		t.Fatalf("expected ALIVE on screen after 10 cycles, got:\n%s", strings.Join(screen, "\n"))
+	}
 }
 
 // TestScrollbackResize verifies that resizing the terminal while in
 // scrollback mode doesn't corrupt the view or crash.
 func TestScrollbackResize(t *testing.T) {
 	t.Parallel()
-	socketPath, serverCleanup := startServer(t)
-	defer serverCleanup()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt := startFrontend(t, socketPath)
-	defer nxt.Kill()
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbrsz", "r1", 80, 24)
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbrsz")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Generate scrollback.
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
 
 	// Enter scrollback and scroll up.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
-
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
 	for range 10 {
-		nxt.Write([]byte{0x15}) // ctrl+u
+		nxterm.Write([]byte{0x15}) // ctrl+u
 	}
-	time.Sleep(200 * time.Millisecond)
+	nxterm.Sync("10x page up")
 
 	// Resize the terminal while in scrollback.
-	nxt.Resize(120, 40)
-	time.Sleep(500 * time.Millisecond)
-
-	// Should still be in scrollback mode.
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback still active after resize", 5*time.Second)
+	nxterm.Resize(120, 40)
+	nxterm.Sync("resize to 120x40")
+	nxterm.RequireTabBarContains("scrollback")
 
 	// Resize back to original size.
-	nxt.Resize(80, 24)
-	time.Sleep(500 * time.Millisecond)
+	nxterm.Resize(80, 24)
+	nxterm.Sync("resize to 80x24")
 
 	// Exit scrollback.
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited after resize", 5*time.Second)
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 
-	// Terminal should still work.
-	nxt.Write([]byte("echo RESIZE_OK\r"))
-	nxt.WaitFor("RESIZE_OK", 5*time.Second)
+	// Terminal should still work — feed more output and verify visible.
+	region.Output([]byte("RESIZE_OK\r\n")).Sync(nxterm, "post-resize output")
+	screen := nxterm.ScreenLines()
+	foundOK := false
+	for _, line := range screen[1:] {
+		if strings.Contains(line, "RESIZE_OK") {
+			foundOK = true
+			break
+		}
+	}
+	if !foundOK {
+		t.Fatalf("expected RESIZE_OK on screen, got:\n%s", strings.Join(screen, "\n"))
+	}
 }
 
 // TestScrollbackNoGapAfterSync verifies that after the server sync
@@ -970,85 +863,72 @@ func TestScrollbackNoGapAfterSync(t *testing.T) {
 // scrollback mode. Only scroll-up should initiate scrollback.
 func TestScrollbackPageDownNoEntry(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbpdne", "r1", 80, 24)
 
-	// Generate scrollback so there's content to scroll through.
-	nxt.Write([]byte("seq 1 200\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbpdne")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Send PageDown — should NOT activate scrollback.
-	nxt.Write([]byte("\x1b[6~"))
-	time.Sleep(500 * time.Millisecond)
-
-	screen := nxt.ScreenLines()
-	if strings.Contains(screen[0], "scrollback") {
-		t.Error("PageDown should not enter scrollback mode")
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
 	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
+
+	nxterm.Write([]byte("\x1b[6~")).Sync("pagedown from live (no-op)")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
-// TestScrollbackOutputDuringScroll verifies that output arriving while the
-// user is scrolled up in scrollback doesn't corrupt the buffer. The test
-// launches a background job before entering scrollback, scrolls up while
-// output is arriving, waits for it to finish, then scrolls through the
-// entire history checking that numbered lines appear in order without
-// duplicates.
+// TestScrollbackOutputDuringScroll verifies that output arriving while
+// the user is scrolled up in scrollback doesn't corrupt the buffer. A
+// first batch of lines fills the screen; the user enters scrollback
+// and scrolls up; a second batch arrives; then scrolling through the
+// full history verifies lines appear without duplicates or gaps.
 func TestScrollbackOutputDuringScroll(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbods", "r1", 80, 24)
 
-	// Generate initial scrollback.
-	nxt.Write([]byte("for i in $(seq 1 100); do echo \"A$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbods")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Launch a delayed background job that will output while we're in scrollback.
-	nxt.Write([]byte("(sleep 1; for i in $(seq 1 100); do echo \"B$i\"; done) &\r"))
-	nxt.WaitFor("nxterm$", 5*time.Second)
-
-	// Enter scrollback and scroll up.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
-
-	for range 5 {
-		nxt.Write([]byte{0x15}) // ctrl+u
+	// First batch: A1..A100.
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "A%d\r\n", i)
 	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed A1..A100")
 
-	// Wait for the B-lines to arrive. Since we're scrolled up, we can't
-	// see B100 directly. Instead, watch the scrollback total grow — it
-	// increases as terminal events add lines to the HistoryScreen.
-	initialTotal := 0
-	nxt.WaitForScreen(func(lines []string) bool {
-		var offset, total int
-		for _, part := range strings.Fields(lines[0]) {
-			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-				fmt.Sscanf(part, "[%d/%d]", &offset, &total)
-			}
-		}
-		if initialTotal == 0 && total > 0 {
-			initialTotal = total
-		}
-		// Wait for at least 50 new lines to arrive.
-		return total > initialTotal+50
-	}, "scrollback total grew by 50+ lines", 15*time.Second)
+	// Enter scrollback and page up 5 times.
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+	for range 5 {
+		nxterm.Write([]byte{0x15}) // ctrl+u
+	}
+	nxterm.Sync("5x page up")
 
-	// Scroll through the entire scrollback collecting numbered lines.
-	// Go to the top first.
-	nxt.Write([]byte("g")) // home
-	time.Sleep(300 * time.Millisecond)
+	// Second batch arrives while scrolled up.
+	buf.Reset()
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "B%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed B1..B100 during scroll")
+
+	// Jump to top, then page down through everything collecting lines.
+	nxterm.Write([]byte("g")).Sync("jump to top")
 
 	allSeen := make(map[string]int)
-	collectScreen := func() {
-		screen := nxt.ScreenLines()
-		for _, line := range screen[1:] { // skip tab bar
+	collect := func() {
+		screen := nxterm.ScreenLines()
+		for _, line := range screen[1:] {
 			trimmed := strings.TrimSpace(line)
 			runes := []rune(trimmed)
 			if len(runes) > 0 {
@@ -1066,48 +946,25 @@ func TestScrollbackOutputDuringScroll(t *testing.T) {
 			}
 		}
 	}
-
-	// Collect from the top, then page down through everything.
-	// Wait for the offset to decrease after each page down so we don't
-	// collect the same screen twice if the render hasn't caught up yet.
 	readOffset := func() int {
-		screen := nxt.ScreenLines()
-		status := screen[0]
-		for _, part := range strings.Fields(status) {
-			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-				var offset int
-				fmt.Sscanf(part, "[%d/", &offset)
-				return offset
-			}
+		screen := nxterm.ScreenLines()
+		if offset, _, ok := parseScrollbackStatus(screen[0]); ok {
+			return offset
 		}
 		return -1
 	}
-	collectScreen()
-	prevOffset := readOffset()
+
+	collect()
 	for range 30 {
-		nxt.Write([]byte{0x04}) // ctrl+d = page down
-		deadline := time.Now().Add(2 * time.Second)
-		var offset int
-		for time.Now().Before(deadline) {
-			offset = readOffset()
-			if offset != prevOffset {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
+		prev := readOffset()
+		nxterm.Write([]byte{0x04}).Sync("page down") // ctrl+d
+		collect()
+		if readOffset() == prev || readOffset() <= 0 {
+			break
 		}
-		collectScreen()
-		if offset <= 0 {
-			break // at the bottom, no point paging further
-		}
-		prevOffset = offset
 	}
 
-	// Check that few lines appear excessively often. Some overlap is
-	// normal — consecutive page-downs share rows — and under parallel
-	// load an occasional line can appear on an extra page when the scroll
-	// lands on an off-boundary. A real scrollback-duplication bug would
-	// show dozens of lines repeating, so flag only if many lines exceed
-	// a loose per-line threshold.
+	// Few lines should appear excessively. Some overlap is normal.
 	var excessive []string
 	for line, count := range allSeen {
 		if count > 5 {
@@ -1115,11 +972,10 @@ func TestScrollbackOutputDuringScroll(t *testing.T) {
 		}
 	}
 	if len(excessive) > 3 {
-		t.Errorf("%d lines seen >5 times (likely duplicated in scrollback): %v", len(excessive), excessive)
+		t.Errorf("%d lines seen >5 times (likely duplicated): %v", len(excessive), excessive)
 	}
 
-	// Check that A-lines appear in order where we saw them.
-	// Check we found a reasonable number of A and B lines.
+	// Check reasonable coverage of A- and B-lines.
 	aCount, bCount := 0, 0
 	for k := range allSeen {
 		if strings.HasPrefix(k, "A") {
@@ -1130,18 +986,14 @@ func TestScrollbackOutputDuringScroll(t *testing.T) {
 	}
 	t.Logf("found %d A-lines and %d B-lines", aCount, bCount)
 	if aCount < 80 {
-		t.Errorf("only found %d/100 A-lines in scrollback (expected most)", aCount)
+		t.Errorf("only found %d/100 A-lines (expected most)", aCount)
 	}
 	if bCount < 50 {
-		t.Errorf("only found %d/100 B-lines in scrollback (expected many)", bCount)
+		t.Errorf("only found %d/100 B-lines (expected many)", bCount)
 	}
 
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 5*time.Second)
-	nxt.Write([]byte("wait\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
 // TestScrollbackScreenUpdateDuringScroll verifies that a screen_update
@@ -1151,67 +1003,45 @@ func TestScrollbackOutputDuringScroll(t *testing.T) {
 // avoid overlap with the new screen content.
 func TestScrollbackScreenUpdateDuringScroll(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbsud", "r1", 80, 24)
 
-	// Generate initial scrollback.
-	nxt.Write([]byte("for i in $(seq 1 100); do echo \"INIT_$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbsud")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
-	// Enter scrollback and scroll up.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active", 5*time.Second)
-
-	for range 3 {
-		nxt.Write([]byte{0x15}) // ctrl+u
+	// Initial scrollback: INIT_1..100.
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "INIT_%d\r\n", i)
 	}
-	time.Sleep(200 * time.Millisecond)
+	region.Output(buf.Bytes()).Sync(nxterm, "feed INIT_1..100")
 
-	// Record the scrollback total before the screen_update.
-	var totalBefore int
-	screen := nxt.ScreenLines()
-	for _, part := range strings.Fields(screen[0]) {
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
-			fmt.Sscanf(part, "[%d/%d]", new(int), &totalBefore)
-		}
+	// Trigger a mode-2026 synchronized-output burst, which causes the
+	// server to emit a screen_update (snapshot) on sync-mode exit
+	// rather than incremental events.
+	buf.Reset()
+	buf.WriteString("\x1b[?2026h") // begin synchronized output
+	for i := 101; i <= 150; i++ {
+		fmt.Fprintf(&buf, "INIT_%d\r\n", i)
 	}
-	t.Logf("total before trigger: %d", totalBefore)
+	buf.WriteString("\x1b[?2026l") // end — triggers screen_update snapshot
+	region.Output(buf.Bytes()).Sync(nxterm, "feed INIT_101..150 inside mode 2026")
 
-	// Exit scrollback, run a command that triggers mode 2026 sync
-	// (generating a screen_update), then re-enter scrollback.
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 3*time.Second)
+	// Enter scrollback, go to bottom, scroll up one line to view the
+	// history/screen boundary.
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+	nxterm.Write([]byte("G")).Sync("jump to bottom")
+	nxterm.Write([]byte("k")).Sync("up 1 line")
 
-	// Running a command causes bash to redraw the prompt with mode 2026,
-	// generating output that causes terminal_events followed by a
-	// screen_update snapshot.
-	nxt.Write([]byte("for i in $(seq 101 150); do echo \"INIT_$i\"; done\r"))
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
-
-	// Re-enter scrollback.
-	nxt.Write([]byte{0x02, '['})
-	nxt.WaitForScreen(func(lines []string) bool {
-		return strings.Contains(lines[0], "scrollback")
-	}, "scrollback active again", 5*time.Second)
-
-	// Go to bottom (offset=0), then scroll up one line.
-	nxt.Write([]byte("G"))
-	time.Sleep(100 * time.Millisecond)
-	nxt.Write([]byte("k")) // up 1
-	time.Sleep(200 * time.Millisecond)
-
-	// Collect lines at the history/screen boundary.
-	screen = nxt.ScreenLines()
+	// Collect visible INIT_ lines and check for duplicates at the boundary.
+	screen := nxterm.ScreenLines()
 	var visible []string
-	for _, line := range screen[1:] { // skip tab bar
+	for _, line := range screen[1:] {
 		trimmed := strings.TrimSpace(line)
 		runes := []rune(trimmed)
 		if len(runes) > 0 {
@@ -1224,8 +1054,6 @@ func TestScrollbackScreenUpdateDuringScroll(t *testing.T) {
 			visible = append(visible, trimmed)
 		}
 	}
-
-	// Check for duplicates.
 	seen := make(map[string]int)
 	for _, v := range visible {
 		seen[v]++
@@ -1235,11 +1063,8 @@ func TestScrollbackScreenUpdateDuringScroll(t *testing.T) {
 			t.Errorf("duplicate line at history/screen boundary: %q appears %d times", k, count)
 		}
 	}
-
 	t.Logf("visible lines at offset=1: %v", visible)
 
-	nxt.Write([]byte("q"))
-	nxt.WaitForScreen(func(lines []string) bool {
-		return !strings.Contains(lines[0], "scrollback")
-	}, "scrollback exited", 5*time.Second)
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
 }

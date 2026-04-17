@@ -104,6 +104,15 @@ func (t *T) Write(data []byte) *WriteHandle {
 	return &WriteHandle{t: t}
 }
 
+// Sync injects a sync marker without a preceding write and blocks
+// until the TUI has rendered through everything currently queued on
+// stdin. Useful after a loop of Write calls where only the final
+// Sync matters. desc is included in the failure message on timeout.
+func (t *T) Sync(desc string) {
+	t.Helper()
+	(&WriteHandle{t: t}).Sync(desc)
+}
+
 // WriteSync injects an OSC 2459;nx;sync;<id> marker into the TUI's
 // stdin. The rawio path strips it and emits a SyncMsg in the TUI,
 // FIFO-ordered with any other keystrokes sent before it.
