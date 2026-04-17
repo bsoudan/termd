@@ -132,11 +132,14 @@ func TestScrollbackPageUpDown(t *testing.T) {
 	nxterm.Write([]byte("\x1b[5~")).Sync("pageup to enter scrollback")
 	nxterm.RequireTabBarContains("scrollback")
 
-	// More PageUps to reach early numbers.
-	for range 20 {
-		nxterm.Write([]byte("\x1b[5~"))
+	// More PageUps to reach early numbers. Batch with syncs so
+	// InputParser doesn't bundle them into one RawInputMsg.
+	for range 4 {
+		for range 5 {
+			nxterm.Write([]byte("\x1b[5~"))
+		}
+		nxterm.Sync("batch of 5 pageups")
 	}
-	nxterm.Sync("20x pageup to top")
 	requireEarlyNumbersVisible(t, nxterm)
 
 	// Exit with q.
@@ -179,19 +182,25 @@ func TestScrollbackScrollWheel(t *testing.T) {
 	nxterm.RequireTabBarContains("scrollback")
 
 	// Scroll wheel up to reach early numbers. Each event scrolls ~3 lines;
-	// ~200 lines of scrollback / 3 ≈ 67 events needed.
-	for range 70 {
-		nxterm.Write(wheelUp)
+	// ~200 lines of scrollback / 3 ≈ 67 events needed. Batch with syncs
+	// between so InputParser doesn't bundle all events into one
+	// RawInputMsg (focus-input renders once per sequence).
+	for range 7 {
+		for range 10 {
+			nxterm.Write(wheelUp)
+		}
+		nxterm.Sync("batch of 10 wheelups")
 	}
-	nxterm.Sync("70x wheel up to top")
 	requireEarlyNumbersVisible(t, nxterm)
 
 	// Scroll wheel down past offset 0 to auto-exit scrollback.
 	wheelDown := fmt.Appendf(nil, "%c[<65;5;5M", ansi.ESC)
-	for range 80 {
-		nxterm.Write(wheelDown)
+	for range 8 {
+		for range 10 {
+			nxterm.Write(wheelDown)
+		}
+		nxterm.Sync("batch of 10 wheeldowns")
 	}
-	nxterm.Sync("80x wheel down to auto-exit")
 	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
@@ -648,12 +657,20 @@ func TestScrollbackWheelClamp(t *testing.T) {
 	region.Output(buf.Bytes()).Sync(nxterm, "feed 100 lines")
 
 	// Enter scrollback via wheel up, then scroll way past the top.
+	// The original test used a 2ms sleep between events because
+	// InputParser bundles closely-spaced events into one RawInputMsg,
+	// and focus-input handling renders once per sequence — a single
+	// bundled msg advances only one wheel step instead of 200. Send
+	// in small batches with a sync between them so each batch is
+	// its own RawInputMsg.
 	wheelUp := fmt.Appendf(nil, "%c[<64;5;5M", ansi.ESC)
 	nxterm.Write(wheelUp).Sync("wheel up to enter")
-	for range 200 {
-		nxterm.Write(wheelUp)
+	for range 20 {
+		for range 10 {
+			nxterm.Write(wheelUp)
+		}
+		nxterm.Sync("batch of 10 wheelups")
 	}
-	nxterm.Sync("200x wheel up (past top)")
 	requireOffsetClampedToTotal(t, nxterm)
 
 	// Single wheel down from the top should move the view immediately
