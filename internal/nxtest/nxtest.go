@@ -60,6 +60,32 @@ func (t *T) FindOnScreen(needle string) (row, col int) {
 	return FindOnScreen(t.ScreenLines(), needle)
 }
 
+// WriteSync injects an OSC 2459;nx;sync;<id> marker into the TUI's
+// stdin. The rawio path strips it and emits a SyncMsg in the TUI,
+// FIFO-ordered with any other keystrokes sent before it.
+func (t *T) WriteSync(id string) {
+	t.Helper()
+	t.PtyIO.WriteSync(id)
+}
+
+// WaitSync blocks until the TUI emits the matching OSC 2459;nx;ack;<id>
+// on stdout. Calls t.Fatal on timeout. Default timeout is 10s.
+func (t *T) WaitSync(id string) {
+	t.Helper()
+	if err := t.PtyIO.WaitSync(id, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// WaitSyncWithTimeout blocks until the matching ack is seen or timeout
+// expires. Calls t.Fatal on timeout.
+func (t *T) WaitSyncWithTimeout(id string, timeout time.Duration) {
+	t.Helper()
+	if err := t.PtyIO.WaitSync(id, timeout); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Kill forcibly terminates the frontend process.
 // Panics if T was created with New (no frontend).
 func (t *T) Kill() {

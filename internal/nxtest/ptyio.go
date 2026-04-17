@@ -1,6 +1,7 @@
 package nxtest
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +21,12 @@ type PtyIO struct {
 	screen *te.Screen
 	stream *te.Stream
 	mu     sync.Mutex
+
+	// ackMu protects ack state for sync markers (OSC 2459;nx;ack;<id>).
+	ackMu      sync.Mutex
+	ackSeen    map[string]bool
+	ackWaiters map[string]chan struct{}
+	ackPending []byte // carry-over for OSCs split across reads
 }
 
 // NewPtyIO creates a PtyIO that reads from ptmx and maintains a virtual
@@ -44,6 +51,8 @@ func (p *PtyIO) readLoop() {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+
+			p.extractSyncAcks(data)
 
 			p.mu.Lock()
 			p.stream.FeedBytes(data)
@@ -158,3 +167,105 @@ func (p *PtyIO) Write(data []byte) {
 func (p *PtyIO) Ch() <-chan []byte {
 	return p.ch
 }
+
+// WriteSync writes an OSC 2459;nx;sync;<id> marker to the PTY input.
+// rawio in the TUI will strip it and emit a SyncMsg. Pair with
+// WaitSync (on the same id) to block until the TUI has processed all
+// prior stdin input.
+func (p *PtyIO) WriteSync(id string) {
+	p.Write(syncPayload(id))
+}
+
+// WaitSync blocks until the TUI has emitted the ack for id (OSC
+// 2459;nx;ack;<id>) on stdout. Returns an error on timeout.
+func (p *PtyIO) WaitSync(id string, timeout time.Duration) error {
+	p.ackMu.Lock()
+	if p.ackSeen == nil {
+		p.ackSeen = make(map[string]bool)
+	}
+	if p.ackSeen[id] {
+		delete(p.ackSeen, id)
+		p.ackMu.Unlock()
+		return nil
+	}
+	w := make(chan struct{})
+	if p.ackWaiters == nil {
+		p.ackWaiters = make(map[string]chan struct{})
+	}
+	p.ackWaiters[id] = w
+	p.ackMu.Unlock()
+	select {
+	case <-w:
+		return nil
+	case <-time.After(timeout):
+		p.ackMu.Lock()
+		delete(p.ackWaiters, id)
+		p.ackMu.Unlock()
+		return fmt.Errorf("timeout (%v) waiting for sync ack %q", timeout, id)
+	}
+}
+
+// extractSyncAcks scans chunk for OSC 2459;nx;ack;<id>(BEL|ST) markers
+// and releases any matching WaitSync waiters. Handles sequences split
+// across reads by carrying over the tail of unmatched bytes.
+func (p *PtyIO) extractSyncAcks(chunk []byte) {
+	const prefix = "\x1b]2459;nx;ack;"
+	prefixB := []byte(prefix)
+
+	p.ackMu.Lock()
+	combined := append(p.ackPending, chunk...)
+	p.ackPending = nil
+	p.ackMu.Unlock()
+
+	i := 0
+	for i < len(combined) {
+		pi := bytes.Index(combined[i:], prefixB)
+		if pi < 0 {
+			// No more markers — but retain the tail that could start
+			// the prefix next time (up to len(prefix)-1 bytes).
+			if len(combined)-i > len(prefix)-1 {
+				i = len(combined) - (len(prefix) - 1)
+			}
+			p.ackMu.Lock()
+			p.ackPending = append(p.ackPending[:0], combined[i:]...)
+			p.ackMu.Unlock()
+			return
+		}
+		start := i + pi + len(prefixB)
+		end := start
+		for end < len(combined) {
+			if combined[end] == 0x07 {
+				break
+			}
+			if combined[end] == 0x1b && end+1 < len(combined) && combined[end+1] == '\\' {
+				break
+			}
+			end++
+		}
+		if end >= len(combined) {
+			// Truncated — save from prefix start for next read.
+			p.ackMu.Lock()
+			p.ackPending = append(p.ackPending[:0], combined[i+pi:]...)
+			p.ackMu.Unlock()
+			return
+		}
+		id := string(combined[start:end])
+		p.ackMu.Lock()
+		if p.ackSeen == nil {
+			p.ackSeen = make(map[string]bool)
+		}
+		if w, ok := p.ackWaiters[id]; ok {
+			close(w)
+			delete(p.ackWaiters, id)
+		} else {
+			p.ackSeen[id] = true
+		}
+		p.ackMu.Unlock()
+		if combined[end] == 0x07 {
+			i = end + 1
+		} else {
+			i = end + 2
+		}
+	}
+}
+
