@@ -12,23 +12,21 @@ import (
 
 func TestHelpOverlay(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-help", "r1", 80, 24)
+
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-help")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
 	// Open help overlay: ctrl+b ?
-	nxt.Write([]byte{0x02, '?'})
+	nxterm.Write([]byte{0x02, '?'}).Sync("open help overlay")
 
-	// Wait for the help overlay to render with keybinding content.
-	nxt.WaitFor("detach", 5*time.Second)
-
-	lines := nxt.ScreenLines()
-	// First category (main) and its commands should be visible.
-	foundMain := false
-	foundDetach := false
-	foundSession := false
+	lines := nxterm.ScreenLines()
+	foundMain, foundDetach, foundSession := false, false, false
 	for _, line := range lines {
 		if strings.Contains(line, "main") {
 			foundMain = true
@@ -50,9 +48,7 @@ func TestHelpOverlay(t *testing.T) {
 		t.Error("help overlay should show 'session' category")
 	}
 
-	// Close with q.
-	nxt.Write([]byte("q"))
-	nxt.WaitFor("nxterm$", 5*time.Second)
+	nxterm.Write([]byte("q")).Sync("close help overlay")
 }
 
 func TestLogViewerOverlay(t *testing.T) {
@@ -123,47 +119,57 @@ func TestLogViewerOverlay(t *testing.T) {
 
 func TestCommandPalette(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-cmdp", "r1", 80, 24)
+
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-cmdp")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
 	// Open command palette: ctrl+b :
-	nxt.Write([]byte{0x02, ':'})
-
-	// Should show the palette with commands listed.
-	nxt.WaitFor("detach", 5*time.Second)
+	nxterm.Write([]byte{0x02, ':'}).Sync("open command palette")
+	nxterm.WaitFor("detach", 5*time.Second)
 
 	// Type to filter.
-	nxt.Write([]byte("det"))
-	nxt.WaitFor("detach", 5*time.Second)
+	nxterm.Write([]byte("det")).Sync("filter 'det'")
+	nxterm.WaitFor("detach", 5*time.Second)
 
-	// Pressing enter on "detach" should detach.
-	nxt.Write([]byte("\r"))
+	// Pressing enter on "detach" should detach — don't sync after
+	// because detaching exits the TUI and the ack never returns.
+	nxterm.Write([]byte("\r"))
 }
 
 func TestCommandPaletteEsc(t *testing.T) {
 	t.Parallel()
-	nxt := startFrontendShared(t)
-	defer nxt.Kill()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
 
-	nxt.WaitFor("nxterm$", 10*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-cmde", "r1", 80, 24)
+
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-cmde")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
 
 	// Open command palette.
-	nxt.Write([]byte{0x02, ':'})
-	nxt.WaitFor("detach", 5*time.Second)
-	nxt.WaitForSilence(200 * time.Millisecond)
+	nxterm.Write([]byte{0x02, ':'}).Sync("open palette")
+	nxterm.WaitFor("detach", 5*time.Second)
 
-	// Ctrl+G should close the palette (unambiguous single byte,
-	// unlike ESC which requires timeout-based disambiguation).
-	nxt.Write([]byte{0x07})
+	// Ctrl+G closes the palette (unambiguous single byte).
+	nxterm.Write([]byte{0x07}).Sync("close palette via ctrl+g")
 
-	// Should return to normal prompt.
-	nxt.WaitFor("nxterm$", 5*time.Second)
-
-	// Verify palette is gone — type something and it should go to the shell.
-	nxt.Write([]byte("echo PALETTE_CLOSED\r"))
-	nxt.WaitFor("PALETTE_CLOSED", 5*time.Second)
+	// Palette is gone — typed content should reach the region.
+	nxterm.Write([]byte("PALETTE_CLOSED")).Sync("echo after close")
+	// Driver sees the input since no palette is intercepting.
+	select {
+	case data := <-region.Input():
+		if !strings.Contains(string(data), "PALETTE_CLOSED") {
+			t.Fatalf("expected PALETTE_CLOSED in region input, got %q", data)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for input to reach region after palette close")
+	}
 }
