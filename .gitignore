@@ -1,5 +1,5 @@
 .claude-config
 .local
 .claude/worktrees/
-frontend/changelog.txt
+dist/changelog.txt
 
