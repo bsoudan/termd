@@ -260,6 +260,14 @@ func scrollbarGeometry(height, totalLines, offset int) (thumbStart, thumbLen int
 }
 
 func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.Layer {
+	// Render only within the terminal viewport so the tab bar (row 0)
+	// and the status-bar margin row(s) below it remain visible.
+	termY := height - s.term.contentHeight()
+	if termY < 0 {
+		termY = 0
+	}
+	height = s.term.contentHeight()
+
 	history := s.term.ScrollbackLines()
 	screenCells := s.term.ScreenCells()
 	syncBufLen := len(s.syncBuf)
@@ -327,7 +335,7 @@ func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.L
 	}
 
 	if totalLines == 0 {
-		return []*lipgloss.Layer{lipgloss.NewLayer(sb.String())}
+		return []*lipgloss.Layer{lipgloss.NewLayer(sb.String()).Y(termY)}
 	}
 
 	// Scrollbar layer.
@@ -361,8 +369,8 @@ func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.L
 	}
 
 	return []*lipgloss.Layer{
-		lipgloss.NewLayer(sb.String()),
-		lipgloss.NewLayer(bar.String()).X(width - 1).Z(1),
+		lipgloss.NewLayer(sb.String()).Y(termY),
+		lipgloss.NewLayer(bar.String()).X(width - 1).Y(termY).Z(1),
 	}
 }
 

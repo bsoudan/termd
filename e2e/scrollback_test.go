@@ -94,6 +94,60 @@ func TestScrollbackNavigation(t *testing.T) {
 	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
+// TestScrollbackRespectsTabBarAndMargin verifies that when scrollback
+// mode is active, its content renders only inside the terminal
+// viewport — the tab bar (row 0) and the status-bar margin row below
+// it must remain visible, not be overdrawn by scrollback lines.
+func TestScrollbackRespectsTabBarAndMargin(t *testing.T) {
+	t.Parallel()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
+
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbtab", "r1", 80, 24)
+
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbtab")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
+
+	// Feed 200 lines so the scrollback has distinguishable content on
+	// every row of the viewport; without data, an empty scrollback view
+	// would mask the bug.
+	var buf bytes.Buffer
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&buf, "%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed 200 lines")
+
+	// Capture tab-bar row before scrollback for a reference.
+	beforeRow0 := nxterm.ScreenLines()[0]
+	if !strings.Contains(beforeRow0, "<1>") {
+		t.Fatalf("precondition: expected active-tab marker <1> on row 0, got %q", beforeRow0)
+	}
+
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+
+	screen := nxterm.ScreenLines()
+	if len(screen) < 2 {
+		t.Fatalf("expected at least 2 screen rows, got %d", len(screen))
+	}
+
+	// Row 0: the tab label (active-tab marker) must remain visible.
+	if !strings.Contains(screen[0], "<1>") {
+		t.Errorf("scrollback overdrew tab bar: expected row 0 to contain <1>, got %q", screen[0])
+	}
+
+	// Row 1: the status-bar margin row (default statusBarMargin=1)
+	// must remain blank — no scrollback content here.
+	if strings.TrimSpace(screen[1]) != "" {
+		t.Errorf("scrollback overdrew status-bar margin: expected row 1 blank, got %q", screen[1])
+	}
+
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
+}
+
 // TestScrollbackExitOnUnknownKey verifies that pressing any key that
 // isn't a recognized scrollback navigation command exits scrollback
 // mode (the default branch in ScrollbackLayer.handleKey).
