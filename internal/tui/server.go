@@ -26,6 +26,20 @@ type DisconnectedMsg struct {
 // ReconnectedMsg is sent to bubbletea when the connection is restored.
 type ReconnectedMsg struct{}
 
+// PausedMsg is emitted on Lifecycle after the session transitions from
+// running to paused. Informational — the server goroutine has already
+// stopped draining inbound messages.
+type PausedMsg struct{}
+
+// ResumedMsg is emitted on Lifecycle after the session transitions from
+// paused to running.
+type ResumedMsg struct{}
+
+// pauseMsg/resumeMsg are internal — sent through s.ch so the server
+// goroutine toggles its paused state without a shared mutex.
+type pauseMsg struct{}
+type resumeMsg struct{}
+
 // Server owns the client connection and runs as a separate goroutine.
 // Bubbletea and the input loop communicate with it via Send().
 // Inbound protocol messages and lifecycle events are exposed as channels
@@ -39,11 +53,19 @@ type Server struct {
 	// Inbound carries protocol messages from the server, read by the main loop.
 	Inbound chan protocol.Message
 
-	// Lifecycle carries DisconnectedMsg/ReconnectedMsg, read by the main loop.
+	// Lifecycle carries DisconnectedMsg/ReconnectedMsg/PausedMsg/ResumedMsg,
+	// read by the main loop.
 	Lifecycle chan any
 
 	downloadMu sync.Mutex
 	download   *Download // set during client binary download
+
+	// paused is owned exclusively by the server goroutine. It is mutated
+	// only when processing pauseMsg/resumeMsg off s.ch. While true, the
+	// goroutine stops draining inbound messages — TCP backpressure
+	// propagates to the server's writeCh, surfacing the slow-client path.
+	// Survives reconnects intentionally; resume must be explicit.
+	paused bool
 }
 
 func NewServer(bufSize int, processName string) *Server {
@@ -70,6 +92,14 @@ func (s *Server) Send(msg any) {
 	default:
 	}
 }
+
+// Pause asks the server goroutine to stop draining inbound messages.
+// Fire-and-forget; the transition is emitted on Lifecycle as PausedMsg.
+func (s *Server) Pause() { s.Send(pauseMsg{}) }
+
+// Resume asks the server goroutine to resume draining. Fire-and-forget;
+// the transition is emitted on Lifecycle as ResumedMsg.
+func (s *Server) Resume() { s.Send(resumeMsg{}) }
 
 // SetDownload registers or clears the active binary download.
 // When set, dispatchInbound writes chunks directly to the download
@@ -110,10 +140,22 @@ func (s *Server) Run(conn net.Conn, dialFn func() (net.Conn, error)) {
 
 // runConnection processes messages on a single connection until it drops
 // or the send channel closes. Returns true if we should exit entirely.
+//
+// When s.paused is true, the recv case is gated off by leaving its
+// channel variable nil — select on a nil channel blocks forever, so
+// inbound messages queue up in client.Client's internal recvCh. Once
+// that fills, the client's reader blocks and TCP backpressure pushes
+// all the way back to the server's writeCh, which starts dropping
+// broadcasts. That's the test harness signal for slow-client behavior.
 func (s *Server) runConnection(c *client.Client) (exit bool) {
 	recv := c.Recv()
 
 	for {
+		var inbound <-chan protocol.Message
+		if !s.paused {
+			inbound = recv
+		}
+
 		select {
 		case msg, ok := <-s.ch:
 			if !ok {
@@ -122,15 +164,37 @@ func (s *Server) runConnection(c *client.Client) (exit bool) {
 				}
 				return true
 			}
-			s.dispatchOutbound(c, msg)
+			switch msg.(type) {
+			case pauseMsg:
+				if !s.paused {
+					s.paused = true
+					s.emitLifecycle(PausedMsg{})
+				}
+			case resumeMsg:
+				if s.paused {
+					s.paused = false
+					s.emitLifecycle(ResumedMsg{})
+				}
+			default:
+				s.dispatchOutbound(c, msg)
+			}
 
-		case msg, ok := <-recv:
+		case msg, ok := <-inbound:
 			if !ok {
 				c.Close()
 				return false
 			}
 			s.dispatchInbound(msg, recv, s.Inbound)
 		}
+	}
+}
+
+// emitLifecycle pushes a lifecycle event for the main loop to pick up.
+// Non-blocking via the buffered channel; drops silently on shutdown.
+func (s *Server) emitLifecycle(msg any) {
+	select {
+	case s.Lifecycle <- msg:
+	case <-s.done:
 	}
 }
 

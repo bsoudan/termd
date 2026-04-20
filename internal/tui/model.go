@@ -150,6 +150,7 @@ func (m *NxtermModel) View() tea.View {
 
 	// Command mode status comes from NxtermModel (not on the stack).
 	rs.CommandMode = m.commandMode
+	rs.SessionPaused = m.sessionPaused
 	if m.commandMode {
 		if len(m.commandBuffer) > 0 {
 			statusText = "? " + strings.Join(m.commandBuffer, " ")

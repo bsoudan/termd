@@ -302,6 +302,8 @@ func allCommands() []*Command {
 		{Name: "enter-scrollback", Category: "tab", Layer: "session", Description: "enter scrollback mode"},
 		{Name: "refresh-screen", Category: "tab", Layer: "session", Description: "refresh screen"},
 		{Name: "upgrade", Category: "main", Layer: "main", Description: "upgrade server/client"},
+		{Name: "pause-session", Category: "main", Layer: "main", Description: "stop reading from the server (test hook)"},
+		{Name: "resume-session", Category: "main", Layer: "main", Description: "resume reading from the server"},
 	}
 }
 

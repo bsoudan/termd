@@ -447,6 +447,9 @@ func (sm *SessionManagerLayer) Status(rs *RenderState) (string, lipgloss.Style) 
 	if sm.upgradeServerAvail || sm.upgradeClientAvail {
 		text += " | update available (ctrl+b u)"
 	}
+	if rs.SessionPaused {
+		text = "⏸ " + text
+	}
 	return text, style
 }
 

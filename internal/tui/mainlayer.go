@@ -70,6 +70,11 @@ type NxtermModel struct {
 	// before render causes the test harness to see the ack before the
 	// rendered frame, yielding stale ScreenLines() on assertion.
 	pendingSyncAcks []string
+
+	// sessionPaused mirrors the server goroutine's paused state, updated
+	// from PausedMsg/ResumedMsg on srv.Lifecycle. Read from View() via
+	// RenderState.SessionPaused to drive the UI indicators.
+	sessionPaused bool
 }
 
 // AppContext holds application-level metadata and services shared
@@ -241,6 +246,12 @@ func (m *NxtermModel) handleCmd(msg MainCmd) (tea.Msg, tea.Cmd, bool) {
 		return push(NewScrollableLayer("logviewer", m.logRing.String(), true, m.logRing, m.termWidth, m.termHeight))
 	case "show-release-notes":
 		return push(NewScrollableLayer("release notes", strings.TrimRight(m.changelog, "\n"), false, nil, m.termWidth, m.termHeight))
+	case "pause-session":
+		m.server.Pause()
+		return nil, nil, true
+	case "resume-session":
+		m.server.Resume()
+		return nil, nil, true
 	case "upgrade":
 		m.tasks.Run(func(h *layer.Handle[RenderState]) {
 			t := &TermdHandle{Handle: h}
@@ -322,6 +333,12 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 			switch msg := msg.(type) {
 			case DisconnectedMsg:
 				m.reconnectLoop(msg)
+			case PausedMsg:
+				m.sessionPaused = true
+				p.Render()
+			case ResumedMsg:
+				m.sessionPaused = false
+				p.Render()
 			}
 			continue
 		case <-p.Context().Done():
@@ -373,6 +390,12 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 			switch msg := msg.(type) {
 			case DisconnectedMsg:
 				m.reconnectLoop(msg)
+			case PausedMsg:
+				m.sessionPaused = true
+				p.Render()
+			case ResumedMsg:
+				m.sessionPaused = false
+				p.Render()
 			}
 
 		case <-p.Context().Done():
@@ -589,6 +612,17 @@ func (m *NxtermModel) drainUntil(match func(source string, msg any) bool) (any, 
 			}
 
 		case msg := <-m.server.Lifecycle:
+			// Keep sessionPaused mirror current even while drainUntil
+			// is consuming lifecycle events (e.g., during reconnect).
+			// Without this, a Pause issued during reconnect would be
+			// silently dropped by the predicate and the indicator
+			// would stay off.
+			switch msg.(type) {
+			case PausedMsg:
+				m.sessionPaused = true
+			case ResumedMsg:
+				m.sessionPaused = false
+			}
 			m.tasks.CheckFilters(msg)
 			if match("lifecycle", msg) {
 				return msg, nil

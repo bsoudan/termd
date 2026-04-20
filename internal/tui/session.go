@@ -463,7 +463,7 @@ func (s *SessionLayer) View(width, height int, rs *RenderState) []*lipgloss.Laye
 	width = max(width, 80)
 	height = max(height, 24)
 
-	layers := []*lipgloss.Layer{lipgloss.NewLayer(s.renderTabBar(width))}
+	layers := []*lipgloss.Layer{lipgloss.NewLayer(s.renderTabBar(width, rs))}
 
 	termY := 1 + s.statusBarMargin
 	contentHeight := max(height-termY, 1)
@@ -492,8 +492,10 @@ func (s *SessionLayer) View(width, height int, rs *RenderState) []*lipgloss.Laye
 
 // renderTabBar renders the left side of the tab bar with all tabs.
 // Each segment is styled individually so the active tab can be bold
-// while the rest remains faint.
-func (s *SessionLayer) renderTabBar(width int) string {
+// while the rest remains faint. When the session is paused, every tab
+// label is prefixed with ⏸ to make the frozen state obvious regardless
+// of which tab the user is focused on.
+func (s *SessionLayer) renderTabBar(width int, rs *RenderState) string {
 	var sb strings.Builder
 
 	dot := func(bold bool) {
@@ -507,14 +509,19 @@ func (s *SessionLayer) renderTabBar(width int) string {
 	dot(s.activeTab == 0)
 	used := 1
 
+	pausePrefix := ""
+	if rs != nil && rs.SessionPaused {
+		pausePrefix = "⏸"
+	}
+
 	for i, t := range s.tabs {
 		var label string
 		if i == s.activeTab {
-			label = fmt.Sprintf(" <%d> ", i+1)
+			label = fmt.Sprintf(" %s<%d> ", pausePrefix, i+1)
 			sb.WriteString(statusActiveTab.Render(label))
 		} else {
 			name := t.term.Title()
-			label = fmt.Sprintf(" %d:%s ", i+1, truncateTitle(stripEmoji(name), 30))
+			label = fmt.Sprintf(" %s%d:%s ", pausePrefix, i+1, truncateTitle(stripEmoji(name), 30))
 			sb.WriteString(statusFaint.Render(label))
 		}
 		dot(i == s.activeTab || i+1 == s.activeTab)

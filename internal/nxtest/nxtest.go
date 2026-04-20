@@ -88,6 +88,24 @@ func (t *T) WaitForScreen(check func([]string) bool, desc string, timeout time.D
 	return lines
 }
 
+// AssertScreenStays polls the screen over window and fails the test if
+// check ever returns false. Inverse of WaitForScreen: proves a
+// condition holds for a duration rather than eventually becomes true.
+// Useful for negative assertions like "the paused view does not
+// include any new output."
+func (t *T) AssertScreenStays(check func([]string) bool, desc string, window time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		lines := t.ScreenLines()
+		if !check(lines) {
+			t.Fatalf("assertion %q violated during %v window:\n%s",
+				desc, window, strings.Join(lines, "\n"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // FindOnScreen returns the row and column where needle first appears
 // on the current screen, or (-1, -1).
 func (t *T) FindOnScreen(needle string) (row, col int) {
