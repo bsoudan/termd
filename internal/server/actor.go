@@ -545,7 +545,10 @@ func (m resizeMsg) handleRegion(a *regionActor) {
 		m.resp <- err
 		return
 	}
-	a.screen.Resize(int(m.height), int(m.width))
+	// Route through HistoryScreen.Resize so rows that no longer fit on
+	// the shrunken viewport scroll into scrollback instead of being
+	// discarded. Screen.Resize alone DeleteLines-es them into oblivion.
+	a.hscreen.Resize(int(m.height), int(m.width))
 	a.width = int(m.width)
 	a.height = int(m.height)
 	slog.Debug("region resized", "region_id", a.id, "width", m.width, "height", m.height)

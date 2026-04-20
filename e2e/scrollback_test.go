@@ -1042,6 +1042,63 @@ func TestScrollbackResizeDriftOldestReachable(t *testing.T) {
 	nxterm.Write([]byte("q")).Sync("exit scrollback")
 }
 
+// TestScrollbackResizeServerPreservesRows verifies that when the
+// terminal shrinks mid-session, rows that were visible on the old
+// (larger) screen and no longer fit on the new one get pushed into the
+// server's scrollback — not discarded. The server's region actor must
+// route resize through HistoryScreen.Resize; calling Screen.Resize
+// directly DeleteLines-es the top rows into oblivion.
+func TestScrollbackResizeServerPreservesRows(t *testing.T) {
+	t.Parallel()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
+
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbsrvrsz", "r1", 80, 40)
+
+	nxterm := nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 40, "--session", "nxtest-sbsrvrsz")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
+
+	// At 80x40 (contentHeight=38), feed 100 lines. Server scrollback ends
+	// with LINE_1..LINE_63 (37 lines stay on-screen plus the cursor's
+	// blank row).
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "LINE_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed LINE_1..100 at 80x40")
+
+	// Shrink the viewport so the server's region also shrinks. The rows
+	// that used to be visible but no longer fit must scroll into the
+	// server's scrollback rather than vanish.
+	nxterm.Resize(80, 24)
+	nxterm.Sync("resize to 80x24")
+
+	// Query the server directly — does it still remember LINE_64..LINE_79?
+	out := runNxtermctl(t, socketPath, "region", "scrollback", region.ID())
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	seen := make(map[string]bool, len(lines))
+	for _, l := range lines {
+		seen[strings.TrimSpace(l)] = true
+	}
+
+	// LINE_64..LINE_79 sat on the old visible screen (rows ~0..15 of
+	// contentHeight=38) and must now be in server scrollback after the
+	// shrink to contentHeight=22.
+	var missing []string
+	for i := 64; i <= 79; i++ {
+		name := fmt.Sprintf("LINE_%d", i)
+		if !seen[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("server scrollback dropped rows after shrink: missing %v (scrollback has %d lines)",
+			missing, len(lines))
+	}
+}
+
 func requireAnyLineContains(t *testing.T, nxterm *nxtest.T, needle string) {
 	t.Helper()
 	screen := nxterm.ScreenLines()
