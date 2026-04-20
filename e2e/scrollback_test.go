@@ -798,16 +798,21 @@ func TestScrollbackPageUpAltScreen(t *testing.T) {
 	nxt.Write([]byte("seq 1 200\r"))
 	nxt.WaitFor("nxterm$", 10*time.Second)
 
-	// Enter less (alt-screen program).
+	// Enter less (alt-screen program). Waiting for a bare "1" anywhere
+	// on screen isn't safe — the prior `seq 1 200` output left "1" in
+	// the scrollback, and under load that match fires before less has
+	// actually entered alt-screen. Wait instead for "1", "2", "3"
+	// aligned at rows 2, 3, 4 — only less's fresh alt-screen render
+	// produces that specific top-of-view layout.
 	nxt.Write([]byte("seq 1 100 | less\r"))
 	nxt.WaitForScreen(func(lines []string) bool {
-		for _, line := range lines[1:] {
-			if strings.TrimSpace(line) == "1" {
-				return true
-			}
+		if len(lines) < 5 {
+			return false
 		}
-		return false
-	}, "less showing line 1", 5*time.Second)
+		return strings.TrimSpace(lines[2]) == "1" &&
+			strings.TrimSpace(lines[3]) == "2" &&
+			strings.TrimSpace(lines[4]) == "3"
+	}, "less alt-screen showing 1/2/3 at top", 5*time.Second)
 
 	// Send PageUp — should be forwarded to less, NOT enter scrollback.
 	nxt.Write([]byte("\x1b[5~"))
