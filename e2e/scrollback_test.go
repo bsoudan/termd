@@ -816,8 +816,14 @@ func TestScrollbackPageUpAltScreen(t *testing.T) {
 		return !strings.Contains(lines[0], "scrollback")
 	}, "scrollback not activated in alt-screen", 2*time.Second)
 
-	// Quit less.
-	nxt.Write([]byte("q"))
+	// Quit less. WaitFor("nxterm$") alone is unsafe: the old command
+	// line "nxterm$ seq 1 100 | less" stays in the main screen buffer
+	// when less restores it, so WaitFor matches before the \x1b[?1049l
+	// mode reset is applied. Add a stdin sync afterwards so the TUI's
+	// priority-drain of srv.Inbound flushes any pending terminal_events
+	// (including the mode reset) before the ack is emitted — by the
+	// time Sync returns, the TUI's alt-screen flag reflects reality.
+	nxt.Write([]byte("q")).Sync("less exited + mode reset drained")
 	nxt.WaitFor("nxterm$", 5*time.Second)
 
 	// Now pgup SHOULD enter scrollback (no longer in alt-screen).
