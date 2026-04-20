@@ -501,6 +501,12 @@ func walkScrollbackStrict(t *testing.T, nxterm *nxtest.T) map[int]bool {
 	t.Helper()
 	allSeen := make(map[int]bool)
 	step := 0
+	var stepLog []string
+	defer func() {
+		if t.Failed() {
+			t.Logf("walk steps:\n%s", strings.Join(stepLog, "\n"))
+		}
+	}()
 	for {
 		screen := nxterm.ScreenLines()
 		var vals []int
@@ -517,6 +523,9 @@ func walkScrollbackStrict(t *testing.T, nxterm *nxtest.T) map[int]bool {
 			seen[n] = true
 			vals = append(vals, n)
 		}
+		offsetNow := readScrollbackOffset(nxterm)
+		stepLog = append(stepLog, fmt.Sprintf("step %d offset=%d vals=%v",
+			step, offsetNow, vals))
 		for i := 1; i < len(vals); i++ {
 			if vals[i] <= vals[i-1] {
 				t.Errorf("step %d: non-monotonic SEQ order vals[%d]=%d after vals[%d]=%d\nviewport:\n%s",

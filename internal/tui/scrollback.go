@@ -129,6 +129,13 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 			"client_total", s.term.hscreen.TotalAdded(),
 			"server_total", msg.ScrollbackTotal,
 			"sync_buf", len(s.syncBuf))
+		// Client fell behind the server's seq counter — either events
+		// were dropped on a backpressured writeCh, or the server
+		// delivered bulk output as a snapshot (mode 2026, initial
+		// subscribe) rather than per-LF events. Any rows the client
+		// accumulated from events are a subset of the response's range,
+		// so prepending without clearing first would duplicate them.
+		s.term.hscreen.ResetHistory()
 		s.term.hscreen.SetTotalAdded(msg.ScrollbackTotal)
 		if len(s.syncBuf) > 0 {
 			s.term.hscreen.PrependHistory(s.syncBuf)

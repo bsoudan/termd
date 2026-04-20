@@ -762,3 +762,12 @@ func (h *HistoryScreen) resetHistory() {
 	h.history.Bottom.items = nil
 	h.history.Position = h.history.Size
 }
+
+// ResetHistory clears the scrollback buffer without touching TotalAdded.
+// Used by clients that need to rebuild their local history from an
+// authoritative server snapshot (e.g., after detecting they fell behind
+// on terminal_events and the snapshot supersedes whatever rows events
+// populated locally).
+func (h *HistoryScreen) ResetHistory() {
+	h.resetHistory()
+}
