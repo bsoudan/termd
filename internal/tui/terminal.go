@@ -110,6 +110,14 @@ func (t *TerminalLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	case tea.WindowSizeMsg:
 		t.termWidth = msg.Width
 		t.termHeight = msg.Height
+		// Resize the local hscreen in lock-step with the server's
+		// region. Without this the server emits events at the new
+		// height while the client replays them on a buffer still
+		// sized for the old height; scrollback counters drift and
+		// the oldest row can become unreachable in the viewport.
+		if t.hscreen != nil {
+			t.hscreen.Resize(t.contentHeight(), msg.Width)
+		}
 		t.server.Send(protocol.ResizeRequest{
 			RegionID: t.regionID,
 			Width:    uint16(msg.Width),

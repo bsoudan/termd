@@ -982,6 +982,66 @@ func TestScrollbackDesync(t *testing.T) {
 	nxterm.Write([]byte("q")).Sync("exit scrollback")
 }
 
+// TestScrollbackResizeDriftOldestReachable verifies that after resizing
+// the terminal mid-session, the client and server scrollback stay in
+// lock-step and the oldest line remains reachable from the scrollback
+// viewport. The TerminalLayer must resize its local hscreen so it keeps
+// matching the server's region height; otherwise LineFeed events from
+// the server fire scrolls at the wrong row on the client, producing an
+// extra buffered row that pushes startIdx past the oldest history entry
+// when paged to the top.
+func TestScrollbackResizeDriftOldestReachable(t *testing.T) {
+	t.Parallel()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
+
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbdrift", "r1", 80, 40)
+
+	nxterm := nxtest.MustStartFrontend(t, socketPath, testEnv(t), 80, 40, "--session", "nxtest-sbdrift")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
+
+	// First batch at 80x40 (contentHeight=38): scroll-off starts once we
+	// exceed the viewport.
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "LINE_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed LINE_1..100 at 80x40")
+
+	// Shrink to 80x24 (contentHeight=22). Server's region resizes;
+	// without a matching local hscreen resize, the client keeps
+	// replaying events on a 38-row buffer while the server parses at
+	// 22 rows.
+	nxterm.Resize(80, 24)
+	nxterm.Sync("resize to 80x24")
+
+	// Second batch at 80x24: each LATE_ line triggers a scroll on the
+	// server but only some on the client (cursor still has slack in the
+	// client's stale 38-row hscreen).
+	buf.Reset()
+	for i := 200; i <= 300; i++ {
+		fmt.Fprintf(&buf, "LATE_%d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed LATE_200..300 at 80x24")
+
+	// Enter scrollback and scroll to the top.
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+	for range 40 {
+		nxterm.Write([]byte{0x15}) // ctrl+u, more than enough to clamp at top
+	}
+	nxterm.Sync("40x page up to top")
+
+	// At the top, LINE_1 should be visible as the first field of some
+	// row. If the client's hscreen is stale, the viewport's startIdx
+	// can't reach history[0] and LINE_1 stays hidden.
+	requireAnyFieldZeroEquals(t, nxterm, "LINE_1")
+
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+}
+
 func requireAnyLineContains(t *testing.T, nxterm *nxtest.T, needle string) {
 	t.Helper()
 	screen := nxterm.ScreenLines()

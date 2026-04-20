@@ -836,3 +836,82 @@ func (h *HistoryScreen) resetHistory() {
 func (h *HistoryScreen) ResetHistory() {
 	h.resetHistory()
 }
+
+// Resize adjusts the screen to the new dimensions, preserving scrollback
+// history. When shrinking vertically, rows that no longer fit on-screen
+// scroll off the top into history.Top (newest-last), advancing
+// TotalAdded and FirstSeq as if each row had been scrolled off via
+// LineFeed. When growing, blank rows are appended at the bottom. Column
+// changes truncate or pad each visible row.
+//
+// The embedded Screen.Resize() that this type would otherwise inherit
+// calls DeleteLines on shrink, which discards rows — correct for a
+// plain Screen but wrong for HistoryScreen: scrolled-off content must
+// land in scrollback, not be thrown away.
+func (h *HistoryScreen) Resize(lines, columns int) {
+	if lines <= 0 {
+		lines = 1
+	}
+	if columns <= 0 {
+		columns = 1
+	}
+	if h.Buffer == nil {
+		h.Screen.Resize(lines, columns)
+		return
+	}
+	if h.Lines == lines && h.Columns == columns {
+		return
+	}
+
+	// Shrink vertically: top rows scroll into history in oldest-first
+	// order so their seqs remain monotonic.
+	if lines < h.Lines {
+		drop := h.Lines - lines
+		for i := 0; i < drop; i++ {
+			if h.history.Top.append(h.Buffer[i]) {
+				h.history.FirstSeq++
+			}
+			h.history.TotalAdded++
+		}
+		h.Buffer = h.Buffer[drop:]
+		if h.Cursor.Row >= drop {
+			h.Cursor.Row -= drop
+		} else {
+			h.Cursor.Row = 0
+		}
+	}
+
+	// Column changes: truncate or pad each remaining row.
+	if columns != h.Columns {
+		for row := range h.Buffer {
+			if len(h.Buffer[row]) > columns {
+				h.Buffer[row] = h.Buffer[row][:columns]
+			} else if len(h.Buffer[row]) < columns {
+				missing := make([]Cell, columns-len(h.Buffer[row]))
+				for i := range missing {
+					missing[i] = h.defaultCell()
+				}
+				h.Buffer[row] = append(h.Buffer[row], missing...)
+			}
+		}
+	}
+
+	// Grow vertically: append blank rows at the bottom.
+	if lines > h.Lines {
+		for i := 0; i < lines-h.Lines; i++ {
+			h.Buffer = append(h.Buffer, blankLine(columns, h.defaultCell()))
+		}
+	}
+
+	h.Lines = lines
+	h.Columns = columns
+	// Use Screen.SetMargins directly; HistoryScreen.SetMargins runs
+	// beforeEvent which scrolls to the live view and pages history —
+	// unwanted during a resize that's already mutating Buffer shape.
+	h.Screen.SetMargins(0, 0)
+	h.leftMargin = 0
+	if h.Cursor.Col >= columns {
+		h.Cursor.Col = columns - 1
+	}
+	h.markDirtyRange(0, lines-1)
+}
