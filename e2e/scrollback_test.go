@@ -751,16 +751,17 @@ func TestScrollbackAfterReconnectLarge(t *testing.T) {
 		return strings.Contains(lines[0], "scrollback")
 	}, "scrollback active after reconnect", 5*time.Second)
 
-	// Wait for sync to complete — the status bar total should be > 0.
+	// Wait for sync to fully complete — the status bar total must reach
+	// the server's count. Waiting for any positive total races the
+	// "g" keystroke below: if sync chunks are still streaming when we
+	// press g, the jump-to-top fires with scrollbackTotal=(partial
+	// count) and subsequent chunks never retroactively move the offset.
+	// Seq 1..2000 in a 22-row content area evicts the first 20 and
+	// scrolls the rest, producing ~1980 scrollback rows.
 	nxt.WaitForScreen(func(lines []string) bool {
-		// Status shows "scrollback [N/M]" — M should be > 0.
-		status := lines[0]
-		if !strings.Contains(status, "scrollback") {
-			return false
-		}
-		// Check it's not [0/0] or [...]
-		return !strings.Contains(status, "/0]") && !strings.Contains(status, "[...]")
-	}, "scrollback sync complete (non-zero total)", 10*time.Second)
+		_, total, ok := parseScrollbackStatus(lines[0])
+		return ok && total >= 1900
+	}, "scrollback sync reached full total after reconnect", 10*time.Second)
 
 	screen := nxt.ScreenLines()
 	t.Logf("scrollback after sync: %s", strings.TrimSpace(screen[0]))
