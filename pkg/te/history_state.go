@@ -10,6 +10,12 @@ type HistoryState struct {
 	Size        int         `json:"size"`
 	Position    int         `json:"position"`
 	TotalAdded  uint64      `json:"total_added,omitempty"`
+	// FirstSeq is the seq of TopItems[0] (or equal to TotalAdded when
+	// TopItems is empty). Marshalled explicitly so round-trips across
+	// live upgrade don't derive a shifted seq space from buffer length.
+	// Older snapshots that predate this field default to 0 on load; see
+	// UnmarshalState's backfill.
+	FirstSeq uint64 `json:"first_seq,omitempty"`
 }
 
 // MarshalState exports the complete history screen state.
@@ -22,6 +28,7 @@ func (h *HistoryScreen) MarshalState() *HistoryState {
 		Size:        h.history.Size,
 		Position:    h.history.Position,
 		TotalAdded:  h.history.TotalAdded,
+		FirstSeq:    h.history.FirstSeq,
 	}
 }
 
@@ -42,4 +49,11 @@ func (h *HistoryScreen) UnmarshalState(st *HistoryState) {
 	h.history.Size = st.Size
 	h.history.Position = st.Position
 	h.history.TotalAdded = st.TotalAdded
+	h.history.FirstSeq = st.FirstSeq
+	// Backfill for snapshots that predate FirstSeq: derive from the
+	// legacy implicit formula so upgrades from old binaries land in a
+	// consistent state.
+	if st.FirstSeq == 0 && st.TotalAdded > uint64(len(st.TopItems)) {
+		h.history.FirstSeq = st.TotalAdded - uint64(len(st.TopItems))
+	}
 }

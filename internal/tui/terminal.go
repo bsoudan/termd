@@ -177,22 +177,33 @@ func (t *TerminalLayer) handleScreenUpdate(lines []string, cells [][]protocol.Sc
 	// history/screen boundary.
 	var prevHistory [][]te.Cell
 	var prevTotalAdded uint64
+	var prevFirstSeq uint64
 	if t.hscreen != nil {
 		prevHistory = t.hscreen.History()
 		prevTotalAdded = t.hscreen.TotalAdded()
+		prevFirstSeq = t.hscreen.FirstSeq()
 		if serverScrollback > 0 && len(prevHistory) > serverScrollback {
 			prevHistory = prevHistory[:serverScrollback]
 		}
 	}
 	t.hscreen = te.NewHistoryScreen(width, height, 10000)
-	// Preserve client's monotonic row counter across the hscreen reset
-	// so subsequent events continue advancing from the right base. Don't
-	// adopt serverTotal blindly: the client's count reflects which rows
-	// events actually delivered, and overwriting it would misalign the
-	// implicit seqs of preserved scrollback rows.
+	// Preserve the client's seq space across the hscreen recreate so
+	// subsequent events continue advancing from the right base and the
+	// prepended rows keep their original seq labels. Don't adopt
+	// serverTotal blindly: the client's count reflects which rows events
+	// actually delivered, and adopting a newer counter would relabel the
+	// preserved rows (they're still at their original seqs).
 	t.hscreen.SetTotalAdded(prevTotalAdded)
 	if len(prevHistory) > 0 {
 		t.hscreen.PrependHistory(prevHistory)
+		// PrependHistory derives FirstSeq from TotalAdded minus the
+		// number of prepended rows. If the previous scrollback was
+		// larger than what we retained (trimmed to serverScrollback,
+		// or capacity-evicted before the reset), restore the prior
+		// FirstSeq so the retained rows stay labelled with their
+		// original seqs rather than shifted to look contiguous with
+		// TotalAdded.
+		t.hscreen.SetFirstSeq(prevFirstSeq)
 	}
 	_ = serverTotal
 	if len(cells) > 0 {

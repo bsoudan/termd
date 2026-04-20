@@ -104,63 +104,51 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	}
 
 	// All chunks received. Reconcile with local hscreen by absolute
-	// sequence number rather than buffer length.
+	// sequence number.
 	//
-	// Two regimes based on whether the client's monotonic row counter
-	// has caught up to the server's.
+	// Response covers server rows in seq range
+	// [serverTotal-syncBufLen, serverTotal). The client's retained
+	// scrollback covers [FirstSeq(), FirstSeq()+Scrollback()).
 	//
-	// Events-in-sync (clientTotal == serverTotal): client has replayed
-	// every row the server has added. The response covers server rows
-	// in seq range [serverTotal - syncBuf, serverTotal); the client's
-	// scrollback covers [clientTotal - Scrollback(), clientTotal).
-	// Prepend only rows older than the client's oldest —
-	// [responseFirstSeq, clientFirstSeq). When the ranges coincide the
-	// prefix is empty, so no duplication from the race.
+	// If the client missed events or received them as a snapshot
+	// (mode 2026, initial subscribe), its TotalAdded has fallen behind
+	// ScrollbackTotal. In that case we discard the event-derived subset
+	// — it overlaps the response's range and prepending on top of it
+	// would duplicate rows — and adopt the response as the authority.
+	// After the reset, the retained range is empty; the subsequent
+	// prepend fills it entirely from the response.
 	//
-	// Client-behind (clientTotal < serverTotal): the server delivered
-	// output as a screen snapshot (bulk output, mode 2026, or initial
-	// subscribe) rather than individual LF events, so the client's
-	// TotalAdded counter never advanced. The response IS the
-	// authoritative scrollback; prepend it all and adopt the server's
-	// counter. Any existing local scrollback (from a prior reconnect
-	// preserve) is older-seq than the response and stays on top.
+	// When events are in sync, only fill the front gap: prepend the
+	// portion of the response older than the client's current FirstSeq.
+	// Either way, a single PrependHistory call completes the merge.
+	responseFirstSeq := int64(msg.ScrollbackTotal) - int64(len(s.syncBuf))
 	if s.term.hscreen.TotalAdded() < msg.ScrollbackTotal {
 		slog.Debug("scrollback sync: client behind, rebuilding from response",
 			"client_total", s.term.hscreen.TotalAdded(),
 			"server_total", msg.ScrollbackTotal,
+			"client_scrollback", s.term.hscreen.Scrollback(),
 			"sync_buf", len(s.syncBuf))
-		// Client fell behind the server's seq counter — either events
-		// were dropped on a backpressured writeCh, or the server
-		// delivered bulk output as a snapshot (mode 2026, initial
-		// subscribe) rather than per-LF events. Any rows the client
-		// accumulated from events are a subset of the response's range,
-		// so prepending without clearing first would duplicate them.
 		s.term.hscreen.ResetHistory()
 		s.term.hscreen.SetTotalAdded(msg.ScrollbackTotal)
-		if len(s.syncBuf) > 0 {
-			s.term.hscreen.PrependHistory(s.syncBuf)
-		}
-	} else {
-		responseFirstSeq := int64(msg.ScrollbackTotal) - int64(len(s.syncBuf))
-		clientFirstSeq := int64(s.term.hscreen.TotalAdded()) - int64(s.term.hscreen.Scrollback())
-		prependCount := int(clientFirstSeq - responseFirstSeq)
-		if prependCount < 0 {
-			prependCount = 0
-		}
-		if prependCount > len(s.syncBuf) {
-			prependCount = len(s.syncBuf)
-		}
-		slog.Debug("scrollback sync complete",
-			"server_total", msg.ScrollbackTotal,
-			"sync_buf", len(s.syncBuf),
-			"response_first_seq", responseFirstSeq,
-			"client_total", s.term.hscreen.TotalAdded(),
-			"client_scrollback", s.term.hscreen.Scrollback(),
-			"client_first_seq", clientFirstSeq,
-			"prepend", prependCount)
-		if prependCount > 0 {
-			s.term.hscreen.PrependHistory(s.syncBuf[:prependCount])
-		}
+	}
+	clientFirstSeq := int64(s.term.hscreen.FirstSeq())
+	prependCount := int(clientFirstSeq - responseFirstSeq)
+	if prependCount < 0 {
+		prependCount = 0
+	}
+	if prependCount > len(s.syncBuf) {
+		prependCount = len(s.syncBuf)
+	}
+	slog.Debug("scrollback sync complete",
+		"server_total", msg.ScrollbackTotal,
+		"sync_buf", len(s.syncBuf),
+		"response_first_seq", responseFirstSeq,
+		"client_total", s.term.hscreen.TotalAdded(),
+		"client_first_seq", clientFirstSeq,
+		"client_scrollback", s.term.hscreen.Scrollback(),
+		"prepend", prependCount)
+	if prependCount > 0 {
+		s.term.hscreen.PrependHistory(s.syncBuf[:prependCount])
 	}
 	s.syncBuf = nil
 	s.synced = true

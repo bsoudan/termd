@@ -7,15 +7,20 @@ type historyDeque struct {
 	max   int
 }
 
-func (d *historyDeque) append(line []Cell) {
+// append adds line to the end. Returns true if an existing row was evicted
+// from the front because the deque was at capacity — callers that track
+// seq numbers (Top deque in HistoryScreen) bump FirstSeq on eviction.
+func (d *historyDeque) append(line []Cell) (evicted bool) {
 	if d.max == 0 {
-		return
+		return false
 	}
 	if len(d.items) == d.max {
 		d.items = d.items[1:]
+		evicted = true
 	}
 	copyLine := append([]Cell(nil), line...)
 	d.items = append(d.items, copyLine)
+	return evicted
 }
 
 func (d *historyDeque) prepend(line []Cell) {
@@ -48,17 +53,35 @@ func (d *historyDeque) popLeft() []Cell {
 }
 
 // History holds scrollback buffers and paging state.
+//
+// Seq-space model: each row ever appended to Top via LineFeed gets a
+// monotonically increasing seq number. TotalAdded is the exclusive upper
+// bound ("next seq"), so a just-pushed row has seq = TotalAdded - 1.
+// FirstSeq is the seq of Top.items[0] — the oldest retained row.
+//
+// Invariant after every mutation via indexInternal/PrependHistory/
+// ResetHistory/SetTotalAdded: Top.items covers exactly the seq range
+// [FirstSeq, FirstSeq + len(Top.items)), and that range lies within
+// [FirstSeq, TotalAdded]. When the retained range is contiguous with
+// TotalAdded, TotalAdded - FirstSeq == len(Top.items); a gap on the
+// newer end is possible after SetTotalAdded jumps (snapshot-delivery
+// paths) but gets filled by subsequent PrependHistory or event replay.
 type History struct {
 	Top      historyDeque
 	Bottom   historyDeque
 	Ratio    float64
 	Size     int
 	Position int
-	// TotalAdded is a monotonic count of rows ever appended to Top
-	// (never decreases, even when rows evict). Used by clients/servers
-	// to reconcile scrollback state by absolute sequence number rather
-	// than buffer length.
+	// TotalAdded is the exclusive upper bound of the seq space: it
+	// monotonically increases by one on each LineFeed that scrolls a
+	// row off the visible screen into Top.
 	TotalAdded uint64
+	// FirstSeq is the seq of Top.items[0]. When Top is empty, FirstSeq
+	// equals TotalAdded. Tracked explicitly so row seqs stay stable
+	// across SetTotalAdded jumps and PrependHistory calls, rather than
+	// being derived from TotalAdded - len(Top.items) which shifts
+	// whenever either side changes independently.
+	FirstSeq uint64
 }
 
 // HistoryScreen wraps Screen to maintain scrollback history.
@@ -638,7 +661,9 @@ func (h *HistoryScreen) ReverseIndex() {
 func (h *HistoryScreen) indexInternal() {
 	top, bottom := h.scrollRegion()
 	if h.Cursor.Row == bottom {
-		h.history.Top.append(h.Buffer[top])
+		if h.history.Top.append(h.Buffer[top]) {
+			h.history.FirstSeq++
+		}
 		h.history.TotalAdded++
 	}
 	h.Screen.Index()
@@ -697,7 +722,11 @@ func (h *HistoryScreen) NextPage() {
 	if h.history.Position < h.history.Size && len(h.history.Bottom.items) > 0 {
 		mid := minInt(len(h.history.Bottom.items), int(math.Ceil(float64(h.Lines)*h.history.Ratio)))
 		for row := 0; row < mid; row++ {
-			h.history.Top.append(h.Buffer[row])
+			if h.history.Top.append(h.Buffer[row]) {
+				// Paging beyond cap: an oldest row leaves the retained
+				// range. Keep FirstSeq aligned with Top.items[0]'s seq.
+				h.history.FirstSeq++
+			}
 		}
 		h.history.Position += mid
 		for row := 0; row < h.Lines-mid; row++ {
@@ -725,42 +754,78 @@ func (h *HistoryScreen) Scrollback() int {
 	return len(h.history.Top.items)
 }
 
-// TotalAdded returns the monotonic count of rows ever appended to the
-// scrollback (never decreases even when rows evict). Paired with
-// Scrollback() it yields the absolute-sequence range of rows currently
-// retained: [TotalAdded()-uint64(Scrollback()), TotalAdded()).
+// TotalAdded returns the exclusive upper bound of the scrollback seq
+// space: the seq of the next row to be pushed, equivalently
+// (seq of newest retained row) + 1 when the retained range is
+// contiguous with the upper bound.
 func (h *HistoryScreen) TotalAdded() uint64 {
 	return h.history.TotalAdded
 }
 
-// SetTotalAdded assigns the monotonic counter. Used by clients to adopt
-// the server's value on connect or ScreenUpdate, so client-side event
-// replay advances the same seq space.
+// FirstSeq returns the seq of Top.items[0] — the oldest retained
+// scrollback row. When Top is empty, FirstSeq == TotalAdded.
+func (h *HistoryScreen) FirstSeq() uint64 {
+	return h.history.FirstSeq
+}
+
+// SetFirstSeq overrides FirstSeq explicitly. Callers that carry a
+// retained scrollback range across a hscreen recreate (e.g., the
+// TUI's handleScreenUpdate preserving history across a mode-2026
+// snapshot) use this to keep row labels stable when the count of
+// retained rows changed (trim/eviction) independently of the seq
+// advance.
+func (h *HistoryScreen) SetFirstSeq(n uint64) {
+	h.history.FirstSeq = n
+}
+
+// SetTotalAdded jumps the seq-space upper bound. Intended for clients
+// adopting the server's counter on snapshot-delivery paths
+// (handleScreenUpdate, client-behind rebuild in scrollback sync).
+// FirstSeq is NOT moved: the existing retained rows keep their
+// original seqs, so a gap [FirstSeq+Scrollback, n) can appear and
+// gets filled later by PrependHistory or event replay. When Top is
+// empty, FirstSeq advances to n to preserve FirstSeq == TotalAdded.
 func (h *HistoryScreen) SetTotalAdded(n uint64) {
 	h.history.TotalAdded = n
+	if len(h.history.Top.items) == 0 {
+		h.history.FirstSeq = n
+	}
 }
 
 // PrependHistory inserts lines at the beginning of the scrollback buffer.
 // Used to sync older history from the server that the client missed.
 // Lines are inserted in order: lines[0] becomes the oldest line.
+//
+// Capacity: if len(lines) + existing would exceed Top.max, the oldest
+// rows of `lines` are dropped (existing rows are preserved — they are
+// newer and assumed more relevant). FirstSeq decreases by exactly the
+// number of lines that made it into Top.
 func (h *HistoryScreen) PrependHistory(lines [][]Cell) {
 	if len(lines) == 0 {
 		return
 	}
-	// Prepend to Top.items, respecting the max capacity.
-	combined := make([][]Cell, 0, len(lines)+len(h.history.Top.items))
-	combined = append(combined, lines...)
-	combined = append(combined, h.history.Top.items...)
-	if len(combined) > h.history.Top.max {
-		combined = combined[len(combined)-h.history.Top.max:]
+	existing := len(h.history.Top.items)
+	room := h.history.Top.max - existing
+	if room < 0 {
+		room = 0
 	}
+	kept := len(lines)
+	if kept > room {
+		kept = room
+	}
+	combined := make([][]Cell, 0, kept+existing)
+	combined = append(combined, lines[len(lines)-kept:]...)
+	combined = append(combined, h.history.Top.items...)
 	h.history.Top.items = combined
+	h.history.FirstSeq -= uint64(kept)
 }
 
 func (h *HistoryScreen) resetHistory() {
 	h.history.Top.items = nil
 	h.history.Bottom.items = nil
 	h.history.Position = h.history.Size
+	// Empty Top → FirstSeq collapses to TotalAdded.
+	h.history.FirstSeq = h.history.TotalAdded
 }
 
 // ResetHistory clears the scrollback buffer without touching TotalAdded.
