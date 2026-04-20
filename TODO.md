@@ -32,6 +32,20 @@ Also resolves items #1 and #2 in `scrollback-todo.md` (unify the two sync regime
 
 `internal/config/` parses TOML into typed structs but performs no constraint validation. Invalid listen addresses, negative timeouts, and other bad values pass silently. Add a validation pass after parsing that checks constraints and returns actionable errors.
 
+## Alt-screen scrolls contaminate main-screen scrollback
+
+`HistoryScreen.indexInternal` (pkg/te/history_screen.go:661) appends `h.Buffer[top]` to `h.history.Top` on every scroll-off, regardless of `altActive`. `Screen.enterAltScreen` swaps `Buffer`/`altBuffer` but leaves `history.Top` untouched (it lives on `HistoryScreen`, not `Screen`), so once alt screen is active the "scrolling off the top" path pushes *alt-buffer* rows into the shared main-screen history. Apps that scroll in alt screen (`less`, paged `man`, some TUI log viewers) leak rows; apps that absolutely-position (`vim`, `htop`) mostly don't.
+
+The TUI's `scroll-up` keybinding is gated on `normal-screen` (internal/tui/session.go:447), so the user can't *enter* the scrollback viewer while in alt screen — that masks the symptom until they exit back to the main screen. `nxtermctl region scrollback` has no such guard and returns the polluted history any time.
+
+`HistoryScreen.Resize` (added in `0a589a4`) inherits the same bug: shrinking while alt screen is active pushes rows from the alt buffer into `history.Top`.
+
+Fix approach:
+
+- Gate `history.Top.append` + `TotalAdded` / `FirstSeq` mutations in `indexInternal` on `!h.altActive`.
+- Gate the shrink branch of `HistoryScreen.Resize` the same way.
+- Cover with an e2e test: run `seq 1 200 | less`, quit, then assert the server's scrollback (via `nxtermctl region scrollback`) only contains the pre-`less` output — no `less`-rendered rows leaked in.
+
 ## Reflow wrapped lines on resize
 
 `HistoryScreen.Resize` (and the embedded `Screen.Resize`) truncates rows wider than the new width and clears `lineWrapped`. A wrapped logical line — e.g. "HELLOWORLD" that autowrapped "HELLO" / "WORLD" across two rows at width 5 — stays as two disjoint rows after growing to width 10, instead of joining back into one row. Shrinking has the inverse problem: a single row wider than the new width gets truncated rather than spilling into a continuation row.
