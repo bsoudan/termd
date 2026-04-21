@@ -6,8 +6,11 @@ package nxtest
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -39,8 +42,51 @@ func (w *WriteHandle) Sync(desc string) {
 	id := nextSyncID()
 	w.t.PtyIO.WriteSync(id)
 	if err := w.t.PtyIO.WaitSync(id, 10*time.Second); err != nil {
-		w.t.Fatalf("sync %q: %v", desc, err)
+		w.t.Fatalf("sync %q: %v%s%s",
+			desc, err, w.t.canarySync(), w.t.dumpFrontendStack())
 	}
+}
+
+// canarySync issues a follow-up sync marker after a timeout to check
+// whether the TUI is still alive and processing input. If the canary
+// succeeds quickly, the original marker was lost (stalled upstream of
+// the ack path); if the canary also times out, the TUI is genuinely
+// stuck.
+func (t *T) canarySync() string {
+	id := nextSyncID()
+	t.PtyIO.WriteSync(id)
+	if err := t.PtyIO.WaitSync(id, 2*time.Second); err != nil {
+		return fmt.Sprintf("\n  canary sync %s: ALSO timed out — TUI appears stuck", id)
+	}
+	return fmt.Sprintf("\n  canary sync %s: succeeded — original marker was lost before ack", id)
+}
+
+// dumpFrontendStack sends SIGUSR1 to the frontend process (nxterm) and
+// reads back the stack-dump file written by InstallStackDump. Returns
+// a formatted block for inclusion in timeout errors. Returns an empty
+// string if no frontend is attached (e.g., bare PtyIO tests).
+func (t *T) dumpFrontendStack() string {
+	if t.Frontend == nil || t.Frontend.Cmd == nil || t.Frontend.Cmd.Process == nil {
+		return ""
+	}
+	pid := t.Frontend.Cmd.Process.Pid
+	if err := t.Frontend.Cmd.Process.Signal(syscall.SIGUSR1); err != nil {
+		return fmt.Sprintf("\n  stack dump: SIGUSR1 failed: %v", err)
+	}
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("nxterm-%d.stack", pid))
+	// Give the signal handler a moment to write the file.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				break
+			}
+			return fmt.Sprintf("\n  stack dump (%s):\n%s", path, string(data))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Sprintf("\n  stack dump: %s not written after SIGUSR1", path)
 }
 
 // T wraps a testing.T and a PtyIO (and optionally a Frontend) so that

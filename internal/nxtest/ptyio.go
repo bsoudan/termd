@@ -16,8 +16,17 @@ import (
 // wait for specific output and send input. It maintains a go-te virtual
 // screen that interprets ANSI escape sequences.
 type PtyIO struct {
-	ptmx   *os.File
-	ch     chan []byte
+	ptmx *os.File
+	// ch is a coalesced edge-triggered wake-up channel. Cap 1: a send
+	// either deposits a pending wake-up or no-ops when one already
+	// exists. Consumers read at most one notification per drained
+	// cycle and re-check state (the virtual screen / ackSeen) from
+	// authoritative fields — the signal itself carries no payload.
+	// This decouples readLoop throughput from consumer attention: a
+	// flood of PTY chunks never stalls readLoop, yet consumers can't
+	// miss a state change because ch holds at least one pending
+	// wake-up whenever a chunk arrived after their last read.
+	ch     chan struct{}
 	screen *te.Screen
 	stream *te.Stream
 	mu     sync.Mutex
@@ -27,6 +36,13 @@ type PtyIO struct {
 	ackSeen    map[string]bool
 	ackWaiters map[string]chan struct{}
 	ackPending []byte // carry-over for OSCs split across reads
+
+	// Diagnostic state. Guarded by ackMu for convenience — all the
+	// read-path writers hold it already when updating. diagLastRead is
+	// the monotonic time of the last non-empty PTY read; diagLastChunk
+	// is the tail of that read (up to 256 bytes) for on-failure dumps.
+	diagLastRead  time.Time
+	diagLastChunk []byte
 }
 
 // NewPtyIO creates a PtyIO that reads from ptmx and maintains a virtual
@@ -36,7 +52,7 @@ func NewPtyIO(ptmx *os.File, cols, rows int) *PtyIO {
 	stream := te.NewStream(screen, false)
 	p := &PtyIO{
 		ptmx:   ptmx,
-		ch:     make(chan []byte, 256),
+		ch:     make(chan struct{}, 1),
 		screen: screen,
 		stream: stream,
 	}
@@ -64,9 +80,28 @@ func (p *PtyIO) readLoop() {
 			p.stream.FeedBytes(data)
 			p.mu.Unlock()
 
+			p.ackMu.Lock()
+			p.diagLastRead = time.Now()
+			tail := data
+			if len(tail) > 256 {
+				tail = tail[len(tail)-256:]
+			}
+			p.diagLastChunk = append(p.diagLastChunk[:0], tail...)
+			p.ackMu.Unlock()
+
 			p.extractSyncAcks(data)
 
-			p.ch <- data
+			// Coalesced non-blocking signal: deposit a pending
+			// wake-up, or no-op if one is already queued. The
+			// consumer can't miss a chunk — at least one wake-up is
+			// pending whenever new data arrived after their last
+			// read — and readLoop is never throttled by consumer
+			// attention, so the PTY buffer can't back up and strand
+			// subsequent bytes (including ack markers).
+			select {
+			case p.ch <- struct{}{}:
+			default:
+			}
 		}
 		if err != nil {
 			close(p.ch)
@@ -170,9 +205,11 @@ func (p *PtyIO) Write(data []byte) {
 	p.ptmx.Write(data)
 }
 
-// Ch returns the channel that receives PTY output chunks.
-// The channel is closed when the PTY read loop exits (e.g. process exited).
-func (p *PtyIO) Ch() <-chan []byte {
+// Ch returns the edge-triggered wake-up channel. A receive means
+// "new PTY data has arrived since the last receive" — re-read the
+// virtual screen for authoritative state. The channel is closed
+// when the PTY read loop exits (e.g., process exited).
+func (p *PtyIO) Ch() <-chan struct{} {
 	return p.ch
 }
 
@@ -185,7 +222,11 @@ func (p *PtyIO) WriteSync(id string) {
 }
 
 // WaitSync blocks until the TUI has emitted the ack for id (OSC
-// 2459;nx;ack;<id>) on stdout. Returns an error on timeout.
+// 2459;nx;ack;<id>) on stdout. Returns an error on timeout. On
+// timeout the error includes diagnostic state: when the PTY was last
+// read, the tail of that read, the number of pending ack waiters, and
+// any buffered ack-prefix bytes — enough to distinguish a stalled TUI
+// from a lost ack.
 func (p *PtyIO) WaitSync(id string, timeout time.Duration) error {
 	p.ackMu.Lock()
 	if p.ackSeen == nil {
@@ -208,9 +249,41 @@ func (p *PtyIO) WaitSync(id string, timeout time.Duration) error {
 	case <-time.After(timeout):
 		p.ackMu.Lock()
 		delete(p.ackWaiters, id)
+		pendingWaiters := len(p.ackWaiters)
+		pendingAckBytes := len(p.ackPending)
+		ackPendingPreview := hexPreview(p.ackPending)
+		lastRead := p.diagLastRead
+		lastChunkPreview := hexPreview(p.diagLastChunk)
 		p.ackMu.Unlock()
-		return fmt.Errorf("timeout (%v) waiting for sync ack %q", timeout, id)
+		sinceLast := "never"
+		if !lastRead.IsZero() {
+			sinceLast = time.Since(lastRead).String()
+		}
+		return fmt.Errorf(
+			"timeout (%v) waiting for sync ack %q\n"+
+				"  last pty read: %s ago\n"+
+				"  last chunk tail (%d bytes): %s\n"+
+				"  ack waiters remaining: %d\n"+
+				"  ackPending buffer (%d bytes): %s",
+			timeout, id, sinceLast, len(lastChunkPreview)/3, lastChunkPreview,
+			pendingWaiters, pendingAckBytes, ackPendingPreview)
 	}
+}
+
+// hexPreview renders a byte slice as space-separated two-digit hex for
+// diagnostic output. Returns "empty" for zero-length input.
+func hexPreview(b []byte) string {
+	if len(b) == 0 {
+		return "empty"
+	}
+	var sb strings.Builder
+	for i, c := range b {
+		if i > 0 {
+			sb.WriteByte(' ')
+		}
+		fmt.Fprintf(&sb, "%02x", c)
+	}
+	return sb.String()
 }
 
 // extractSyncAcks scans chunk for OSC 2459;nx;ack;<id>(BEL|ST) markers
