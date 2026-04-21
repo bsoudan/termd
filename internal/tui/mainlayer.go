@@ -321,6 +321,21 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 	const serverWorkBudget = 2048
 	eventBudget := serverWorkBudget
 
+	// dirty tracks whether any state change since the last render needs
+	// to reach the screen. p.Render() rebuilds the whole view tree, so
+	// calling it once per priority-drain cycle (instead of per message)
+	// keeps view-build cost bounded when a flood produces many small
+	// batches. Bubbletea's renderer only draws on its fps tick anyway,
+	// so coalescing here costs nothing on the output path.
+	dirty := false
+	renderIfDirty := func() {
+		if dirty {
+			p.Render()
+			m.flushPendingSyncAcks()
+			dirty = false
+		}
+	}
+
 	for {
 		srv := m.server
 
@@ -335,12 +350,12 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 					p.Stop(nil)
 					return nil
 				}
+				dirty = true
 				continue
 			case msg := <-srv.Inbound:
 				eventBudget -= inboundEventCost(msg)
 				m.processServerMsg(msg)
-				p.Render()
-				m.flushPendingSyncAcks()
+				dirty = true
 				continue
 			case msg := <-srv.Lifecycle:
 				switch msg := msg.(type) {
@@ -348,11 +363,10 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 					m.reconnectLoop(msg)
 				case PausedMsg:
 					m.sessionPaused = true
-					p.Render()
 				case ResumedMsg:
 					m.sessionPaused = false
-					p.Render()
 				}
+				dirty = true
 				continue
 			case <-p.Context().Done():
 				p.Stop(nil)
@@ -360,6 +374,10 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 			default:
 			}
 		}
+
+		// About to block (or run a focus step) — flush any pending
+		// render so the screen reflects the drained state.
+		renderIfDirty()
 
 		// Process one buffered focus-mode sequence before blocking.
 		if len(m.focusBuf) > 0 {
@@ -383,6 +401,7 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 				p.Stop(nil)
 				return nil
 			}
+			dirty = true
 
 		case raw := <-rawCh:
 			eventBudget = serverWorkBudget
@@ -395,14 +414,12 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 				p.Stop(nil)
 				return nil
 			}
-			p.Render()
-			m.flushPendingSyncAcks()
+			dirty = true
 
 		case msg := <-srv.Inbound:
 			eventBudget -= inboundEventCost(msg)
 			m.processServerMsg(msg)
-			p.Render()
-			m.flushPendingSyncAcks()
+			dirty = true
 
 		case msg := <-srv.Lifecycle:
 			switch msg := msg.(type) {
@@ -410,11 +427,10 @@ func (m *NxtermModel) Run(p *tea.Program, rawCh <-chan RawInputMsg,
 				m.reconnectLoop(msg)
 			case PausedMsg:
 				m.sessionPaused = true
-				p.Render()
 			case ResumedMsg:
 				m.sessionPaused = false
-				p.Render()
 			}
+			dirty = true
 
 		case <-p.Context().Done():
 			p.Stop(nil)

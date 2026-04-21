@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +62,22 @@ func TestInputNotStarvedByFlood(t *testing.T) {
 
 	// Let the flood establish a sustained stream.
 	time.Sleep(1 * time.Second)
+
+	// Verify the frontend actually renders the flood rather than freezing.
+	// Sample the screen at the end of the warm-up and after a short
+	// additional interval; the virtual screen should be showing the
+	// flood content and advancing.
+	preSample := nxterm.ScreenLines()
+	preHasFlood := false
+	for _, l := range preSample {
+		if bytes.Contains([]byte(l), []byte("ABCDEFGHI")) {
+			preHasFlood = true
+			break
+		}
+	}
+	if !preHasFlood {
+		t.Fatalf("flood not visible on screen during sustained output\nscreen:\n%s", strings.Join(preSample, "\n"))
+	}
 
 	start := time.Now()
 	nxterm.Write([]byte("k"))
