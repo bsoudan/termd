@@ -242,10 +242,13 @@ func windowTitle(sm *SessionManagerLayer) string {
 }
 
 // renderStatusBar renders the right side of the tab bar for compositing
-// on top of the session view at row 0.
+// on top of the session view at row 0. The status-text wrappers use the
+// large dot (●) because the style passed in by the caller is typically
+// bright cyan (command mode, active scrollback, etc.); the trailing dot
+// after the nxterm label stays mid-size since it renders faint.
 func renderStatusBar(status, version string, style lipgloss.Style, showVersion bool) (string, int) {
-	result := style.Render("• " + status + " •")
-	displayWidth := len([]rune("• " + status + " •"))
+	result := style.Render("● " + status + " ●")
+	displayWidth := len([]rune("● " + status + " ●"))
 
 	suffix := "nxterm"
 	if version != "" && showVersion {

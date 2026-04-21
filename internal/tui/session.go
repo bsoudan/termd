@@ -500,7 +500,7 @@ func (s *SessionLayer) renderTabBar(width int, rs *RenderState) string {
 
 	dot := func(bold bool) {
 		if bold {
-			sb.WriteString(statusActiveTab.Render("•"))
+			sb.WriteString(statusActiveTab.Render("●"))
 		} else {
 			sb.WriteString(statusFaint.Render("•"))
 		}
