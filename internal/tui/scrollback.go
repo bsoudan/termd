@@ -29,6 +29,18 @@ type ScrollbackLayer struct {
 	serverTotal int            // total server scrollback lines (0 until first chunk)
 	synced      bool           // true once all server chunks have arrived
 	syncBuf     [][]te.Cell    // server lines in oldest-first order (built by prepending newest-first chunks)
+
+	// anchorTotal is the hscreen.TotalAdded() value at which the current
+	// offset was last set (entry, navigation, or previous anchor-advance).
+	// Live output arriving during scrollback pushes screen rows into
+	// history and advances TotalAdded; offset is interpreted as
+	// lines-from-bottom of the virtual buffer, so without compensation
+	// the same offset would point at different content frame-to-frame.
+	// advanceAnchor bumps offset by the TotalAdded delta on every
+	// render, keeping the visible content pinned to what the user
+	// scrolled to. Zero until the first View.
+	anchorTotal    uint64
+	anchorInitted  bool
 }
 
 func newScrollbackLayer(term *TerminalLayer, offset int) *ScrollbackLayer {
@@ -38,8 +50,42 @@ func newScrollbackLayer(term *TerminalLayer, offset int) *ScrollbackLayer {
 	}
 }
 
-func (s *ScrollbackLayer) Activate() tea.Cmd { return nil }
-func (s *ScrollbackLayer) Deactivate()       { s.term.inScrollback = false }
+func (s *ScrollbackLayer) Activate() tea.Cmd {
+	if s.term.hscreen != nil {
+		s.anchorTotal = s.term.hscreen.TotalAdded()
+		s.anchorInitted = true
+	}
+	return nil
+}
+func (s *ScrollbackLayer) Deactivate() { s.term.inScrollback = false }
+
+// advanceAnchor compensates offset for any rows pushed into history
+// since the anchor was last captured. Called before any read of offset
+// (View + key/wheel handling) so the viewport stays pinned to the
+// content the user scrolled to while live output continues. offset==0
+// is left alone: at the bottom the user is tracking the live view, not
+// a fixed anchor. Returns the current maxOffset for callers that clamp.
+func (s *ScrollbackLayer) advanceAnchor() int {
+	maxOffset := s.scrollbackTotal()
+	if s.term.hscreen == nil {
+		return maxOffset
+	}
+	cur := s.term.hscreen.TotalAdded()
+	if !s.anchorInitted {
+		s.anchorTotal = cur
+		s.anchorInitted = true
+		return maxOffset
+	}
+	if cur > s.anchorTotal && s.offset > 0 {
+		delta := cur - s.anchorTotal
+		s.offset += int(delta)
+		if s.offset > maxOffset {
+			s.offset = maxOffset
+		}
+	}
+	s.anchorTotal = cur
+	return maxOffset
+}
 
 func (s *ScrollbackLayer) Update(msg tea.Msg) (tea.Msg, tea.Cmd, bool) {
 	switch msg := msg.(type) {
@@ -74,23 +120,9 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	s.serverTotal = msg.Total
 	slog.Debug("scrollback sync chunk", "lines", len(msg.Lines), "total", msg.Total, "done", msg.Done, "buf_so_far", len(s.syncBuf))
 
-	// Convert protocol cells to te.Cell.
 	chunk := make([][]te.Cell, len(msg.Lines))
 	for j, row := range msg.Lines {
-		cells := make([]te.Cell, len(row))
-		for i, c := range row {
-			cells[i].Data = c.Char
-			cells[i].Attr.Fg = specToColor(c.Fg)
-			cells[i].Attr.Bg = specToColor(c.Bg)
-			cells[i].Attr.Bold = c.A&1 != 0
-			cells[i].Attr.Italics = c.A&2 != 0
-			cells[i].Attr.Underline = c.A&4 != 0
-			cells[i].Attr.Strikethrough = c.A&8 != 0
-			cells[i].Attr.Reverse = c.A&16 != 0
-			cells[i].Attr.Blink = c.A&32 != 0
-			cells[i].Attr.Conceal = c.A&64 != 0
-		}
-		chunk[j] = cells
+		chunk[j] = protocolCellsToTe(row)
 	}
 	// Prepend: chunks arrive newest-first, so each new chunk is older
 	// and goes in front to maintain oldest-first order in syncBuf.
@@ -152,6 +184,12 @@ func (s *ScrollbackLayer) handleSyncChunk(msg protocol.GetScrollbackResponse) {
 	}
 	s.syncBuf = nil
 	s.synced = true
+	// Sync reconciliation can jump TotalAdded (client-behind rebuild)
+	// without adding rows at the viewport's bottom. Re-anchor so the
+	// next advanceAnchor tick doesn't mistake the jump for live output
+	// and shift the user's view.
+	s.anchorTotal = s.term.hscreen.TotalAdded()
+	s.anchorInitted = true
 }
 
 // scrollbackTotal returns the best-known total scrollback line count.
@@ -168,7 +206,7 @@ func (s *ScrollbackLayer) scrollbackTotal() int {
 }
 
 func (s *ScrollbackLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool) {
-	maxOffset := s.scrollbackTotal()
+	maxOffset := s.advanceAnchor()
 	halfPage := s.term.contentHeight() / 2
 	if halfPage < 1 {
 		halfPage = 1
@@ -207,10 +245,11 @@ func (s *ScrollbackLayer) handleKey(msg tea.KeyPressMsg) (tea.Msg, tea.Cmd, bool
 }
 
 func (s *ScrollbackLayer) handleWheel(button tea.MouseButton) (tea.Msg, tea.Cmd, bool) {
+	maxOffset := s.advanceAnchor()
 	switch button {
 	case tea.MouseWheelUp:
 		s.offset += 3
-		if maxOffset := s.scrollbackTotal(); s.offset > maxOffset {
+		if s.offset > maxOffset {
 			s.offset = maxOffset
 		}
 	case tea.MouseWheelDown:
@@ -255,6 +294,10 @@ func scrollbarGeometry(height, totalLines, offset int) (thumbStart, thumbLen int
 }
 
 func (s *ScrollbackLayer) View(width, height int, rs *RenderState) []*lipgloss.Layer {
+	// Keep the viewport pinned to the content the user scrolled to
+	// across frames, even as live output pushes rows into history.
+	s.advanceAnchor()
+
 	// Render only within the terminal viewport so the tab bar (row 0)
 	// and the status-bar margin row(s) below it remain visible.
 	termY := height - s.term.contentHeight()

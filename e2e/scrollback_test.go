@@ -1629,6 +1629,79 @@ func TestScrollbackStableDuringOutput(t *testing.T) {
 	nxterm.RequireTabBarDoesNotContain("scrollback")
 }
 
+// TestScrollbackStableDuringMode2026 asserts the scrollback view stays
+// anchored to the content the user scrolled to when live output arrives
+// inside a mode-2026 synchronized-output batch. The server delivers the
+// batch's scrolled-off rows via ScrollbackDelta on a snapshot rather
+// than per-event TerminalEvents, so the client's TotalAdded advances
+// in a single step — the anchor must compensate for that step in the
+// same way it does for event-driven growth.
+func TestScrollbackStableDuringMode2026(t *testing.T) {
+	t.Parallel()
+	socketPath, cleanup := startServer(t)
+	defer cleanup()
+
+	driver := nxtest.DialDriver(t, socketPath)
+	region := driver.SpawnNativeRegion("nxtest-sbsync-stbl", "r1", 80, 24)
+
+	nxterm := startFrontendForSession(t, socketPath, "nxtest-sbsync-stbl")
+	defer nxterm.Kill()
+	region.Sync(nxterm, "TUI boot + subscribe")
+
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&buf, "SEQ%04d\r\n", i)
+	}
+	region.Output(buf.Bytes()).Sync(nxterm, "feed SEQ0001..0100")
+
+	nxterm.Write([]byte{0x02, '['}).Sync("enter scrollback")
+	nxterm.RequireTabBarContains("scrollback")
+	nxterm.Write([]byte("g")).Sync("jump to top")
+
+	captureVisibleSeqs := func() []int {
+		screen := nxterm.ScreenLines()
+		var seqs []int
+		for _, line := range screen {
+			if n := parseSEQ(line); n > 0 {
+				seqs = append(seqs, n)
+			}
+		}
+		return seqs
+	}
+
+	before := captureVisibleSeqs()
+	if len(before) == 0 {
+		t.Fatalf("no SEQ values visible before output; screen:\n%s",
+			strings.Join(nxterm.ScreenLines(), "\n"))
+	}
+
+	// Emit a mode-2026 batch while the user is pinned at the top of
+	// scrollback. The batch flushes as a ScreenUpdate snapshot with
+	// ScrollbackDelta; per-event replay is skipped. The anchor must
+	// absorb the TotalAdded jump so the top-visible rows don't drift.
+	buf.Reset()
+	buf.WriteString("\x1b[?2026h")
+	for i := 101; i <= 200; i++ {
+		fmt.Fprintf(&buf, "SEQ%04d\r\n", i)
+	}
+	buf.WriteString("\x1b[?2026l")
+	region.Output(buf.Bytes()).Sync(nxterm, "feed mode-2026 SEQ0101..0200")
+
+	after := captureVisibleSeqs()
+	if len(after) == 0 {
+		t.Fatalf("no SEQ values visible after output; screen:\n%s",
+			strings.Join(nxterm.ScreenLines(), "\n"))
+	}
+
+	if before[0] != after[0] || before[len(before)-1] != after[len(after)-1] {
+		t.Errorf("scrollback anchor drifted through mode-2026 batch:\n  before: %v\n  after:  %v",
+			before, after)
+	}
+
+	nxterm.Write([]byte("q")).Sync("exit scrollback")
+	nxterm.RequireTabBarDoesNotContain("scrollback")
+}
+
 // TestScrollbackNoRequeryOnReentry asserts that the client requests
 // server scrollback exactly once per subscription: the first entry into
 // scrollback queries the server, subsequent entries on the same
